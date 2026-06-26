@@ -196,6 +196,12 @@ pub(crate) use dispatch::packed_yuv411::uyyvyy411_to_luma_u16_row;
 pub(crate) use dispatch::vuya::vuya_to_luma_u16_row;
 #[cfg(all(feature = "yuv-444-packed", any(feature = "std", feature = "alloc")))]
 pub(crate) use dispatch::vuyx::vuyx_to_luma_u16_row;
+// Packed YUV 4:4:4 channel re-orderings (AYUV / UYVA / VYU444) luma_u16
+// dispatchers — `pub(crate)`, MixedSinker only.
+#[cfg(all(feature = "yuv-444-packed", any(feature = "std", feature = "alloc")))]
+pub(crate) use dispatch::{
+  ayuv::ayuv_to_luma_u16_row, uyva::uyva_to_luma_u16_row, vyu444::vyu444_to_luma_u16_row,
+};
 
 #[cfg(feature = "yuv-444-packed")]
 #[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
@@ -264,7 +270,9 @@ pub use dispatch::yuv411p::*;
 pub use dispatch::yuva::*;
 #[cfg(feature = "yuv-444-packed")]
 #[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
-pub use dispatch::{v30x::*, v410::*, vuya::*, vuyx::*, xv36::*, xv48::*};
+pub use dispatch::{
+  ayuv::*, uyva::*, v30x::*, v410::*, vuya::*, vuyx::*, vyu444::*, xv36::*, xv48::*,
+};
 #[cfg(feature = "y2xx")]
 #[cfg_attr(docsrs, doc(cfg(feature = "y2xx")))]
 pub use dispatch::{y210::*, y212::*, y216::*};

@@ -1,0 +1,221 @@
+//! Sinker integration tests for `MixedSinker<Uyva>`.
+//!
+//! UYVA is the chroma-first (`U, Y, V, A`) channel re-ordering of `Vuya`.
+//! The headline oracle packs the SAME logical V/U/Y/A samples in both the
+//! UYVA and VUYA byte orders and asserts the sink outputs (RGB / RGBA /
+//! luma / luma_u16 / HSV, plus resampled outputs) are byte-identical — so
+//! UYVA inherits all of VUYA's validated behaviour. Plus smoke,
+//! buffer-shape errors, and SIMD-vs-scalar parity.
+
+#[cfg(all(test, feature = "std"))]
+use super::*;
+
+/// Pack logical V/U/Y/A samples into a UYVA byte stream (`[U, Y, V, A]`).
+#[cfg(all(test, feature = "std"))]
+fn pack_uyva(v: &[u8], u: &[u8], y: &[u8], a: &[u8], n: usize) -> Vec<u8> {
+  let mut out = std::vec![0u8; n * 4];
+  for i in 0..n {
+    out[i * 4] = u[i];
+    out[i * 4 + 1] = y[i];
+    out[i * 4 + 2] = v[i];
+    out[i * 4 + 3] = a[i];
+  }
+  out
+}
+
+/// Pack the same samples into a VUYA byte stream (`[V, U, Y, A]`).
+#[cfg(all(test, feature = "std"))]
+fn pack_vuya(v: &[u8], u: &[u8], y: &[u8], a: &[u8], n: usize) -> Vec<u8> {
+  let mut out = std::vec![0u8; n * 4];
+  for i in 0..n {
+    out[i * 4] = v[i];
+    out[i * 4 + 1] = u[i];
+    out[i * 4 + 2] = y[i];
+    out[i * 4 + 3] = a[i];
+  }
+  out
+}
+
+/// Headline cross-format oracle: UYVA ↔ VUYA byte-identity for the same
+/// logical samples across every standard output channel and both ranges.
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn uyva_matches_vuya_reference_all_outputs() {
+  let width = 64usize;
+  let height = 4usize;
+  let n = width * height;
+  let (mut yp, mut up, mut vp, mut ap) = (
+    std::vec![0u8; n],
+    std::vec![0u8; n],
+    std::vec![0u8; n],
+    std::vec![0u8; n],
+  );
+  pseudo_random_u8(&mut yp, 0xA1);
+  pseudo_random_u8(&mut up, 0xB2);
+  pseudo_random_u8(&mut vp, 0xC3);
+  pseudo_random_u8(&mut ap, 0xD4);
+
+  let uyva_buf = pack_uyva(&vp, &up, &yp, &ap, n);
+  let vuya_buf = pack_vuya(&vp, &up, &yp, &ap, n);
+  let ay = UyvaFrame::try_new(&uyva_buf, width as u32, height as u32, (width * 4) as u32).unwrap();
+  let vu = VuyaFrame::try_new(&vuya_buf, width as u32, height as u32, (width * 4) as u32).unwrap();
+
+  for full_range in [true, false] {
+    let m = ColorMatrix::Bt709;
+    // RGB
+    let (mut a_rgb, mut v_rgb) = (std::vec![0u8; n * 3], std::vec![0u8; n * 3]);
+    {
+      let mut a = MixedSinker::<Uyva>::new(width, height)
+        .with_rgb(&mut a_rgb)
+        .unwrap();
+      uyva_to(&ay, full_range, m, &mut a).unwrap();
+      let mut v = MixedSinker::<Vuya>::new(width, height)
+        .with_rgb(&mut v_rgb)
+        .unwrap();
+      vuya_to(&vu, full_range, m, &mut v).unwrap();
+    }
+    assert_eq!(a_rgb, v_rgb, "UYVA↔VUYA RGB (full_range={full_range})");
+
+    // RGBA (standalone — source α through the kernel)
+    let (mut a_rgba, mut v_rgba) = (std::vec![0u8; n * 4], std::vec![0u8; n * 4]);
+    {
+      let mut a = MixedSinker::<Uyva>::new(width, height)
+        .with_rgba(&mut a_rgba)
+        .unwrap();
+      uyva_to(&ay, full_range, m, &mut a).unwrap();
+      let mut v = MixedSinker::<Vuya>::new(width, height)
+        .with_rgba(&mut v_rgba)
+        .unwrap();
+      vuya_to(&vu, full_range, m, &mut v).unwrap();
+    }
+    assert_eq!(a_rgba, v_rgba, "UYVA↔VUYA RGBA (full_range={full_range})");
+    // Alpha bytes equal source A.
+    for i in 0..n {
+      assert_eq!(a_rgba[i * 4 + 3], ap[i], "UYVA α at {i}");
+    }
+
+    // RGB + RGBA combo (Strategy path).
+    let (mut a_crgb, mut a_crgba) = (std::vec![0u8; n * 3], std::vec![0u8; n * 4]);
+    let (mut v_crgb, mut v_crgba) = (std::vec![0u8; n * 3], std::vec![0u8; n * 4]);
+    {
+      let mut a = MixedSinker::<Uyva>::new(width, height)
+        .with_rgb(&mut a_crgb)
+        .unwrap()
+        .with_rgba(&mut a_crgba)
+        .unwrap();
+      uyva_to(&ay, full_range, m, &mut a).unwrap();
+      let mut v = MixedSinker::<Vuya>::new(width, height)
+        .with_rgb(&mut v_crgb)
+        .unwrap()
+        .with_rgba(&mut v_crgba)
+        .unwrap();
+      vuya_to(&vu, full_range, m, &mut v).unwrap();
+    }
+    assert_eq!(
+      a_crgb, v_crgb,
+      "UYVA↔VUYA combo RGB (full_range={full_range})"
+    );
+    assert_eq!(
+      a_crgba, v_crgba,
+      "UYVA↔VUYA combo RGBA (full_range={full_range})"
+    );
+  }
+
+  // Luma / luma_u16 / HSV.
+  let m = ColorMatrix::Bt709;
+  let (mut a_l, mut v_l) = (std::vec![0u8; n], std::vec![0u8; n]);
+  {
+    let mut a = MixedSinker::<Uyva>::new(width, height)
+      .with_luma(&mut a_l)
+      .unwrap();
+    uyva_to(&ay, false, m, &mut a).unwrap();
+    let mut v = MixedSinker::<Vuya>::new(width, height)
+      .with_luma(&mut v_l)
+      .unwrap();
+    vuya_to(&vu, false, m, &mut v).unwrap();
+  }
+  assert_eq!(a_l, v_l, "UYVA↔VUYA luma");
+  // luma == source Y at offset 1.
+  for i in 0..n {
+    assert_eq!(a_l[i], yp[i], "UYVA luma at {i}");
+  }
+
+  let (mut a_l16, mut v_l16) = (std::vec![0u16; n], std::vec![0u16; n]);
+  {
+    let mut a = MixedSinker::<Uyva>::new(width, height)
+      .with_luma_u16(&mut a_l16)
+      .unwrap();
+    uyva_to(&ay, false, m, &mut a).unwrap();
+    let mut v = MixedSinker::<Vuya>::new(width, height)
+      .with_luma_u16(&mut v_l16)
+      .unwrap();
+    vuya_to(&vu, false, m, &mut v).unwrap();
+  }
+  assert_eq!(a_l16, v_l16, "UYVA↔VUYA luma_u16");
+
+  let (mut ah, mut as_, mut av) = (std::vec![0u8; n], std::vec![0u8; n], std::vec![0u8; n]);
+  let (mut vh, mut vs, mut vv) = (std::vec![0u8; n], std::vec![0u8; n], std::vec![0u8; n]);
+  {
+    let mut a = MixedSinker::<Uyva>::new(width, height)
+      .with_hsv(&mut ah, &mut as_, &mut av)
+      .unwrap();
+    uyva_to(&ay, true, m, &mut a).unwrap();
+    let mut v = MixedSinker::<Vuya>::new(width, height)
+      .with_hsv(&mut vh, &mut vs, &mut vv)
+      .unwrap();
+    vuya_to(&vu, true, m, &mut v).unwrap();
+  }
+  assert_eq!((ah, as_, av), (vh, vs, vv), "UYVA↔VUYA HSV");
+}
+
+/// SIMD vs scalar parity at a width spanning every backend's block + tail.
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn uyva_simd_vs_scalar_parity_at_1922() {
+  let w = 1922usize;
+  let h = 2usize;
+  let mut buf = std::vec![0u8; w * h * 4];
+  pseudo_random_u8(&mut buf, 0x0BAD_F00D);
+  let src = UyvaFrame::try_new(&buf, w as u32, h as u32, (w * 4) as u32).unwrap();
+
+  let mut simd = std::vec![0u8; w * h * 4];
+  let mut scalar = std::vec![0u8; w * h * 4];
+  {
+    let mut s = MixedSinker::<Uyva>::new(w, h).with_rgba(&mut simd).unwrap();
+    uyva_to(&src, false, ColorMatrix::Bt709, &mut s).unwrap();
+  }
+  {
+    let mut s = MixedSinker::<Uyva>::new(w, h)
+      .with_rgba(&mut scalar)
+      .unwrap()
+      .with_simd(false);
+    uyva_to(&src, false, ColorMatrix::Bt709, &mut s).unwrap();
+  }
+  assert_eq!(simd, scalar, "UYVA SIMD ≠ scalar at width {w}");
+}
+
+/// A malformed packed row (length ≠ `width × 4`) surfaces the typed
+/// `RowShapeMismatch` carrying the `UyvaPacked` slice tag.
+#[test]
+#[cfg(all(test, feature = "std"))]
+fn uyva_malformed_row_returns_row_shape_mismatch() {
+  let mut rgb = std::vec![0u8; 4 * 3];
+  let mut sink = MixedSinker::<Uyva>::new(4, 1).with_rgb(&mut rgb).unwrap();
+  sink.begin_frame(4, 1).unwrap();
+  let short = std::vec![0u8; 12];
+  let row = UyvaRow::new(&short, 0, ColorMatrix::Bt709, false);
+  let err = sink.process(row).unwrap_err();
+  assert!(
+    matches!(err, MixedSinkerError::RowShapeMismatch(e)
+      if e.which() == RowSlice::UyvaPacked && e.expected() == 16 && e.actual() == 12),
+    "unexpected error: {err:?}"
+  );
+}

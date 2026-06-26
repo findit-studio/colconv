@@ -124,10 +124,14 @@ use crate::{
 // (RGBA outputs only), never an `Options` knob.
 #[cfg(feature = "yuv-444-packed")]
 use crate::{
-  frame::{Ayuv64Frame, V30XFrame, V410Frame, VuyaFrame, VuyxFrame, Xv36Frame, Xv48Frame},
+  frame::{
+    Ayuv64Frame, AyuvFrame, UyvaFrame, V30XFrame, V410Frame, VuyaFrame, VuyxFrame, Vyu444Frame,
+    Xv36Frame, Xv48Frame,
+  },
   source::{
-    Ayuv64, Ayuv64Sink, V30X, V30XSink, V410, V410Sink, Vuya, VuyaSink, Vuyx, VuyxSink, Xv36,
-    Xv36Sink, Xv48, Xv48Sink, ayuv64_to_endian, v30x_to, v410_to_endian, vuya_to, vuyx_to,
+    Ayuv, Ayuv64, Ayuv64Sink, AyuvSink, Uyva, UyvaSink, V30X, V30XSink, V410, V410Sink, Vuya,
+    VuyaSink, Vuyx, VuyxSink, Vyu444, Vyu444Sink, Xv36, Xv36Sink, Xv48, Xv48Sink, ayuv_to,
+    ayuv64_to_endian, uyva_to, v30x_to, v410_to_endian, vuya_to, vuyx_to, vyu444_to,
     xv36_to_endian, xv48_to_endian,
   },
 };
@@ -1076,6 +1080,25 @@ walker!(Vuya, VuyaSink, VuyaFrame, YuvOptions, |src, opts, sink| {
 #[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
 walker!(Vuyx, VuyxSink, VuyxFrame, YuvOptions, |src, opts, sink| {
   vuyx_to(src, opts.full_range(), opts.matrix(), sink)
+});
+// `Ayuv` / `Uyva` (real source α) / `Vyu444` (no alpha, 24bpp) are the
+// 8-bit packed 4:4:4 channel re-orderings of `Vuya` / `Vuyx` — byte-order-
+// fixed, so they ride the plain arm with the same uniform walker forward.
+#[cfg(feature = "yuv-444-packed")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
+walker!(Ayuv, AyuvSink, AyuvFrame, YuvOptions, |src, opts, sink| {
+  ayuv_to(src, opts.full_range(), opts.matrix(), sink)
+});
+#[cfg(feature = "yuv-444-packed")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
+walker!(Uyva, UyvaSink, UyvaFrame, YuvOptions, |src, opts, sink| {
+  uyva_to(src, opts.full_range(), opts.matrix(), sink)
+});
+#[cfg(feature = "yuv-444-packed")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
+#[rustfmt::skip]
+walker!(Vyu444, Vyu444Sink, Vyu444Frame, YuvOptions, |src, opts, sink| {
+  vyu444_to(src, opts.full_range(), opts.matrix(), sink)
 });
 #[cfg(feature = "yuv-444-packed")]
 #[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]

@@ -137,38 +137,65 @@ static COMBINE_IDX: [i32; 16] = [
 /// `ptr` must point to at least 256 readable bytes (64 VUYA quadruples).
 /// Caller's `target_feature` must include AVX-512F + AVX-512BW (BW
 /// provides `_mm512_shuffle_epi8`; F provides `_mm512_permutex2var_epi32`).
+/// Per-128-bit-lane gather mask for one channel at byte offset `OFF`
+/// within each 4-byte pixel, broadcast across all four 128-bit lanes.
+/// The const offset makes the mask a compile-time constant.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-unsafe fn deinterleave_vuya_avx512(ptr: *const u8) -> (__m512i, __m512i, __m512i, __m512i) {
+unsafe fn chan_mask_avx512<const OFF: usize>() -> __m512i {
+  let o = OFF as i8;
+  let lane = _mm_setr_epi8(
+    o,
+    o + 4,
+    o + 8,
+    o + 12,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+  );
+  _mm512_broadcast_i32x4(lane)
+}
+
+/// Offset-parameterized AVX-512 deinterleave of 64 four-byte pixels into
+/// `(v_vec, u_vec, y_vec, a_vec)` (each `__m512i` of 64 natural-order
+/// channel bytes). The four byte offsets select which source byte feeds
+/// each channel, serving every channel re-ordering of the 4-byte family.
+///
+/// # Safety
+///
+/// `ptr` must point to at least 256 readable bytes (64 pixels). AVX-512F
+/// + AVX-512BW must be available.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+unsafe fn deinterleave_packed444_avx512<
+  const V_OFF: usize,
+  const U_OFF: usize,
+  const Y_OFF: usize,
+  const A_OFF: usize,
+>(
+  ptr: *const u8,
+) -> (__m512i, __m512i, __m512i, __m512i) {
   // SAFETY: caller obligation — `ptr` has 256 bytes readable; AVX-512F
   // + AVX-512BW are available.
   unsafe {
-    // Load 4 × __m512i contiguously (64 pixels × 4 channels × u8 = 256 bytes).
-    //
-    // Each load covers 16 contiguous pixels (4 pixels per 128-bit lane):
-    //   raw_c0 lanes: P0..3, P4..7, P8..11, P12..15
-    //   raw_c1 lanes: P16..19, P20..23, P24..27, P28..31
-    //   raw_c2 lanes: P32..35, P36..39, P40..43, P44..47
-    //   raw_c3 lanes: P48..51, P52..55, P56..59, P60..63
     let raw_c0 = _mm512_loadu_si512(ptr.cast());
     let raw_c1 = _mm512_loadu_si512(ptr.add(64).cast());
     let raw_c2 = _mm512_loadu_si512(ptr.add(128).cast());
     let raw_c3 = _mm512_loadu_si512(ptr.add(192).cast());
 
-    // Per-128-bit-lane shuffle masks: gather each channel's 4 bytes from
-    // a 128-bit lane (4 pixels of VUYA = 16 bytes) into the low 4 bytes
-    // of the lane. -1 zeroes the upper 12 bytes of each lane.
-    //
-    // `_mm512_broadcast_i32x4` replicates a 16-byte mask across all four
-    // 128-bit lanes of the __m512i.
-    let v_lane_mask = _mm_setr_epi8(0, 4, 8, 12, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
-    let u_lane_mask = _mm_setr_epi8(1, 5, 9, 13, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
-    let y_lane_mask = _mm_setr_epi8(2, 6, 10, 14, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
-    let a_lane_mask = _mm_setr_epi8(3, 7, 11, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
-    let v_mask = _mm512_broadcast_i32x4(v_lane_mask);
-    let u_mask = _mm512_broadcast_i32x4(u_lane_mask);
-    let y_mask = _mm512_broadcast_i32x4(y_lane_mask);
-    let a_mask = _mm512_broadcast_i32x4(a_lane_mask);
+    let v_mask = chan_mask_avx512::<V_OFF>();
+    let u_mask = chan_mask_avx512::<U_OFF>();
+    let y_mask = chan_mask_avx512::<Y_OFF>();
+    let a_mask = chan_mask_avx512::<A_OFF>();
 
     // Apply the per-channel masks to each load. Each result holds
     // the channel's 16 valid bytes spread across i32 lanes 0, 4, 8, 12.
@@ -260,7 +287,14 @@ unsafe fn deinterleave_vuya_avx512(ptr: *const u8) -> (__m512i, __m512i, __m512i
 /// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn vuya_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool>(
+pub(crate) unsafe fn packed444_to_rgb_or_rgba_row<
+  const ALPHA: bool,
+  const ALPHA_SRC: bool,
+  const V_OFF: usize,
+  const U_OFF: usize,
+  const Y_OFF: usize,
+  const A_OFF: usize,
+>(
   packed: &[u8],
   out: &mut [u8],
   width: usize,
@@ -292,14 +326,15 @@ pub(crate) unsafe fn vuya_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC:
     let cbu = _mm512_set1_epi32(coeffs.b_u());
     let cbv = _mm512_set1_epi32(coeffs.b_v());
     let pack_fixup = _mm512_setr_epi64(0, 2, 4, 6, 1, 3, 5, 7);
-    // 0xFF for VUYX forced-opaque path.
+    // 0xFF for the forced-opaque path.
     let alpha_u8 = _mm512_set1_epi8(-1i8);
 
     let mut x = 0usize;
     while x + 64 <= width {
-      // Deinterleave 64 VUYA quadruples → V, U, Y, A as u8x64 in
-      // natural pixel order.
-      let (v_u8, u_u8, y_u8, a_u8) = deinterleave_vuya_avx512(packed.as_ptr().add(x * 4));
+      // Deinterleave 64 quadruples → V, U, Y, A as u8x64 in natural pixel
+      // order per the format's byte offsets.
+      let (v_u8, u_u8, y_u8, a_u8) =
+        deinterleave_packed444_avx512::<V_OFF, U_OFF, Y_OFF, A_OFF>(packed.as_ptr().add(x * 4));
 
       // Zero-extend each channel to two i16x32 halves (low 32 bytes →
       // pixels 0..31, high 32 bytes → pixels 32..63).
@@ -412,7 +447,7 @@ pub(crate) unsafe fn vuya_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC:
 
     // Scalar tail — remaining < 64 pixels.
     if x < width {
-      scalar::vuya_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC>(
+      scalar::packed444_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC, V_OFF, U_OFF, Y_OFF, A_OFF>(
         &packed[x * 4..],
         &mut out[x * bpp..],
         width - x,
@@ -420,6 +455,28 @@ pub(crate) unsafe fn vuya_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC:
         full_range,
       );
     }
+  }
+}
+
+/// VUYA / VUYX byte order (`V=0,U=1,Y=2,A=3`) over the offset-generic
+/// AVX-512 kernel.
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_rgb_or_rgba_row`].
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn vuya_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool>(
+  packed: &[u8],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    packed444_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC, 0, 1, 2, 3>(
+      packed, out, width, matrix, full_range,
+    );
   }
 }
 
@@ -495,7 +552,11 @@ pub(crate) unsafe fn vuyx_to_rgba_row(
 /// 3. `luma_out.len() >= width`.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn vuya_to_luma_row(packed: &[u8], luma_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn packed444_to_luma_row<const Y_OFF: usize>(
+  packed: &[u8],
+  luma_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 4, "packed row too short");
   debug_assert!(luma_out.len() >= width, "luma row too short");
 
@@ -503,15 +564,29 @@ pub(crate) unsafe fn vuya_to_luma_row(packed: &[u8], luma_out: &mut [u8], width:
   unsafe {
     let mut x = 0usize;
     while x + 64 <= width {
-      let (_v, _u, y_vec, _a) = deinterleave_vuya_avx512(packed.as_ptr().add(x * 4));
+      let (_v, _u, y_vec, _a) =
+        deinterleave_packed444_avx512::<0, 1, Y_OFF, 3>(packed.as_ptr().add(x * 4));
       _mm512_storeu_si512(luma_out.as_mut_ptr().add(x).cast(), y_vec);
       x += 64;
     }
 
     // Scalar tail — remaining < 64 pixels.
     if x < width {
-      scalar::vuya_to_luma_row(&packed[x * 4..], &mut luma_out[x..], width - x);
+      scalar::packed444_to_luma_row::<Y_OFF>(&packed[x * 4..], &mut luma_out[x..], width - x);
     }
+  }
+}
+
+/// VUYA / VUYX u8 luma (Y at offset 2) over [`packed444_to_luma_row`].
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_luma_row`].
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn vuya_to_luma_row(packed: &[u8], luma_out: &mut [u8], width: usize) {
+  unsafe {
+    packed444_to_luma_row::<2>(packed, luma_out, width);
   }
 }
 
@@ -533,7 +608,11 @@ pub(crate) unsafe fn vuya_to_luma_row(packed: &[u8], luma_out: &mut [u8], width:
 #[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn vuya_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn packed444_to_luma_u16_row<const Y_OFF: usize>(
+  packed: &[u8],
+  out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 4, "packed row too short");
   debug_assert!(out.len() >= width, "out too short");
 
@@ -541,8 +620,9 @@ pub(crate) unsafe fn vuya_to_luma_u16_row(packed: &[u8], out: &mut [u16], width:
   unsafe {
     let mut x = 0usize;
     while x + 64 <= width {
-      // Deinterleave 64 VUYA quadruples; channel 2 = Y (u8 × 64).
-      let (_v, _u, y_u8, _a) = deinterleave_vuya_avx512(packed.as_ptr().add(x * 4));
+      // Deinterleave 64 quadruples; keep only Y (at `Y_OFF`), u8 × 64.
+      let (_v, _u, y_u8, _a) =
+        deinterleave_packed444_avx512::<0, 1, Y_OFF, 3>(packed.as_ptr().add(x * 4));
 
       // Widen low 32 Y bytes → u16x32 (pixels 0-31).
       let lo_u16 = _mm512_cvtepu8_epi16(_mm512_castsi512_si256(y_u8));
@@ -556,8 +636,22 @@ pub(crate) unsafe fn vuya_to_luma_u16_row(packed: &[u8], out: &mut [u16], width:
 
     // Scalar tail — remaining < 64 pixels.
     if x < width {
-      scalar::vuya_to_luma_u16_row(&packed[x * 4..], &mut out[x..], width - x);
+      scalar::packed444_to_luma_u16_row::<Y_OFF>(&packed[x * 4..], &mut out[x..], width - x);
     }
+  }
+}
+
+/// VUYA u16 luma (Y at offset 2) over [`packed444_to_luma_u16_row`].
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_luma_u16_row`].
+#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn vuya_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  unsafe {
+    packed444_to_luma_u16_row::<2>(packed, out, width);
   }
 }
 
@@ -660,7 +754,11 @@ unsafe fn vuya_hsv_via_rgb_chunks(
 /// 3. `h_out.len()`, `s_out.len()`, `v_out.len()` `>= width`.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn vuya_to_hsv_row(
+pub(crate) unsafe fn packed444_to_hsv_row<
+  const V_OFF: usize,
+  const U_OFF: usize,
+  const Y_OFF: usize,
+>(
   packed: &[u8],
   h_out: &mut [u8],
   s_out: &mut [u8],
@@ -675,11 +773,326 @@ pub(crate) unsafe fn vuya_to_hsv_row(
   debug_assert!(v_out.len() >= width, "v_out row too short");
 
   // SAFETY: the feature is the caller's obligation; the chunk filler
-  // forwards the per-chunk sub-slices to the SIMD VUYA RGB kernel
-  // under the same contract (its own scalar tail covers small n).
+  // forwards the per-chunk sub-slices to the offset-generic AVX-512 RGB
+  // kernel (no alpha). `A_OFF` unused in the RGB path; reuse `Y_OFF`.
   unsafe {
     vuya_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
-      vuya_to_rgb_row(&packed[offset * 4..], rgb, n, matrix, full_range);
+      packed444_to_rgb_or_rgba_row::<false, false, V_OFF, U_OFF, Y_OFF, Y_OFF>(
+        &packed[offset * 4..],
+        rgb,
+        n,
+        matrix,
+        full_range,
+      );
     });
+  }
+}
+
+/// VUYA / VUYX HSV (`V=0,U=1,Y=2`) over [`packed444_to_hsv_row`].
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_hsv_row`].
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn vuya_to_hsv_row(
+  packed: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    packed444_to_hsv_row::<0, 1, 2>(packed, h_out, s_out, v_out, width, matrix, full_range);
+  }
+}
+
+// ---- AYUV / UYVA AVX-512 wrappers -------------------------------------
+
+/// AVX-512 AYUV (`A=0,Y=1,U=2,V=3`) → packed RGB.
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_rgb_or_rgba_row`].
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn ayuv_to_rgb_row(
+  packed: &[u8],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    packed444_to_rgb_or_rgba_row::<false, false, 3, 2, 1, 0>(
+      packed, rgb_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// AVX-512 AYUV → packed RGBA (source α at offset 0).
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_rgb_or_rgba_row`].
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn ayuv_to_rgba_row(
+  packed: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    packed444_to_rgb_or_rgba_row::<true, true, 3, 2, 1, 0>(
+      packed, rgba_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// AVX-512 AYUV → planar HSV bytes.
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_hsv_row`].
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn ayuv_to_hsv_row(
+  packed: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    packed444_to_hsv_row::<3, 2, 1>(packed, h_out, s_out, v_out, width, matrix, full_range);
+  }
+}
+
+/// AVX-512 AYUV → u8 luma (Y at offset 1).
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_luma_row`].
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn ayuv_to_luma_row(packed: &[u8], luma_out: &mut [u8], width: usize) {
+  unsafe {
+    packed444_to_luma_row::<1>(packed, luma_out, width);
+  }
+}
+
+/// AVX-512 AYUV → u16 luma (Y at offset 1).
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_luma_u16_row`].
+#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn ayuv_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  unsafe {
+    packed444_to_luma_u16_row::<1>(packed, out, width);
+  }
+}
+
+/// AVX-512 UYVA (`U=0,Y=1,V=2,A=3`) → packed RGB.
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_rgb_or_rgba_row`].
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn uyva_to_rgb_row(
+  packed: &[u8],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    packed444_to_rgb_or_rgba_row::<false, false, 2, 0, 1, 3>(
+      packed, rgb_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// AVX-512 UYVA → packed RGBA (source α at offset 3).
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_rgb_or_rgba_row`].
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn uyva_to_rgba_row(
+  packed: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    packed444_to_rgb_or_rgba_row::<true, true, 2, 0, 1, 3>(
+      packed, rgba_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// AVX-512 UYVA → planar HSV bytes.
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_hsv_row`].
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn uyva_to_hsv_row(
+  packed: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    packed444_to_hsv_row::<2, 0, 1>(packed, h_out, s_out, v_out, width, matrix, full_range);
+  }
+}
+
+/// AVX-512 UYVA → u8 luma (Y at offset 1).
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_luma_row`].
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn uyva_to_luma_row(packed: &[u8], luma_out: &mut [u8], width: usize) {
+  unsafe {
+    packed444_to_luma_row::<1>(packed, luma_out, width);
+  }
+}
+
+/// AVX-512 UYVA → u16 luma (Y at offset 1).
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_luma_u16_row`].
+#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn uyva_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  unsafe {
+    packed444_to_luma_u16_row::<1>(packed, out, width);
+  }
+}
+
+// ---- VYU444 (V=0, Y=1, U=2; 3 bytes per pixel, no alpha) AVX-512 -------
+//
+// A 3-byte de-interleave does not tile onto 512-bit lanes, so — exactly
+// like the AVX-512 RGB-input HSV / luma kernels, which reuse the 16-pixel
+// SSE-width `x86_common::deinterleave_rgb_16` / `rgb_to_hsv_16_pixels`
+// helpers — the AVX-512 VYU444 entry points dispatch to the SSE4.1 16-px
+// 3-byte-de-interleave kernel. AVX-512BW is a strict superset of SSE4.1,
+// so the call is sound; the de-interleave (the throughput floor for this
+// layout) runs at its natural 128-bit width. Byte-identical to the scalar
+// reference and to the NEON `vld3q_u8` tier.
+
+/// AVX-512 VYU444 → packed RGB (via the SSE4.1 16-px 3-byte kernel).
+///
+/// # Safety
+///
+/// `packed.len() >= width * 3`; `rgb_out.len() >= width * 3`. AVX-512BW
+/// (⊇ SSE4.1) must be available.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn vyu444_to_rgb_row(
+  packed: &[u8],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    crate::row::arch::x86_sse41::vyu444_to_rgb_row(packed, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// AVX-512 VYU444 → packed RGBA (α forced `0xFF`; via the SSE4.1 kernel).
+///
+/// # Safety
+///
+/// `packed.len() >= width * 3`; `rgba_out.len() >= width * 4`. AVX-512BW
+/// (⊇ SSE4.1) must be available.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn vyu444_to_rgba_row(
+  packed: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    crate::row::arch::x86_sse41::vyu444_to_rgba_row(packed, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// AVX-512 VYU444 → planar HSV bytes (via the SSE4.1 kernel).
+///
+/// # Safety
+///
+/// `packed.len() >= width * 3`; each H/S/V plane `>= width`. AVX-512BW
+/// (⊇ SSE4.1) must be available.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn vyu444_to_hsv_row(
+  packed: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    crate::row::arch::x86_sse41::vyu444_to_hsv_row(
+      packed, h_out, s_out, v_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// AVX-512 VYU444 → u8 luma (Y at offset 1, 3-byte stride; via the SSE4.1
+/// kernel).
+///
+/// # Safety
+///
+/// `packed.len() >= width * 3`; `luma_out.len() >= width`. AVX-512BW (⊇
+/// SSE4.1) must be available.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn vyu444_to_luma_row(packed: &[u8], luma_out: &mut [u8], width: usize) {
+  unsafe {
+    crate::row::arch::x86_sse41::vyu444_to_luma_row(packed, luma_out, width);
+  }
+}
+
+/// AVX-512 VYU444 → u16 luma (Y at offset 1, 3-byte stride; via the SSE4.1
+/// kernel).
+///
+/// # Safety
+///
+/// `packed.len() >= width * 3`; `out.len() >= width`. AVX-512BW (⊇ SSE4.1)
+/// must be available.
+#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn vyu444_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  unsafe {
+    crate::row::arch::x86_sse41::vyu444_to_luma_u16_row(packed, out, width);
   }
 }

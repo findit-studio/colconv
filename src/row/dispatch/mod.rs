@@ -96,7 +96,11 @@ pub(super) mod rgb_float_ops;
 // the sinker HSV / luma derivations stay reachable when the `rgb`
 // family is disabled. Unused packed-RGB dispatchers within will emit
 // dead-code warnings under no-`rgb` builds, which is acceptable.
+#[cfg(feature = "yuv-444-packed")]
+pub(super) mod ayuv;
 pub(super) mod rgb_ops;
+#[cfg(feature = "yuv-444-packed")]
+pub(super) mod uyva;
 #[cfg(feature = "v210")]
 pub(super) mod v210;
 #[cfg(feature = "yuv-444-packed")]
@@ -107,6 +111,8 @@ pub(super) mod v410;
 pub(super) mod vuya;
 #[cfg(feature = "yuv-444-packed")]
 pub(super) mod vuyx;
+#[cfg(feature = "yuv-444-packed")]
+pub(super) mod vyu444;
 #[cfg(feature = "yuv-444-packed")]
 pub(super) mod xv36;
 #[cfg(feature = "yuv-444-packed")]
