@@ -689,3 +689,178 @@ fn neon_rgbf16_be_tail_overread_widths_4_5_16_33() {
     });
   }
 }
+
+// ---- Tier 9 Rgbaf32 / Rgbaf16 SIMD-vs-scalar parity (4-channel) --------
+//
+// The packed-RGBA-float kernels delegate to the `rgbf*` siblings (flat
+// 12-lane feed for the real-alpha forms, gather-then-convert for the
+// drop-alpha forms), so these width sweeps cross every block / tail
+// boundary of the underlying sibling and assert bit-exact scalar parity.
+
+/// `4 * width` pseudo-random f32 RGBA samples (HDR / ties / negatives).
+fn rgbaf_f32(width: usize) -> std::vec::Vec<f32> {
+  // Reuse the RGB generator over enough pixels, then take the flat prefix.
+  let src = pseudo_random_rgbf32(width * 2);
+  src[..width * 4].to_vec()
+}
+fn rgbaf_f16(width: usize) -> std::vec::Vec<half::f16> {
+  rgbaf_f32(width)
+    .iter()
+    .map(|&v| half::f16::from_f32(v))
+    .collect()
+}
+
+const RGBA_WIDTHS: [usize; 12] = [1, 2, 3, 4, 5, 7, 8, 15, 16, 17, 33, 1921];
+
+#[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+fn rgbaf32_neon_matches_scalar_all_outputs() {
+  for w in RGBA_WIDTHS {
+    let input = as_le_rgbf32(&rgbaf_f32(w));
+    // rgb (drop alpha)
+    let mut a = std::vec![0u8; w * 3];
+    let mut b = std::vec![0u8; w * 3];
+    scalar::rgbaf32_to_rgb_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf32_to_rgb_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgb w{w}");
+    // rgba (real alpha)
+    let mut a = std::vec![0u8; w * 4];
+    let mut b = std::vec![0u8; w * 4];
+    scalar::rgbaf32_to_rgba_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf32_to_rgba_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgba w{w}");
+    // rgb_u16
+    let mut a = std::vec![0u16; w * 3];
+    let mut b = std::vec![0u16; w * 3];
+    scalar::rgbaf32_to_rgb_u16_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf32_to_rgb_u16_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgb_u16 w{w}");
+    // rgba_u16
+    let mut a = std::vec![0u16; w * 4];
+    let mut b = std::vec![0u16; w * 4];
+    scalar::rgbaf32_to_rgba_u16_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf32_to_rgba_u16_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgba_u16 w{w}");
+    // rgb_f32 (drop alpha lossless)
+    let mut a = std::vec![0.0f32; w * 3];
+    let mut b = std::vec![0.0f32; w * 3];
+    scalar::rgbaf32_to_rgb_f32_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf32_to_rgb_f32_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgb_f32 w{w}");
+    // rgba_f32 (lossless 4ch)
+    let mut a = std::vec![0.0f32; w * 4];
+    let mut b = std::vec![0.0f32; w * 4];
+    scalar::rgbaf32_to_rgba_f32_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf32_to_rgba_f32_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgba_f32 w{w}");
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+fn rgbaf32_neon_be_matches_le() {
+  for w in [1usize, 4, 7, 16, 33, 1921] {
+    let host = rgbaf_f32(w);
+    let le = as_le_rgbf32(&host);
+    let be = as_be_rgbf32(&host);
+    let mut out_le = std::vec![0u8; w * 4];
+    let mut out_be = std::vec![0u8; w * 4];
+    unsafe {
+      rgbaf32_to_rgba_row::<false>(&le, &mut out_le, w);
+      rgbaf32_to_rgba_row::<true>(&be, &mut out_be, w);
+    }
+    assert_eq!(out_le, out_be, "rgbaf32 BE parity w{w}");
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn rgbaf16_neon_matches_scalar_all_outputs() {
+  if !std::arch::is_aarch64_feature_detected!("fp16") {
+    return;
+  }
+  for w in RGBA_WIDTHS {
+    let input = as_le_rgbf16(&rgbaf_f16(w));
+    let mut a = std::vec![0u8; w * 3];
+    let mut b = std::vec![0u8; w * 3];
+    scalar::rgbaf16_to_rgb_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf16_to_rgb_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgb w{w}");
+    let mut a = std::vec![0u8; w * 4];
+    let mut b = std::vec![0u8; w * 4];
+    scalar::rgbaf16_to_rgba_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf16_to_rgba_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgba w{w}");
+    let mut a = std::vec![0u16; w * 3];
+    let mut b = std::vec![0u16; w * 3];
+    scalar::rgbaf16_to_rgb_u16_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf16_to_rgb_u16_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgb_u16 w{w}");
+    let mut a = std::vec![0u16; w * 4];
+    let mut b = std::vec![0u16; w * 4];
+    scalar::rgbaf16_to_rgba_u16_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf16_to_rgba_u16_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgba_u16 w{w}");
+    let mut a = std::vec![0.0f32; w * 3];
+    let mut b = std::vec![0.0f32; w * 3];
+    scalar::rgbaf16_to_rgb_f32_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf16_to_rgb_f32_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgb_f32 w{w}");
+    let mut a = std::vec![0.0f32; w * 4];
+    let mut b = std::vec![0.0f32; w * 4];
+    scalar::rgbaf16_to_rgba_f32_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf16_to_rgba_f32_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgba_f32 w{w}");
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn rgbaf16_neon_f16_passthrough_matches_scalar() {
+  // The f16 lossless passthrough delegates to scalar (no fp16 needed).
+  for w in RGBA_WIDTHS {
+    let host = rgbaf_f16(w);
+    let input = as_le_rgbf16(&host);
+    let mut a = std::vec![half::f16::ZERO; w * 3];
+    let mut b = std::vec![half::f16::ZERO; w * 3];
+    scalar::rgbaf16_to_rgb_f16_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf16_to_rgb_f16_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgb_f16 w{w}");
+    let mut a = std::vec![half::f16::ZERO; w * 4];
+    let mut b = std::vec![half::f16::ZERO; w * 4];
+    scalar::rgbaf16_to_rgba_f16_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf16_to_rgba_f16_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgba_f16 w{w}");
+    // Lossless: 4-channel passthrough equals the host-native input.
+    assert_eq!(b, host[..w * 4], "rgba_f16 lossless w{w}");
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn rgbaf16_neon_be_matches_le() {
+  if !std::arch::is_aarch64_feature_detected!("fp16") {
+    return;
+  }
+  for w in [1usize, 4, 5, 7, 16, 33, 1921] {
+    let host = rgbaf_f16(w);
+    let le = as_le_rgbf16(&host);
+    let be = as_be_rgbf16(&host);
+    let mut out_le = std::vec![0u8; w * 4];
+    let mut out_be = std::vec![0u8; w * 4];
+    unsafe {
+      rgbaf16_to_rgba_row::<false>(&le, &mut out_le, w);
+      rgbaf16_to_rgba_row::<true>(&be, &mut out_be, w);
+    }
+    assert_eq!(out_le, out_be, "rgbaf16 BE parity w{w}");
+  }
+}

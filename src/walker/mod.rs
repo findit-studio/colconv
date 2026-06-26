@@ -227,8 +227,11 @@ use crate::{
 // is a fixed clamp + scale.
 #[cfg(feature = "rgb-float")]
 use crate::{
-  frame::{Rgbf16Frame, Rgbf32Frame},
-  source::{Rgbf16, Rgbf16Sink, Rgbf32, Rgbf32Sink, rgbf16_to_endian, rgbf32_to_endian},
+  frame::{Rgbaf16Frame, Rgbaf32Frame, Rgbf16Frame, Rgbf32Frame},
+  source::{
+    Rgbaf16, Rgbaf16Sink, Rgbaf32, Rgbaf32Sink, Rgbf16, Rgbf16Sink, Rgbf32, Rgbf32Sink,
+    rgbaf16_to_endian, rgbaf32_to_endian, rgbf16_to_endian, rgbf32_to_endian,
+  },
 };
 // Gray — single-luma (`Gray8`/`GrayN`/`Gray16`) and luma+alpha
 // (`Ya8`/`Ya16`) sources. Every gray walker takes `(full_range, matrix)`
@@ -1345,6 +1348,19 @@ walker!(@const BE: bool; Rgbf16<BE>, Rgbf16Sink, Rgbf16Frame, YuvOptions,
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb-float")))]
 walker!(@const BE: bool; Rgbf32<BE>, Rgbf32Sink, Rgbf32Frame, YuvOptions,
   |src, opts, sink| rgbf32_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+// Alpha-bearing twins (`Rgbaf16` / `Rgbaf32`): same `@const BE` arm over the
+// trailing-`BE` frames, delegating to `{fmt}_to_endian::<_, BE>`. The source
+// alpha rides the `with_rgba` / `with_rgba_*` outputs; the RGB / luma / HSV
+// outputs drop it. Both reuse [`YuvOptions`] (the float outputs ignore the
+// matrix / range; luma / HSV thread them through).
+#[cfg(feature = "rgb-float")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb-float")))]
+walker!(@const BE: bool; Rgbaf16<BE>, Rgbaf16Sink, Rgbaf16Frame, YuvOptions,
+  |src, opts, sink| rgbaf16_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "rgb-float")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb-float")))]
+walker!(@const BE: bool; Rgbaf32<BE>, Rgbaf32Sink, Rgbaf32Frame, YuvOptions,
+  |src, opts, sink| rgbaf32_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
 
 // ---- Legacy packed RGB (byte-order-fixed LE; plain arm) ----------------
 #[cfg(feature = "rgb-legacy")]
