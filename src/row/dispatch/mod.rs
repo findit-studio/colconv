@@ -86,6 +86,8 @@ pub(super) mod planar_gbr;
 pub(super) mod planar_gbr_float;
 #[cfg(feature = "gbr")]
 pub(super) mod planar_gbr_high_bit;
+#[cfg(feature = "gbr")]
+pub(super) mod planar_gbr_msb;
 #[cfg(feature = "yuv-semi-planar")]
 pub(super) mod pn;
 #[cfg(feature = "rgb-float")]

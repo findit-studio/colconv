@@ -229,7 +229,7 @@ pub use dispatch::pn::*;
 pub use dispatch::{packed_yuv411::*, packed_yuv422::*};
 #[cfg(feature = "gbr")]
 #[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
-pub use dispatch::{planar_gbr::*, planar_gbr_high_bit::*};
+pub use dispatch::{planar_gbr::*, planar_gbr_high_bit::*, planar_gbr_msb::*};
 #[cfg(feature = "rgb-float")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb-float")))]
 pub use dispatch::{rgb_f16_ops::*, rgb_float_ops::*};

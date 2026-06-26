@@ -289,16 +289,17 @@ use crate::{
 use crate::{
   frame::{
     GbrapFrame, GbrapHighBitFrame, Gbrapf16Frame, Gbrapf32Frame, GbrpFrame, GbrpHighBitFrame,
-    Gbrpf16Frame, Gbrpf32Frame,
+    GbrpMsbFrame, Gbrpf16Frame, Gbrpf32Frame,
   },
   source::{
     Gbrap, Gbrap10, Gbrap10Sink, Gbrap12, Gbrap12Sink, Gbrap14, Gbrap14Sink, Gbrap16, Gbrap16Sink,
     GbrapSink, Gbrapf16, Gbrapf16Sink, Gbrapf32, Gbrapf32Sink, Gbrp, Gbrp9, Gbrp9Sink, Gbrp10,
-    Gbrp10Sink, Gbrp12, Gbrp12Sink, Gbrp14, Gbrp14Sink, Gbrp16, Gbrp16Sink, GbrpSink, Gbrpf16,
-    Gbrpf16Sink, Gbrpf32, Gbrpf32Sink, gbrap_to, gbrap10_to_endian, gbrap12_to_endian,
-    gbrap14_to_endian, gbrap16_to_endian, gbrapf16_to_endian, gbrapf32_to_endian, gbrp_to,
-    gbrp9_to_endian, gbrp10_to_endian, gbrp12_to_endian, gbrp14_to_endian, gbrp16_to_endian,
-    gbrpf16_to_endian, gbrpf32_to_endian,
+    Gbrp10Msb, Gbrp10MsbSink, Gbrp10Sink, Gbrp12, Gbrp12Msb, Gbrp12MsbSink, Gbrp12Sink, Gbrp14,
+    Gbrp14Sink, Gbrp16, Gbrp16Sink, GbrpSink, Gbrpf16, Gbrpf16Sink, Gbrpf32, Gbrpf32Sink, gbrap_to,
+    gbrap10_to_endian, gbrap12_to_endian, gbrap14_to_endian, gbrap16_to_endian, gbrapf16_to_endian,
+    gbrapf32_to_endian, gbrp_to, gbrp9_to_endian, gbrp10_msb_to_endian, gbrp10_to_endian,
+    gbrp12_msb_to_endian, gbrp12_to_endian, gbrp14_to_endian, gbrp16_to_endian, gbrpf16_to_endian,
+    gbrpf32_to_endian,
   },
 };
 
@@ -1562,6 +1563,21 @@ walker!(@const_bits 14, BE; Gbrap14, Gbrap14Sink, GbrapHighBitFrame, YuvOptions,
 #[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
 walker!(@const_bits 16, BE; Gbrap16, Gbrap16Sink, GbrapHighBitFrame, YuvOptions,
   |src, opts, sink| gbrap16_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+
+// ---- Planar GBR, MSB-aligned high-bit (BE-generic marker; LE + BE) -----
+// MSB-aligned twins of `Gbrp10` / `Gbrp12` — the sample is in the high
+// `BITS` bits of each `u16`. Marker `Fmt<const BE>` over the shared
+// `GbrpMsbFrame<'a, BITS, BE>` (the depth is a leading const), so these ride
+// the `@const_bits` arm and delegate to the const-generic
+// `{fmt}_to_endian::<_, BE>`. Three planes, no alpha; reuses [`YuvOptions`].
+#[cfg(feature = "gbr")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
+walker!(@const_bits 10, BE; Gbrp10Msb, Gbrp10MsbSink, GbrpMsbFrame, YuvOptions,
+  |src, opts, sink| gbrp10_msb_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "gbr")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
+walker!(@const_bits 12, BE; Gbrp12Msb, Gbrp12MsbSink, GbrpMsbFrame, YuvOptions,
+  |src, opts, sink| gbrp12_msb_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
 
 // ---- Planar GBR, float (Gbrpf16/32, Gbrapf16/32; LE + BE via `_to_endian`)
 // Half/single-precision planar GBR (+ alpha for the `Gbrapf*` pair). Marker

@@ -123,6 +123,8 @@ pub(crate) mod planar_gbr_f16;
 pub(crate) mod planar_gbr_float;
 #[cfg(feature = "gbr")]
 pub(crate) mod planar_gbr_high_bit;
+#[cfg(feature = "gbr")]
+pub(crate) mod planar_gbr_msb;
 mod rgb_expand;
 #[cfg(feature = "yuv-semi-planar")]
 mod semi_planar_8bit;
@@ -236,6 +238,8 @@ pub(crate) use planar_gbr_f16::*;
 pub(crate) use planar_gbr_float::*;
 #[cfg(feature = "gbr")]
 pub(crate) use planar_gbr_high_bit::*;
+#[cfg(feature = "gbr")]
+pub(crate) use planar_gbr_msb::*;
 // Same consumer set as the `rgb_expand` helpers themselves: every source
 // family that fans an RGB row out to an RGBA row via Strategy A
 // (Bayer is RGB-only, mono / rgb-float / rgb-legacy / xyz never go

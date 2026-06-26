@@ -114,6 +114,8 @@ mod planar_gbr;
 mod planar_gbr_float;
 #[cfg(feature = "gbr")]
 mod planar_gbr_high_bit;
+#[cfg(feature = "gbr")]
+mod planar_gbr_msb;
 #[cfg(feature = "yuv-planar")]
 mod planar_other_8bit_9bit;
 #[cfg(feature = "yuv-444-packed")]
