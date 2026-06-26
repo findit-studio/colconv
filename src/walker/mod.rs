@@ -77,13 +77,16 @@ use crate::{
 // const-generic `{fmt}_to_endian::<S, BE>` covers LE + BE.
 #[cfg(feature = "yuv-semi-planar")]
 use crate::{
-  frame::{Nv12Frame, Nv16Frame, Nv21Frame, Nv24Frame, Nv42Frame, PnFrame, PnFrame422, PnFrame444},
+  frame::{
+    Nv12Frame, Nv16Frame, Nv20Frame, Nv21Frame, Nv24Frame, Nv42Frame, PnFrame, PnFrame422,
+    PnFrame444,
+  },
   source::{
-    Nv12, Nv12Sink, Nv16, Nv16Sink, Nv21, Nv21Sink, Nv24, Nv24Sink, Nv42, Nv42Sink, P010, P010Sink,
-    P012, P012Sink, P016, P016Sink, P210, P210Sink, P212, P212Sink, P216, P216Sink, P410, P410Sink,
-    P412, P412Sink, P416, P416Sink, nv12_to, nv16_to, nv21_to, nv24_to, nv42_to, p010_to_endian,
-    p012_to_endian, p016_to_endian, p210_to_endian, p212_to_endian, p216_to_endian, p410_to_endian,
-    p412_to_endian, p416_to_endian,
+    Nv12, Nv12Sink, Nv16, Nv16Sink, Nv20, Nv20Sink, Nv21, Nv21Sink, Nv24, Nv24Sink, Nv42, Nv42Sink,
+    P010, P010Sink, P012, P012Sink, P016, P016Sink, P210, P210Sink, P212, P212Sink, P216, P216Sink,
+    P410, P410Sink, P412, P412Sink, P416, P416Sink, nv12_to, nv16_to, nv20_to_endian, nv21_to,
+    nv24_to, nv42_to, p010_to_endian, p012_to_endian, p016_to_endian, p210_to_endian,
+    p212_to_endian, p216_to_endian, p410_to_endian, p412_to_endian, p416_to_endian,
   },
 };
 // Packed YUV 4:2:2 / 4:1:1 — single-buffer `(src, full_range, matrix,
@@ -902,6 +905,22 @@ walker!(Nv24, Nv24Sink, Nv24Frame, YuvOptions, |src, opts, sink| {
 walker!(Nv42, Nv42Sink, Nv42Frame, YuvOptions, |src, opts, sink| {
   nv42_to(src, opts.full_range(), opts.matrix(), sink)
 });
+
+// ---- Semi-planar YUV, 10-bit low-bit-packed (NV20; LE + BE via `_to_endian`)
+//
+// NV20 is the low-bit-packed 4:2:2 twin of P210. Its marker is
+// endian-generic (`Nv20<const BE>`) over the **trailing**-`BE` frame
+// `Nv20Frame<'a, BE>` (no leading bit-depth const — the 10-bit depth is
+// baked into the format, not carried as a frame generic), so it rides the
+// `@const BE` arm (same shape as XYZ12 / V410 / Gray16), NOT the
+// `@const_bits` arm the high-bit P-formats use. It reuses [`YuvOptions`]
+// like every YUV family and delegates to the const-generic
+// `nv20_to_endian::<_, BE>` (the LE `nv20_to` is its `BE = false` wrapper),
+// so one impl covers LE + BE.
+#[cfg(feature = "yuv-semi-planar")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuv-semi-planar")))]
+walker!(@const BE: bool; Nv20<BE>, Nv20Sink, Nv20Frame, YuvOptions,
+  |src, opts, sink| nv20_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
 
 // ---- Semi-planar YUV, high-bit (P0xx/P2xx/P4xx; LE + BE via `_to_endian`)
 #[cfg(feature = "yuv-semi-planar")]

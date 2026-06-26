@@ -68,6 +68,8 @@ pub(super) mod legacy_rgb;
 pub(super) mod mono1bit;
 #[cfg(feature = "yuv-semi-planar")]
 pub(super) mod nv;
+#[cfg(feature = "yuv-semi-planar")]
+pub(super) mod nv20;
 #[cfg(feature = "rgb")]
 pub(super) mod packed_rgb_16bit;
 #[cfg(feature = "yuv-packed")]

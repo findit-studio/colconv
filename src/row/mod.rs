@@ -209,6 +209,9 @@ pub use dispatch::legacy_rgb::*;
 #[cfg(feature = "yuv-semi-planar")]
 #[cfg_attr(docsrs, doc(cfg(feature = "yuv-semi-planar")))]
 pub use dispatch::nv::*;
+#[cfg(feature = "yuv-semi-planar")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuv-semi-planar")))]
+pub use dispatch::nv20::*;
 #[cfg(feature = "mono")]
 #[cfg_attr(docsrs, doc(cfg(feature = "mono")))]
 pub use dispatch::pal8::*;

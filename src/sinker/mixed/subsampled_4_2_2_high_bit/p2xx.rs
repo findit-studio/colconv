@@ -151,7 +151,7 @@ fn grow_depack_scratch(
 /// luma-only resampling never depends on an unused chroma allocation.
 #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
 #[allow(clippy::too_many_arguments)]
-fn p2xx_process_native<const BITS: u32, const BE: bool>(
+fn p2xx_process_native<const BITS: u32, const BE: bool, const LOW_PACKED: bool>(
   plan: &ResamplePlan,
   native_planar_u16: &mut Option<std::boxed::Box<NativePlanarYuvU16>>,
   y_scratch: &mut std::vec::Vec<u16>,
@@ -223,15 +223,25 @@ fn p2xx_process_native<const BITS: u32, const BE: bool>(
   }
 
   // De-pack the wire planes into host-native LOGICAL scratch. Decode the wire
-  // endianness, then shift the active high `BITS` down to the low `BITS`
-  // (`>> (16 - BITS)`; `>> 0` at BITS = 16). Everything past here is infallible.
+  // endianness, then extract the active `BITS`: for the high-bit-packed
+  // P-formats (`LOW_PACKED = false`) shift the high `BITS` down
+  // (`>> (16 - BITS)`; `>> 0` at BITS = 16); for low-bit-packed NV20
+  // (`LOW_PACKED = true`) mask the low `BITS` (`& ((1 << BITS) - 1)`).
+  // Everything past here is infallible.
+  let depack = |logical: u16| -> u16 {
+    if LOW_PACKED {
+      logical & ((1u16 << BITS) - 1)
+    } else {
+      logical >> (16 - BITS)
+    }
+  };
   for (d, &s) in y_scratch[..w].iter_mut().zip(y_row.iter()) {
     let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
-    *d = logical >> (16 - BITS);
+    *d = depack(logical);
   }
   if need_color {
-    // P-format chroma is interleaved `U,V,U,V…` (U at even element); each of U
-    // and V is independently high-bit-packed and must be de-packed.
+    // P-format / NV20 chroma is interleaved `U,V,U,V…` (U at even element);
+    // each of U and V is independently packed and must be de-packed.
     for (i, pair) in uv_half.chunks_exact(2).enumerate() {
       let u = if BE {
         u16::from_be(pair[0])
@@ -243,8 +253,8 @@ fn p2xx_process_native<const BITS: u32, const BE: bool>(
       } else {
         u16::from_le(pair[1])
       };
-      u_scratch[i] = u >> (16 - BITS);
-      v_scratch[i] = v >> (16 - BITS);
+      u_scratch[i] = depack(u);
+      v_scratch[i] = depack(v);
     }
   }
 
@@ -546,7 +556,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P210<BE>, R> {
       if take_native {
         // Dispatch first; freeze the route to native ONLY after the call
         // returns Ok on an output-bearing row.
-        p2xx_process_native::<BITS, BE>(
+        p2xx_process_native::<BITS, BE, false>(
           plan,
           native_planar_u16,
           p0xx_y_half,
@@ -975,7 +985,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P212<BE>, R> {
       }
       #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
       if take_native {
-        p2xx_process_native::<BITS, BE>(
+        p2xx_process_native::<BITS, BE, false>(
           plan,
           native_planar_u16,
           p0xx_y_half,
@@ -1404,7 +1414,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P216<BE>, R> {
       }
       #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
       if take_native {
-        p2xx_process_native::<BITS, BE>(
+        p2xx_process_native::<BITS, BE, false>(
           plan,
           native_planar_u16,
           p0xx_y_half,
@@ -1569,6 +1579,442 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P216<BE>, R> {
     p016_to_rgb_row_endian(
       row.y(),
       row.uv_half(),
+      rgb_row,
+      w,
+      row.matrix(),
+      row.full_range(),
+      use_simd,
+      BE,
+    );
+
+    if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
+      rgb_to_hsv_row(
+        rgb_row,
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
+    }
+
+    if let Some(buf) = rgba.as_deref_mut() {
+      let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
+      expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
+    }
+
+    Ok(())
+  }
+}
+
+// ---- NV20 impl ----------------------------------------------------------
+//
+// 4:2:2 LOW-bit-packed semi-planar (10-bit) — the low-bit twin of P210.
+// Same per-row plane shape (full-width Y + half-width interleaved UV at
+// full height) and same `u16` element type; the ONLY difference is the
+// per-`u16` bit alignment: NV20's 10 active bits live in the LOW 10
+// (`& 0x03FF`) vs P210's high 10 (`>> 6`). Routes through the dedicated
+// low-bit `nv20_to_rgb_*` row primitives (the `LOW_PACKED = true`
+// monomorphization of the shared Pn kernel family) and the native fast
+// tier with `LOW_PACKED = true`; everything else mirrors the P210 impl
+// (chroma row `r` per Y row `r`, native luma = de-packed Y narrowed to
+// 8 bits, no `luma_u16` output).
+
+impl<'a, R, const BE: bool> MixedSinker<'a, Nv20<BE>, R> {
+  /// Attaches a packed **`u16`** RGB output buffer. 10-bit
+  /// **low-bit-packed** output (yuv420p10le convention — matching NV20's
+  /// own low-bit packing). Length is in `u16` elements: `width x height x 3`.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_rgb_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_elems(3)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::InsufficientRgbU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
+    }
+    self.rgb_u16 = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a packed **8‑bit** RGBA output buffer. The 10‑bit NV20
+  /// source (semi‑planar, low‑bit‑packed) is converted to 8‑bit RGBA
+  /// via the `BITS = 10` Q15 kernel family; alpha = `0xFF` (NV20 has
+  /// no alpha plane).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
+    self.set_rgba(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_rgba`](Self::with_rgba).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_elems(4)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::InsufficientRgbaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
+    }
+    self.rgba = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a packed **`u16`** RGBA output buffer. Output is
+  /// **low‑bit‑packed** 10‑bit values (`yuv420p10le` convention).
+  /// Length is measured in `u16` **elements** (`width x height x 4`).
+  /// Alpha element is `(1 << 10) - 1`.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_rgba_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_rgba_u16`](Self::with_rgba_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_elems(4)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
+    }
+    self.rgba_u16 = Some(buf);
+    Ok(self)
+  }
+}
+
+impl<R, const BE: bool> Nv20Sink<BE> for MixedSinker<'_, Nv20<BE>, R> {}
+
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, Nv20<BE>, R> {
+  type Input<'r> = Nv20Row<'r>;
+  type Error = MixedSinkerError;
+
+  fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
+    if self.width & 1 != 0 {
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(
+        self.width,
+      )));
+    }
+    check_dimensions_match(self.width, self.height, width, height)?;
+    reset_high_bit_yuv_streams(self);
+    Ok(())
+  }
+
+  fn process(&mut self, row: Nv20Row<'_>) -> Result<(), Self::Error> {
+    // NV20 stores 10‑bit samples LOW‑bit‑packed; bit depth is fixed by
+    // the format. Used for the u16 RGBA expand path's alpha pad.
+    const BITS: u32 = 10;
+
+    let w = self.width;
+    let h = self.height;
+    let idx = row.row();
+    let use_simd = self.simd;
+
+    if w & 1 != 0 {
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(w)));
+    }
+    if row.y().len() != w {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::Y10,
+        idx,
+        w,
+        row.y().len(),
+      )));
+    }
+    if row.uv().len() != w {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::UvHalf10,
+        idx,
+        w,
+        row.uv().len(),
+      )));
+    }
+    if idx >= self.height {
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, self.height),
+      ));
+    }
+
+    let Self {
+      rgb,
+      rgb_u16,
+      rgba,
+      rgba_u16,
+      luma,
+      hsv,
+      rgb_scratch,
+      rgb_scratch_u16,
+      luma_scratch_u16,
+      rgb_stream,
+      rgb_stream_u16,
+      luma_stream_u16,
+      rgb_filter_stream,
+      rgb_filter_stream_u16,
+      luma_filter_stream_u16,
+      resample_outputs,
+      plan,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      native,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      native_planar_u16,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      p0xx_y_half,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      p0xx_u_half,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      p0xx_v_half,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      frozen_native_route,
+      ..
+    } = self;
+
+    // Non-identity plan. Identical structure to the P210 impl (see there for
+    // the full rationale); the only differences are the LOW-bit de-pack
+    // (`& 0x03FF` instead of `>> 6`), the low-bit `nv20_to_rgb*` kernels, and
+    // the native tier's `LOW_PACKED = true`.
+    if let Some(plan) = plan.as_ref() {
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      let (y, uv_half) = (row.y(), row.uv());
+      if plan.kind().is_filter() {
+        return packed_yuv422_triple_filter_resample::<BITS>(
+          luma_filter_stream_u16,
+          rgb_filter_stream,
+          rgb_filter_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          luma_scratch_u16,
+          rgb_scratch,
+          rgb_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| {
+            for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
+              let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+              *dst = logical & ((1u16 << BITS) - 1);
+            }
+          },
+          |scratch| {
+            nv20_to_rgb_row_endian(y, uv_half, scratch, w, matrix, full_range, use_simd, BE)
+          },
+          |scratch| {
+            nv20_to_rgb_u16_row_endian(y, uv_half, scratch, w, matrix, full_range, use_simd, BE)
+          },
+        );
+      }
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      let need_output = luma.is_some()
+        || rgb.is_some()
+        || rgba.is_some()
+        || rgb_u16.is_some()
+        || rgba_u16.is_some()
+        || hsv.is_some();
+      // The RFC #238 splice stage — see the P210 impl.
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      let take_native = matches!(
+        select_insertion_point(
+          AveragingDomain::Encoded,
+          InsertionContext {
+            native_eligible: cfg!(all(feature = "yuv-semi-planar", feature = "yuv-planar")),
+            with_native: *native,
+            area_plan: true,
+          },
+        ),
+        InsertionPoint::NativeCodes
+      );
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      if need_output
+        && let Some(frozen) = *frozen_native_route
+        && frozen != take_native
+      {
+        return Err(MixedSinkerError::NativeRouteChanged(
+          NativeRouteChanged::new(idx),
+        ));
+      }
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      if take_native {
+        // NV20: the native fast tier de-packs with `LOW_PACKED = true`.
+        p2xx_process_native::<BITS, BE, true>(
+          plan,
+          native_planar_u16,
+          p0xx_y_half,
+          p0xx_u_half,
+          p0xx_v_half,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          y,
+          uv_half,
+          matrix,
+          full_range,
+          idx,
+          w,
+          h,
+          use_simd,
+        )?;
+        if frozen_native_route.is_none() && need_output {
+          *frozen_native_route = Some(true);
+        }
+        return Ok(());
+      }
+      packed_yuv422_triple_resample::<BITS>(
+        luma_stream_u16,
+        rgb_stream,
+        rgb_stream_u16,
+        resample_outputs,
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        &mut None,
+        hsv,
+        luma_scratch_u16,
+        rgb_scratch,
+        rgb_scratch_u16,
+        w,
+        plan,
+        idx,
+        use_simd,
+        matrix,
+        full_range,
+        |scratch| {
+          for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
+            let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+            *dst = logical & ((1u16 << BITS) - 1);
+          }
+        },
+        |scratch| nv20_to_rgb_row_endian(y, uv_half, scratch, w, matrix, full_range, use_simd, BE),
+        |scratch| {
+          nv20_to_rgb_u16_row_endian(y, uv_half, scratch, w, matrix, full_range, use_simd, BE)
+        },
+      )?;
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      if frozen_native_route.is_none() && need_output {
+        *frozen_native_route = Some(false);
+      }
+      return Ok(());
+    }
+
+    let one_plane_start = idx * w;
+    let one_plane_end = one_plane_start + w;
+
+    if let Some(luma) = luma.as_deref_mut() {
+      let dst = &mut luma[one_plane_start..one_plane_end];
+      // NV20 native luma: de-pack the low 10 then narrow to 8 bits
+      // (`(logical & 0x03FF) >> 2`) — the `>> 8` top-byte shortcut the
+      // high-bit P-formats use does NOT apply here.
+      for (d, &s) in dst.iter_mut().zip(row.y().iter()) {
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+        *d = ((logical & ((1u16 << BITS) - 1)) >> (BITS - 8)) as u8;
+      }
+    }
+
+    // ===== u16 RGB / RGBA path (Strategy A) =====
+    // u16 outputs are low-bit-packed (yuv420p10le convention).
+    let want_rgb_u16 = rgb_u16.is_some();
+    let want_rgba_u16 = rgba_u16.is_some();
+
+    if want_rgba_u16 && !want_rgb_u16 {
+      let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
+      let rgba_u16_row =
+        rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
+      nv20_to_rgba_u16_row_endian(
+        row.y(),
+        row.uv(),
+        rgba_u16_row,
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+    } else if want_rgb_u16 {
+      let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
+      let rgb_plane_end =
+        one_plane_end
+          .checked_mul(3)
+          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+            w, h, 3,
+          )))?;
+      let rgb_plane_start = one_plane_start * 3;
+      let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
+      nv20_to_rgb_u16_row_endian(
+        row.y(),
+        row.uv(),
+        rgb_u16_row,
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+      if want_rgba_u16 {
+        let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
+        let rgba_u16_row =
+          rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
+        expand_rgb_u16_to_rgba_u16_row::<BITS>(rgb_u16_row, rgba_u16_row, w);
+      }
+    }
+
+    // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+    let need_rgb_kernel = rgb.is_some() || want_hsv;
+
+    if want_rgba && !need_rgb_kernel {
+      let rgba_buf = rgba.as_deref_mut().unwrap();
+      let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
+      nv20_to_rgba_row_endian(
+        row.y(),
+        row.uv(),
+        rgba_row,
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+      return Ok(());
+    }
+
+    if !need_rgb_kernel {
+      return Ok(());
+    }
+
+    let rgb_row = rgb_row_buf_or_scratch(
+      rgb.as_deref_mut(),
+      rgb_scratch,
+      one_plane_start,
+      one_plane_end,
+      w,
+      h,
+    )?;
+
+    nv20_to_rgb_row_endian(
+      row.y(),
+      row.uv(),
       rgb_row,
       w,
       row.matrix(),
