@@ -142,6 +142,10 @@ pub(crate) mod y_plane_to_luma_u16;
 pub(super) mod ya16;
 #[cfg(feature = "gray")]
 pub(super) mod ya8;
+#[cfg(feature = "gray")]
+pub(super) mod yaf16;
+#[cfg(feature = "gray")]
+pub(super) mod yaf32;
 #[cfg(feature = "yuv-planar")]
 pub(super) mod yuv411p;
 // `yuv420` hosts both the planar 4:2:0 dispatchers (`yuv-planar`) and

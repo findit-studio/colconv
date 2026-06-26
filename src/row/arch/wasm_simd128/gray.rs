@@ -17,7 +17,7 @@ use core::arch::wasm32::*;
 
 use crate::row::{
   arch::wasm_simd128::endian::{load_endian_u16x8, load_endian_u32x4},
-  scalar::{bits_mask, gray as scalar, grayf16, grayf32, ya8, ya16},
+  scalar::{bits_mask, gray as scalar, grayf16, grayf32, ya8, ya16, yaf16, yaf32},
 };
 
 // ---- Gray8 ------------------------------------------------------------------
@@ -1221,4 +1221,243 @@ pub(crate) unsafe fn grayf16_to_hsv_row<const BE: bool>(
 ) {
   debug_assert!(y_plane.len() >= width);
   grayf16::grayf16_to_hsv_row::<BE>(y_plane, h_out, s_out, v_out, width);
+}
+
+// ---- Yaf32 ------------------------------------------------------------------
+//
+// Packed `[Y, A]` f32 source. The wasm-simd128 backend delegates every Yaf32
+// kernel to scalar: the deinterleave-then-clamp/scale offers little SIMD upside
+// on simd128, and the sibling `ya16` rgb / rgba paths likewise delegate. Routed
+// through these wrappers so the dispatcher keeps a uniform per-backend shape.
+
+/// wasm-simd128 `yaf32_to_rgb_row`: delegates to scalar.
+///
+/// # Safety
+/// simd128 must be enabled.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn yaf32_to_rgb_row<const BE: bool>(
+  packed: &[f32],
+  out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 3);
+  yaf32::yaf32_to_rgb_row::<BE>(packed, out, width);
+}
+
+/// wasm-simd128 `yaf32_to_rgba_row`: delegates to scalar.
+///
+/// # Safety
+/// simd128 must be enabled.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn yaf32_to_rgba_row<const BE: bool>(
+  packed: &[f32],
+  out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 4);
+  yaf32::yaf32_to_rgba_row::<BE>(packed, out, width);
+}
+
+/// wasm-simd128 `yaf32_to_rgb_u16_row`: delegates to scalar.
+///
+/// # Safety
+/// simd128 must be enabled.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn yaf32_to_rgb_u16_row<const BE: bool>(
+  packed: &[f32],
+  out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 3);
+  yaf32::yaf32_to_rgb_u16_row::<BE>(packed, out, width);
+}
+
+/// wasm-simd128 `yaf32_to_rgba_u16_row`: delegates to scalar.
+///
+/// # Safety
+/// simd128 must be enabled.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn yaf32_to_rgba_u16_row<const BE: bool>(
+  packed: &[f32],
+  out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 4);
+  yaf32::yaf32_to_rgba_u16_row::<BE>(packed, out, width);
+}
+
+/// wasm-simd128 `yaf32_to_luma_row`: delegates to scalar.
+///
+/// # Safety
+/// simd128 must be enabled.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn yaf32_to_luma_row<const BE: bool>(
+  packed: &[f32],
+  out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width);
+  yaf32::yaf32_to_luma_row::<BE>(packed, out, width);
+}
+
+/// wasm-simd128 `yaf32_to_luma_u16_row`: delegates to scalar.
+///
+/// # Safety
+/// simd128 must be enabled.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn yaf32_to_luma_u16_row<const BE: bool>(
+  packed: &[f32],
+  out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width);
+  yaf32::yaf32_to_luma_u16_row::<BE>(packed, out, width);
+}
+
+/// wasm-simd128 `yaf32_to_hsv_row`: delegates to scalar.
+///
+/// # Safety
+/// simd128 must be enabled.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn yaf32_to_hsv_row<const BE: bool>(
+  packed: &[f32],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 2);
+  yaf32::yaf32_to_hsv_row::<BE>(packed, h_out, s_out, v_out, width);
+}
+
+// ---- Yaf16 ------------------------------------------------------------------
+//
+// Packed `[Y, A]` f16 source. As with the `grayf16` wasm path (and `yaf32`
+// above), every kernel delegates to scalar — the f16 widen has no simd128
+// hardware accel here.
+
+/// wasm-simd128 `yaf16_to_rgb_row`: delegates to scalar.
+///
+/// # Safety
+/// simd128 must be enabled.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn yaf16_to_rgb_row<const BE: bool>(
+  packed: &[half::f16],
+  out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 3);
+  yaf16::yaf16_to_rgb_row::<BE>(packed, out, width);
+}
+
+/// wasm-simd128 `yaf16_to_rgba_row`: delegates to scalar.
+///
+/// # Safety
+/// simd128 must be enabled.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn yaf16_to_rgba_row<const BE: bool>(
+  packed: &[half::f16],
+  out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 4);
+  yaf16::yaf16_to_rgba_row::<BE>(packed, out, width);
+}
+
+/// wasm-simd128 `yaf16_to_rgb_u16_row`: delegates to scalar.
+///
+/// # Safety
+/// simd128 must be enabled.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn yaf16_to_rgb_u16_row<const BE: bool>(
+  packed: &[half::f16],
+  out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 3);
+  yaf16::yaf16_to_rgb_u16_row::<BE>(packed, out, width);
+}
+
+/// wasm-simd128 `yaf16_to_rgba_u16_row`: delegates to scalar.
+///
+/// # Safety
+/// simd128 must be enabled.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn yaf16_to_rgba_u16_row<const BE: bool>(
+  packed: &[half::f16],
+  out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 4);
+  yaf16::yaf16_to_rgba_u16_row::<BE>(packed, out, width);
+}
+
+/// wasm-simd128 `yaf16_to_luma_row`: delegates to scalar.
+///
+/// # Safety
+/// simd128 must be enabled.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn yaf16_to_luma_row<const BE: bool>(
+  packed: &[half::f16],
+  out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width);
+  yaf16::yaf16_to_luma_row::<BE>(packed, out, width);
+}
+
+/// wasm-simd128 `yaf16_to_luma_u16_row`: delegates to scalar.
+///
+/// # Safety
+/// simd128 must be enabled.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn yaf16_to_luma_u16_row<const BE: bool>(
+  packed: &[half::f16],
+  out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width);
+  yaf16::yaf16_to_luma_u16_row::<BE>(packed, out, width);
+}
+
+/// wasm-simd128 `yaf16_to_hsv_row`: delegates to scalar.
+///
+/// # Safety
+/// simd128 must be enabled.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn yaf16_to_hsv_row<const BE: bool>(
+  packed: &[half::f16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 2);
+  yaf16::yaf16_to_hsv_row::<BE>(packed, h_out, s_out, v_out, width);
 }

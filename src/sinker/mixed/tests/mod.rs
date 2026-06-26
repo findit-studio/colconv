@@ -300,6 +300,8 @@ mod resample_ya16_filter;
 mod resample_ya8;
 #[cfg(feature = "gray")]
 mod resample_ya8_filter;
+#[cfg(feature = "gray")]
+mod resample_yaf32;
 #[cfg(all(feature = "yuv-planar", feature = "rgb"))]
 mod resample_yuv410_440p;
 #[cfg(all(feature = "yuv-planar", feature = "rgb"))]

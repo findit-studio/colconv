@@ -2525,6 +2525,39 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// otherwise. Gated to `gray`.
   #[cfg(feature = "gray")]
   luma_scratch_f32: Vec<f32>,
+  /// Row-stage **3-channel** `f32` **area** stream for the
+  /// [`Yaf32`](crate::source::Yaf32) /
+  /// [`Yaf16`](crate::source::Yaf16) (widened) resample path. Channel
+  /// layout per pixel is `[Yc, A, Y]`: `Yc` is the colour luma fed straight
+  /// (`= Y`) or premultiplied (`= Y * A`), `A` the real source alpha, and
+  /// `Y` the independent native luma (mode-independent `mean(Y)`, so
+  /// `luma*` outputs stay byte-identical to [`Grayf32`](crate::source::Grayf32)
+  /// for the same Y). The engine bins each channel independently, so channel
+  /// 2 equals a 1-channel native-Y bin. Lazily created in `process`, reset in
+  /// `begin_frame`. Gated to `gray`.
+  #[cfg(feature = "gray")]
+  yaf_stream_f32: Option<std::boxed::Box<crate::resample::AreaStream<f32>>>,
+  /// Row-stage **3-channel** `f32` **filter** stream — the filter twin of
+  /// [`Self::yaf_stream_f32`] (straight alpha only; a premultiplied filter
+  /// plan routes to the area tail, which surfaces `UnsupportedFilter`). f32
+  /// is full-range, so there is no native-depth clamp on the filter output.
+  /// Lazily created in `process`, reset in `begin_frame`. Gated to `gray`.
+  #[cfg(feature = "gray")]
+  yaf_filter_stream_f32: Option<std::boxed::Box<crate::resample::FilterStream<f32>>>,
+  /// Source-width 3-channel `f32` staging for the Yaf resample: each wire
+  /// `[Y, A]` pixel decodes here as `[Y, A, Y]` (host-native) before the
+  /// optional premultiply (`row[3x] *= row[3x+1]`) and the single feed of
+  /// [`Self::yaf_stream_f32`] / [`Self::yaf_filter_stream_f32`]. Lazily grown
+  /// to `3 * width` `f32`; empty otherwise. Gated to `gray`.
+  #[cfg(feature = "gray")]
+  yaf_stage_scratch_f32: Vec<f32>,
+  /// Out-width 3-channel `f32` de-interleave staging for the Yaf resample
+  /// emit: each finalized binned `[cy, ca, ny]` row de-interleaves into
+  /// contiguous `colorY | alpha | nativeY` planes (`colorY` resolved straight
+  /// in place) so the direct `grayf32_*` kernels can derive every output.
+  /// Lazily grown to `3 * out_width` `f32`; empty otherwise. Gated to `gray`.
+  #[cfg(feature = "gray")]
+  yaf_plane_scratch_f32: Vec<f32>,
   /// Source-width `f32` RGB staging for packed-float-RGB resampling:
   /// the wire row converts here (host-native, lossless) before feeding
   /// [`Self::rgb_stream_f32`]. Lazily grown to `3 * width` `f32`; empty
@@ -3386,6 +3419,14 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       luma_scratch_u16: Vec::new(),
       #[cfg(feature = "gray")]
       luma_scratch_f32: Vec::new(),
+      #[cfg(feature = "gray")]
+      yaf_stream_f32: None,
+      #[cfg(feature = "gray")]
+      yaf_filter_stream_f32: None,
+      #[cfg(feature = "gray")]
+      yaf_stage_scratch_f32: Vec::new(),
+      #[cfg(feature = "gray")]
+      yaf_plane_scratch_f32: Vec::new(),
       #[cfg(any(
         all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
         feature = "gbr"

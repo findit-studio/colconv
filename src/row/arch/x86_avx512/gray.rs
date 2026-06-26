@@ -1530,3 +1530,550 @@ pub(crate) unsafe fn grayf16_to_hsv_row<const BE: bool>(
     );
   }
 }
+
+// ---- Yaf32 ------------------------------------------------------------------
+//
+// Packed `[Y, A]` f32 source. Each 16-pixel chunk deinterleaves Y (and A for
+// RGBA outputs) with 128-bit `_mm_shuffle_ps` (lane-crossing-free) into a host
+// -native f32 stack buffer, then delegates to the proven `grayf32` AVX-512
+// kernels for the clamp / scale / round math (Y broadcast R=G=B; A patched into
+// the RGBA α channel via `grayf32_to_luma*`). Like the `ya16` path, the
+// host-native deinterleave is only correct when the source byte order matches
+// the host, so `BE != HOST_NATIVE_BE` falls through to scalar.
+
+/// Deinterleave `n` (multiple of 4) Y elements from packed `[Y, A]` f32 into
+/// `ybuf` via 128-bit `_mm_shuffle_ps`. Host-native (caller guards byte order).
+///
+/// # Safety
+/// AVX-512F must be available. `packed` valid for `n * 2` f32; `ybuf` for `n` f32.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+unsafe fn yaf32_deint_y_avx512(packed: *const f32, ybuf: *mut f32, n: usize) {
+  unsafe {
+    let mut i = 0usize;
+    while i + 4 <= n {
+      let ya0 = _mm_loadu_ps(packed.add(i * 2));
+      let ya1 = _mm_loadu_ps(packed.add(i * 2 + 4));
+      _mm_storeu_ps(ybuf.add(i), _mm_shuffle_ps::<0x88>(ya0, ya1));
+      i += 4;
+    }
+  }
+}
+
+/// Deinterleave `n` (multiple of 4) A elements from packed `[Y, A]` f32 into
+/// `abuf` via 128-bit `_mm_shuffle_ps`. Host-native (caller guards byte order).
+///
+/// # Safety
+/// AVX-512F must be available. `packed` valid for `n * 2` f32; `abuf` for `n` f32.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+unsafe fn yaf32_deint_a_avx512(packed: *const f32, abuf: *mut f32, n: usize) {
+  unsafe {
+    let mut i = 0usize;
+    while i + 4 <= n {
+      let ya0 = _mm_loadu_ps(packed.add(i * 2));
+      let ya1 = _mm_loadu_ps(packed.add(i * 2 + 4));
+      _mm_storeu_ps(abuf.add(i), _mm_shuffle_ps::<0xDD>(ya0, ya1));
+      i += 4;
+    }
+  }
+}
+
+/// AVX-512 `yaf32_to_rgb_row`: deinterleave `[Y,A]` f32, clamp Y [0,1] x 255 → u8, broadcast.
+///
+/// # Safety
+/// AVX-512F + AVX-512BW must be available. `packed.len() >= width * 2`. `out.len() >= width * 3`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn yaf32_to_rgb_row<const BE: bool>(
+  packed: &[f32],
+  out: &mut [u8],
+  width: usize,
+) {
+  use crate::row::scalar::yaf32 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 3);
+  if BE != HOST_NATIVE_BE {
+    return scalar::yaf32_to_rgb_row::<BE>(packed, out, width);
+  }
+  let mut x = 0usize;
+  while x + 16 <= width {
+    let mut ybuf = [0.0f32; 16];
+    unsafe {
+      yaf32_deint_y_avx512(packed.as_ptr().add(x * 2), ybuf.as_mut_ptr(), 16);
+      grayf32_to_rgb_row::<HOST_NATIVE_BE>(&ybuf, &mut out[x * 3..(x + 16) * 3], 16);
+    }
+    x += 16;
+  }
+  if x < width {
+    scalar::yaf32_to_rgb_row::<BE>(
+      &packed[x * 2..width * 2],
+      &mut out[x * 3..width * 3],
+      width - x,
+    );
+  }
+}
+
+/// AVX-512 `yaf32_to_rgba_row`: clamp Y x 255 broadcast, α = clamp(A) x 255.
+///
+/// # Safety
+/// AVX-512F + AVX-512BW must be available. `packed.len() >= width * 2`. `out.len() >= width * 4`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn yaf32_to_rgba_row<const BE: bool>(
+  packed: &[f32],
+  out: &mut [u8],
+  width: usize,
+) {
+  use crate::row::scalar::yaf32 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 4);
+  if BE != HOST_NATIVE_BE {
+    return scalar::yaf32_to_rgba_row::<BE>(packed, out, width);
+  }
+  let mut x = 0usize;
+  while x + 16 <= width {
+    let mut ybuf = [0.0f32; 16];
+    let mut abuf = [0.0f32; 16];
+    let mut a8 = [0u8; 16];
+    unsafe {
+      yaf32_deint_y_avx512(packed.as_ptr().add(x * 2), ybuf.as_mut_ptr(), 16);
+      yaf32_deint_a_avx512(packed.as_ptr().add(x * 2), abuf.as_mut_ptr(), 16);
+      grayf32_to_rgba_row::<HOST_NATIVE_BE>(&ybuf, &mut out[x * 4..(x + 16) * 4], 16);
+      grayf32_to_luma_row::<HOST_NATIVE_BE>(&abuf, &mut a8, 16);
+    }
+    for i in 0..16 {
+      out[(x + i) * 4 + 3] = a8[i];
+    }
+    x += 16;
+  }
+  if x < width {
+    scalar::yaf32_to_rgba_row::<BE>(
+      &packed[x * 2..width * 2],
+      &mut out[x * 4..width * 4],
+      width - x,
+    );
+  }
+}
+
+/// AVX-512 `yaf32_to_rgb_u16_row`: clamp Y [0,1] x 65535 → u16, broadcast.
+///
+/// # Safety
+/// AVX-512F + AVX-512BW must be available. `packed.len() >= width * 2`. `out.len() >= width * 3`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn yaf32_to_rgb_u16_row<const BE: bool>(
+  packed: &[f32],
+  out: &mut [u16],
+  width: usize,
+) {
+  use crate::row::scalar::yaf32 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 3);
+  if BE != HOST_NATIVE_BE {
+    return scalar::yaf32_to_rgb_u16_row::<BE>(packed, out, width);
+  }
+  let mut x = 0usize;
+  while x + 16 <= width {
+    let mut ybuf = [0.0f32; 16];
+    unsafe {
+      yaf32_deint_y_avx512(packed.as_ptr().add(x * 2), ybuf.as_mut_ptr(), 16);
+      grayf32_to_rgb_u16_row::<HOST_NATIVE_BE>(&ybuf, &mut out[x * 3..(x + 16) * 3], 16);
+    }
+    x += 16;
+  }
+  if x < width {
+    scalar::yaf32_to_rgb_u16_row::<BE>(
+      &packed[x * 2..width * 2],
+      &mut out[x * 3..width * 3],
+      width - x,
+    );
+  }
+}
+
+/// AVX-512 `yaf32_to_rgba_u16_row`: clamp Y x 65535 broadcast, α = clamp(A) x 65535.
+///
+/// # Safety
+/// AVX-512F + AVX-512BW must be available. `packed.len() >= width * 2`. `out.len() >= width * 4`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn yaf32_to_rgba_u16_row<const BE: bool>(
+  packed: &[f32],
+  out: &mut [u16],
+  width: usize,
+) {
+  use crate::row::scalar::yaf32 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 4);
+  if BE != HOST_NATIVE_BE {
+    return scalar::yaf32_to_rgba_u16_row::<BE>(packed, out, width);
+  }
+  let mut x = 0usize;
+  while x + 16 <= width {
+    let mut ybuf = [0.0f32; 16];
+    let mut abuf = [0.0f32; 16];
+    let mut a16 = [0u16; 16];
+    unsafe {
+      yaf32_deint_y_avx512(packed.as_ptr().add(x * 2), ybuf.as_mut_ptr(), 16);
+      yaf32_deint_a_avx512(packed.as_ptr().add(x * 2), abuf.as_mut_ptr(), 16);
+      grayf32_to_rgba_u16_row::<HOST_NATIVE_BE>(&ybuf, &mut out[x * 4..(x + 16) * 4], 16);
+      grayf32_to_luma_u16_row::<HOST_NATIVE_BE>(&abuf, &mut a16, 16);
+    }
+    for i in 0..16 {
+      out[(x + i) * 4 + 3] = a16[i];
+    }
+    x += 16;
+  }
+  if x < width {
+    scalar::yaf32_to_rgba_u16_row::<BE>(
+      &packed[x * 2..width * 2],
+      &mut out[x * 4..width * 4],
+      width - x,
+    );
+  }
+}
+
+/// AVX-512 `yaf32_to_luma_row`: clamp Y [0,1] x 255 → u8 luma.
+///
+/// # Safety
+/// AVX-512F + AVX-512BW must be available. `packed.len() >= width * 2`. `out.len() >= width`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn yaf32_to_luma_row<const BE: bool>(
+  packed: &[f32],
+  out: &mut [u8],
+  width: usize,
+) {
+  use crate::row::scalar::yaf32 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width);
+  if BE != HOST_NATIVE_BE {
+    return scalar::yaf32_to_luma_row::<BE>(packed, out, width);
+  }
+  let mut x = 0usize;
+  while x + 16 <= width {
+    let mut ybuf = [0.0f32; 16];
+    unsafe {
+      yaf32_deint_y_avx512(packed.as_ptr().add(x * 2), ybuf.as_mut_ptr(), 16);
+      grayf32_to_luma_row::<HOST_NATIVE_BE>(&ybuf, &mut out[x..x + 16], 16);
+    }
+    x += 16;
+  }
+  if x < width {
+    scalar::yaf32_to_luma_row::<BE>(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+  }
+}
+
+/// AVX-512 `yaf32_to_luma_u16_row`: clamp Y [0,1] x 65535 → u16 luma.
+///
+/// # Safety
+/// AVX-512F + AVX-512BW must be available. `packed.len() >= width * 2`. `out.len() >= width`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn yaf32_to_luma_u16_row<const BE: bool>(
+  packed: &[f32],
+  out: &mut [u16],
+  width: usize,
+) {
+  use crate::row::scalar::yaf32 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width);
+  if BE != HOST_NATIVE_BE {
+    return scalar::yaf32_to_luma_u16_row::<BE>(packed, out, width);
+  }
+  let mut x = 0usize;
+  while x + 16 <= width {
+    let mut ybuf = [0.0f32; 16];
+    unsafe {
+      yaf32_deint_y_avx512(packed.as_ptr().add(x * 2), ybuf.as_mut_ptr(), 16);
+      grayf32_to_luma_u16_row::<HOST_NATIVE_BE>(&ybuf, &mut out[x..x + 16], 16);
+    }
+    x += 16;
+  }
+  if x < width {
+    scalar::yaf32_to_luma_u16_row::<BE>(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+  }
+}
+
+/// AVX-512 `yaf32_to_hsv_row`: H=0, S=0, V = clamp(Y,0,1) x 255. α dropped.
+///
+/// # Safety
+/// AVX-512F + AVX-512BW must be available. `packed.len() >= width * 2`; H/S/V out `>= width`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn yaf32_to_hsv_row<const BE: bool>(
+  packed: &[f32],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+) {
+  use crate::row::scalar::yaf32 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  if BE != HOST_NATIVE_BE {
+    return scalar::yaf32_to_hsv_row::<BE>(packed, h_out, s_out, v_out, width);
+  }
+  let mut x = 0usize;
+  while x + 16 <= width {
+    let mut ybuf = [0.0f32; 16];
+    unsafe {
+      yaf32_deint_y_avx512(packed.as_ptr().add(x * 2), ybuf.as_mut_ptr(), 16);
+      grayf32_to_hsv_row::<HOST_NATIVE_BE>(
+        &ybuf,
+        &mut h_out[x..x + 16],
+        &mut s_out[x..x + 16],
+        &mut v_out[x..x + 16],
+        16,
+      );
+    }
+    x += 16;
+  }
+  if x < width {
+    scalar::yaf32_to_hsv_row::<BE>(
+      &packed[x * 2..width * 2],
+      &mut h_out[x..width],
+      &mut s_out[x..width],
+      &mut v_out[x..width],
+      width - x,
+    );
+  }
+}
+
+// ---- Yaf16 ------------------------------------------------------------------
+//
+// Widen each 16-pixel chunk of packed `[Y, A]` f16 (32 f16) to a host-native
+// f32 stack buffer with the F16C `_mm512_cvtph_ps` (`widen_f16x16_avx512_buf`),
+// then delegate to the `yaf32` AVX-512 kernels with `HOST_NATIVE_BE`. The
+// half-float twin of the `yaf32` AVX-512 path.
+
+/// AVX-512 `yaf16_to_rgb_row`: widen `[Y,A]` f16 → f32, clamp Y x 255 → u8, broadcast.
+///
+/// # Safety
+/// AVX-512F + AVX-512BW + F16C must be available. `packed.len() >= width * 2`. `out.len() >= width * 3`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw,f16c")]
+pub(crate) unsafe fn yaf16_to_rgb_row<const BE: bool>(
+  packed: &[half::f16],
+  out: &mut [u8],
+  width: usize,
+) {
+  use crate::row::scalar::yaf16 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 3);
+  let mut x = 0usize;
+  while x + 16 <= width {
+    let mut buf = [0.0f32; 32];
+    unsafe {
+      widen_f16x16_avx512_buf::<BE>(packed.as_ptr().add(x * 2), buf.as_mut_ptr());
+      widen_f16x16_avx512_buf::<BE>(packed.as_ptr().add(x * 2 + 16), buf.as_mut_ptr().add(16));
+      yaf32_to_rgb_row::<HOST_NATIVE_BE>(&buf, &mut out[x * 3..(x + 16) * 3], 16);
+    }
+    x += 16;
+  }
+  if x < width {
+    scalar::yaf16_to_rgb_row::<BE>(
+      &packed[x * 2..width * 2],
+      &mut out[x * 3..width * 3],
+      width - x,
+    );
+  }
+}
+
+/// AVX-512 `yaf16_to_rgba_row`: widen `[Y,A]` f16 → f32, clamp Y x 255 broadcast, α = clamp(A) x 255.
+///
+/// # Safety
+/// AVX-512F + AVX-512BW + F16C must be available. `packed.len() >= width * 2`. `out.len() >= width * 4`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw,f16c")]
+pub(crate) unsafe fn yaf16_to_rgba_row<const BE: bool>(
+  packed: &[half::f16],
+  out: &mut [u8],
+  width: usize,
+) {
+  use crate::row::scalar::yaf16 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 4);
+  let mut x = 0usize;
+  while x + 16 <= width {
+    let mut buf = [0.0f32; 32];
+    unsafe {
+      widen_f16x16_avx512_buf::<BE>(packed.as_ptr().add(x * 2), buf.as_mut_ptr());
+      widen_f16x16_avx512_buf::<BE>(packed.as_ptr().add(x * 2 + 16), buf.as_mut_ptr().add(16));
+      yaf32_to_rgba_row::<HOST_NATIVE_BE>(&buf, &mut out[x * 4..(x + 16) * 4], 16);
+    }
+    x += 16;
+  }
+  if x < width {
+    scalar::yaf16_to_rgba_row::<BE>(
+      &packed[x * 2..width * 2],
+      &mut out[x * 4..width * 4],
+      width - x,
+    );
+  }
+}
+
+/// AVX-512 `yaf16_to_rgb_u16_row`: widen `[Y,A]` f16 → f32, clamp Y x 65535 → u16, broadcast.
+///
+/// # Safety
+/// AVX-512F + AVX-512BW + F16C must be available. `packed.len() >= width * 2`. `out.len() >= width * 3`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw,f16c")]
+pub(crate) unsafe fn yaf16_to_rgb_u16_row<const BE: bool>(
+  packed: &[half::f16],
+  out: &mut [u16],
+  width: usize,
+) {
+  use crate::row::scalar::yaf16 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 3);
+  let mut x = 0usize;
+  while x + 16 <= width {
+    let mut buf = [0.0f32; 32];
+    unsafe {
+      widen_f16x16_avx512_buf::<BE>(packed.as_ptr().add(x * 2), buf.as_mut_ptr());
+      widen_f16x16_avx512_buf::<BE>(packed.as_ptr().add(x * 2 + 16), buf.as_mut_ptr().add(16));
+      yaf32_to_rgb_u16_row::<HOST_NATIVE_BE>(&buf, &mut out[x * 3..(x + 16) * 3], 16);
+    }
+    x += 16;
+  }
+  if x < width {
+    scalar::yaf16_to_rgb_u16_row::<BE>(
+      &packed[x * 2..width * 2],
+      &mut out[x * 3..width * 3],
+      width - x,
+    );
+  }
+}
+
+/// AVX-512 `yaf16_to_rgba_u16_row`: widen `[Y,A]` f16 → f32, clamp Y x 65535 broadcast, α = clamp(A) x 65535.
+///
+/// # Safety
+/// AVX-512F + AVX-512BW + F16C must be available. `packed.len() >= width * 2`. `out.len() >= width * 4`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw,f16c")]
+pub(crate) unsafe fn yaf16_to_rgba_u16_row<const BE: bool>(
+  packed: &[half::f16],
+  out: &mut [u16],
+  width: usize,
+) {
+  use crate::row::scalar::yaf16 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 4);
+  let mut x = 0usize;
+  while x + 16 <= width {
+    let mut buf = [0.0f32; 32];
+    unsafe {
+      widen_f16x16_avx512_buf::<BE>(packed.as_ptr().add(x * 2), buf.as_mut_ptr());
+      widen_f16x16_avx512_buf::<BE>(packed.as_ptr().add(x * 2 + 16), buf.as_mut_ptr().add(16));
+      yaf32_to_rgba_u16_row::<HOST_NATIVE_BE>(&buf, &mut out[x * 4..(x + 16) * 4], 16);
+    }
+    x += 16;
+  }
+  if x < width {
+    scalar::yaf16_to_rgba_u16_row::<BE>(
+      &packed[x * 2..width * 2],
+      &mut out[x * 4..width * 4],
+      width - x,
+    );
+  }
+}
+
+/// AVX-512 `yaf16_to_luma_row`: widen `[Y,A]` f16 → f32, clamp Y x 255 → u8 luma.
+///
+/// # Safety
+/// AVX-512F + AVX-512BW + F16C must be available. `packed.len() >= width * 2`. `out.len() >= width`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw,f16c")]
+pub(crate) unsafe fn yaf16_to_luma_row<const BE: bool>(
+  packed: &[half::f16],
+  out: &mut [u8],
+  width: usize,
+) {
+  use crate::row::scalar::yaf16 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width);
+  let mut x = 0usize;
+  while x + 16 <= width {
+    let mut buf = [0.0f32; 32];
+    unsafe {
+      widen_f16x16_avx512_buf::<BE>(packed.as_ptr().add(x * 2), buf.as_mut_ptr());
+      widen_f16x16_avx512_buf::<BE>(packed.as_ptr().add(x * 2 + 16), buf.as_mut_ptr().add(16));
+      yaf32_to_luma_row::<HOST_NATIVE_BE>(&buf, &mut out[x..x + 16], 16);
+    }
+    x += 16;
+  }
+  if x < width {
+    scalar::yaf16_to_luma_row::<BE>(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+  }
+}
+
+/// AVX-512 `yaf16_to_luma_u16_row`: widen `[Y,A]` f16 → f32, clamp Y x 65535 → u16 luma.
+///
+/// # Safety
+/// AVX-512F + AVX-512BW + F16C must be available. `packed.len() >= width * 2`. `out.len() >= width`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw,f16c")]
+pub(crate) unsafe fn yaf16_to_luma_u16_row<const BE: bool>(
+  packed: &[half::f16],
+  out: &mut [u16],
+  width: usize,
+) {
+  use crate::row::scalar::yaf16 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width);
+  let mut x = 0usize;
+  while x + 16 <= width {
+    let mut buf = [0.0f32; 32];
+    unsafe {
+      widen_f16x16_avx512_buf::<BE>(packed.as_ptr().add(x * 2), buf.as_mut_ptr());
+      widen_f16x16_avx512_buf::<BE>(packed.as_ptr().add(x * 2 + 16), buf.as_mut_ptr().add(16));
+      yaf32_to_luma_u16_row::<HOST_NATIVE_BE>(&buf, &mut out[x..x + 16], 16);
+    }
+    x += 16;
+  }
+  if x < width {
+    scalar::yaf16_to_luma_u16_row::<BE>(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+  }
+}
+
+/// AVX-512 `yaf16_to_hsv_row`: widen `[Y,A]` f16 → f32, H=0, S=0, V = clamp(Y,0,1) x 255. α dropped.
+///
+/// # Safety
+/// AVX-512F + AVX-512BW + F16C must be available. `packed.len() >= width * 2`; H/S/V out `>= width`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw,f16c")]
+pub(crate) unsafe fn yaf16_to_hsv_row<const BE: bool>(
+  packed: &[half::f16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+) {
+  use crate::row::scalar::yaf16 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  let mut x = 0usize;
+  while x + 16 <= width {
+    let mut buf = [0.0f32; 32];
+    unsafe {
+      widen_f16x16_avx512_buf::<BE>(packed.as_ptr().add(x * 2), buf.as_mut_ptr());
+      widen_f16x16_avx512_buf::<BE>(packed.as_ptr().add(x * 2 + 16), buf.as_mut_ptr().add(16));
+      yaf32_to_hsv_row::<HOST_NATIVE_BE>(
+        &buf,
+        &mut h_out[x..x + 16],
+        &mut s_out[x..x + 16],
+        &mut v_out[x..x + 16],
+        16,
+      );
+    }
+    x += 16;
+  }
+  if x < width {
+    scalar::yaf16_to_hsv_row::<BE>(
+      &packed[x * 2..width * 2],
+      &mut h_out[x..width],
+      &mut s_out[x..width],
+      &mut v_out[x..width],
+      width - x,
+    );
+  }
+}

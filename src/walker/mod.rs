@@ -255,12 +255,16 @@ use crate::{
 // gray families. (`Grayf16` is the half-float twin of `Grayf32`.)
 #[cfg(feature = "gray")]
 use crate::{
-  frame::{Gray8Frame, Gray16Frame, GrayNFrame, Grayf16Frame, Grayf32Frame, Ya8Frame, Ya16Frame},
+  frame::{
+    Gray8Frame, Gray16Frame, GrayNFrame, Grayf16Frame, Grayf32Frame, Ya8Frame, Ya16Frame,
+    Yaf16Frame, Yaf32Frame,
+  },
   source::{
     Gray8, Gray8Sink, Gray9, Gray9Sink, Gray10, Gray10Sink, Gray12, Gray12Sink, Gray14, Gray14Sink,
     Gray16, Gray16Sink, Grayf16, Grayf16Sink, Grayf32, Grayf32Sink, Ya8, Ya8Sink, Ya16, Ya16Sink,
-    gray8_to, gray9_to_endian, gray10_to_endian, gray12_to_endian, gray14_to_endian,
-    gray16_to_endian, grayf16_to_endian, grayf32_to_endian, ya8_to, ya16_to_endian,
+    Yaf16, Yaf16Sink, Yaf32, Yaf32Sink, gray8_to, gray9_to_endian, gray10_to_endian,
+    gray12_to_endian, gray14_to_endian, gray16_to_endian, grayf16_to_endian, grayf32_to_endian,
+    ya8_to, ya16_to_endian, yaf16_to_endian, yaf32_to_endian,
   },
 };
 // Planar GBR — already-RGB sources (G/B/R planes, no chroma matrix). The
@@ -1497,6 +1501,21 @@ walker!(@const BE: bool; Grayf16<BE>, Grayf16Sink, Grayf16Frame, YuvOptions,
 #[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
 walker!(@const BE: bool; Grayf32<BE>, Grayf32Sink, Grayf32Frame, YuvOptions,
   |src, opts, sink| grayf32_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+
+// ---- Gray, float-luma + alpha Yaf16 / Yaf32 (BE-generic marker; LE + BE) -----
+// The half-float / single-precision gray+alpha twins of `Grayf16` / `Grayf32`:
+// marker `Fmt<const BE>` over the trailing-`BE` frame `FmtFrame<'a, BE>`, so each
+// rides the `@const BE` arm and delegates to `{fmt}_to_endian::<_, BE>`. Real
+// source alpha (slot 1 of each pixel pair) is read inside the sinker, never an
+// `Options` knob, so they reuse [`YuvOptions`] like the other gray families.
+#[cfg(feature = "gray")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
+walker!(@const BE: bool; Yaf16<BE>, Yaf16Sink, Yaf16Frame, YuvOptions,
+  |src, opts, sink| yaf16_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "gray")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
+walker!(@const BE: bool; Yaf32<BE>, Yaf32Sink, Yaf32Frame, YuvOptions,
+  |src, opts, sink| yaf32_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
 
 // ===== Planar GBR families =============================================
 //
