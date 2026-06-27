@@ -23,7 +23,7 @@
 #[cfg(all(test, feature = "std"))]
 mod tests;
 
-use crate::{ColorMatrix, DcpTargetGamut, PixelSink};
+use crate::{ColorMatrix, DcpTargetGamut, DynamicRange, PixelFormat, PixelSink};
 #[cfg(feature = "xyz")]
 use crate::{
   frame::Xyz12Frame,
@@ -546,6 +546,24 @@ impl YuvOptions {
     }
   }
 
+  /// Builds options from a resolved [`ColorSpec`] — the **range-safe**
+  /// entry point.
+  ///
+  /// The spec's resolved [`full_range`](ColorSpec::full_range) and
+  /// [`matrix`](ColorSpec::matrix) become this `YuvOptions`. Because a
+  /// `ColorSpec` can only be produced by [`ColorSpec::resolve`] — which
+  /// honours a format's *pinned* range — this is the constructor a caller
+  /// cannot use to decode a range-pinned source (a `yuvj*` alias) with the
+  /// wrong range. It feeds the **same** kernels as the raw builders, so it
+  /// carries zero per-pixel cost.
+  #[inline(always)]
+  pub const fn from_color_spec(spec: ColorSpec) -> Self {
+    Self {
+      full_range: spec.full_range,
+      matrix: spec.matrix,
+    }
+  }
+
   /// Whether the source samples are full-range (`true`) or
   /// limited/studio-range (`false`).
   #[inline(always)]
@@ -560,6 +578,7 @@ impl YuvOptions {
   }
 
   /// Marks the source as full-range (`true`) in place.
+  #[deprecated(note = "use ColorSpec::resolve to pin format-implied ranges")]
   #[inline(always)]
   pub const fn set_full_range(&mut self) -> &mut Self {
     self.full_range = true;
@@ -567,6 +586,7 @@ impl YuvOptions {
   }
 
   /// Marks the source as full-range (`true`), consuming builder.
+  #[deprecated(note = "use ColorSpec::resolve to pin format-implied ranges")]
   #[must_use]
   #[inline(always)]
   pub const fn with_full_range(mut self) -> Self {
@@ -575,6 +595,7 @@ impl YuvOptions {
   }
 
   /// Assigns the raw `full_range` flag in place.
+  #[deprecated(note = "use ColorSpec::resolve to pin format-implied ranges")]
   #[inline(always)]
   pub const fn update_full_range(&mut self, full_range: bool) -> &mut Self {
     self.full_range = full_range;
@@ -582,6 +603,7 @@ impl YuvOptions {
   }
 
   /// Assigns the raw `full_range` flag, consuming builder.
+  #[deprecated(note = "use ColorSpec::resolve to pin format-implied ranges")]
   #[must_use]
   #[inline(always)]
   pub const fn maybe_full_range(mut self, full_range: bool) -> Self {
@@ -590,6 +612,7 @@ impl YuvOptions {
   }
 
   /// Marks the source as limited/studio-range (`false`) in place.
+  #[deprecated(note = "use ColorSpec::resolve to pin format-implied ranges")]
   #[inline(always)]
   pub const fn clear_full_range(&mut self) -> &mut Self {
     self.full_range = false;
@@ -609,6 +632,103 @@ impl Default for YuvOptions {
   #[inline(always)]
   fn default() -> Self {
     Self::new()
+  }
+}
+
+/// A colour-decode spec resolved against a source format's *pinned*
+/// metadata — so a format's pinned range **can't be passed wrong**.
+///
+/// Some pixel formats pin their quantisation range by identity: FFmpeg's
+/// deprecated `yuvj*` ("JPEG") aliases always decode **full-range**, no
+/// matter what range a container's stream metadata claims. The raw
+/// builders ([`YuvOptions::maybe_full_range`] and friends) let a caller
+/// set `full_range` freely, so a `yuvj420p` source can be decoded
+/// limited-range — silently wrong colours.
+///
+/// [`ColorSpec::resolve`] closes that seam **by construction**: it
+/// consults [`PixelFormat::canonical`], and when the format pins a range
+/// that pin wins while the caller-supplied `stream_range` is ignored. So
+/// a "`Yuvj420p` as limited-range" `ColorSpec` is *unconstructable*. Feed
+/// the result to [`YuvOptions::from_color_spec`] to drive the walk.
+///
+/// `resolve` also follows the format **alias** to its canonical decode
+/// form ([`format`](Self::format)) — e.g. `Gray8a` → `Ya8`, `Xv30Le` →
+/// `V410Le` — so an aliased source is decoded as its one representative
+/// layout.
+///
+/// ```
+/// use colconv::{ColorMatrix, ColorSpec, DynamicRange, PixelFormat, YuvOptions};
+///
+/// // A `yuvj420p` source pins full-range: the stream's claimed range loses.
+/// let spec = ColorSpec::resolve(PixelFormat::Yuvj420p, DynamicRange::Limited, ColorMatrix::Bt601);
+/// assert!(spec.full_range());
+/// assert_eq!(spec.format(), PixelFormat::Yuv420p);
+///
+/// // A plain `yuv420p` source is stream-driven.
+/// let spec = ColorSpec::resolve(PixelFormat::Yuv420p, DynamicRange::Limited, ColorMatrix::Bt601);
+/// assert!(!spec.full_range());
+///
+/// let opts = YuvOptions::from_color_spec(spec);
+/// assert!(!opts.full_range());
+/// assert_eq!(opts.matrix(), ColorMatrix::Bt601);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ColorSpec {
+  format: PixelFormat,
+  full_range: bool,
+  matrix: ColorMatrix,
+}
+
+impl ColorSpec {
+  /// Resolves the colour-decode spec for a source `fmt`.
+  ///
+  /// [`PixelFormat::canonical`] yields (a) the canonical decode format the
+  /// alias maps to and (b) the range the format *pins*, if any. When a
+  /// range is pinned — the `yuvj*` full-range aliases — it **wins** and
+  /// `stream_range` is ignored; otherwise the range is stream-driven from
+  /// `stream_range`. `matrix` always passes through unchanged (a format's
+  /// identity pins no matrix).
+  ///
+  /// The resolved [`DynamicRange`] maps to colconv's internal `full_range`
+  /// flag as: [`Full`](DynamicRange::Full) → `true`;
+  /// [`Limited`](DynamicRange::Limited) /
+  /// [`Unspecified`](DynamicRange::Unspecified) → `false`. An
+  /// [`Unknown`](DynamicRange::Unknown) code is treated **conservatively
+  /// as limited-range** (`false`) — an unrecognised range falls back to
+  /// studio swing, the video-pipeline norm (and what FFmpeg's
+  /// `AVCOL_RANGE_UNSPECIFIED` itself implies).
+  #[inline]
+  pub const fn resolve(fmt: PixelFormat, stream_range: DynamicRange, matrix: ColorMatrix) -> Self {
+    let (format, pinned) = fmt.canonical();
+    let range = match pinned {
+      Some(pinned_range) => pinned_range,
+      None => stream_range,
+    };
+    Self {
+      format,
+      full_range: matches!(range, DynamicRange::Full),
+      matrix,
+    }
+  }
+
+  /// The canonical decode format the source alias resolves to (e.g.
+  /// `Gray8a` → `Ya8`). A non-alias format resolves to itself.
+  #[inline(always)]
+  pub const fn format(&self) -> PixelFormat {
+    self.format
+  }
+
+  /// Whether the resolved range is full (`true`) or limited/studio
+  /// (`false`) — pinned by the format when applicable, else stream-driven.
+  #[inline(always)]
+  pub const fn full_range(&self) -> bool {
+    self.full_range
+  }
+
+  /// The YCbCr matrix carried through from [`resolve`](Self::resolve).
+  #[inline(always)]
+  pub const fn matrix(&self) -> ColorMatrix {
+    self.matrix
   }
 }
 

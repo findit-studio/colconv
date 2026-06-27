@@ -250,8 +250,9 @@ pub use mediaframe::{
   // public surface and every internal `crate::ColorMatrix` reference keep
   // the disambiguated name (`videoframe::color::ColorMatrix` was renamed to
   // `Matrix` upstream during the videoframe → mediaframe rename).
-  color::{DcpTargetGamut, Matrix as ColorMatrix},
+  color::{DcpTargetGamut, DynamicRange, Matrix as ColorMatrix},
   frame,
+  pixel_format::PixelFormat,
   source,
 };
 
@@ -264,7 +265,7 @@ pub mod walker;
 
 #[cfg(feature = "bayer")]
 pub use walker::BayerOptions;
-pub use walker::{Walker, Xyz12Options, YuvOptions};
+pub use walker::{ColorSpec, Walker, Xyz12Options, YuvOptions};
 
 #[cfg(feature = "yuv-444-packed")]
 pub use frame::{Ayuv64Frame, Ayuv64FrameError};

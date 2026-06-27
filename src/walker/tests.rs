@@ -1,3 +1,9 @@
+// These tests sweep `full_range ∈ {false, true}` to exercise both kernel
+// ranges directly (kernel correctness, not range-pinning), so they keep
+// using the deprecated raw `YuvOptions` setters on purpose. The
+// range-safe `ColorSpec` path is covered by `color_spec_*` below.
+#![allow(deprecated)]
+
 use super::*;
 
 // ---- Structural round-trip: Options builders / getters ----------------
@@ -52,6 +58,108 @@ fn yuv_options_builders_and_mutators_round_trip() {
   assert!(!o.full_range());
   o.update_full_range(true);
   assert!(o.full_range());
+}
+
+// ---- ColorSpec: format-pinned range resolution (golden alias safety) --
+
+#[test]
+fn color_spec_pins_yuvj_to_full_regardless_of_stream_range() {
+  // Every `yuvj*` alias pins full-range; the stream's claimed range loses,
+  // so "Yuvj as limited-range" is unconstructable.
+  for fmt in [
+    PixelFormat::Yuvj420p,
+    PixelFormat::Yuvj422p,
+    PixelFormat::Yuvj444p,
+    PixelFormat::Yuvj440p,
+    PixelFormat::Yuvj411p,
+  ] {
+    for stream_range in [
+      DynamicRange::Limited,
+      DynamicRange::Unspecified,
+      DynamicRange::Full,
+      DynamicRange::Unknown(7),
+    ] {
+      let spec = ColorSpec::resolve(fmt, stream_range, ColorMatrix::Bt601);
+      assert!(
+        spec.full_range(),
+        "{fmt:?} pins full-range even with stream_range={stream_range:?}"
+      );
+      // The matrix passes through untouched.
+      assert_eq!(spec.matrix(), ColorMatrix::Bt601);
+    }
+  }
+}
+
+#[test]
+fn color_spec_leaves_yuv420p_stream_driven() {
+  // No pin → the range follows the stream.
+  let limited = ColorSpec::resolve(
+    PixelFormat::Yuv420p,
+    DynamicRange::Limited,
+    ColorMatrix::Bt709,
+  );
+  assert!(!limited.full_range());
+  let unspecified = ColorSpec::resolve(
+    PixelFormat::Yuv420p,
+    DynamicRange::Unspecified,
+    ColorMatrix::Bt709,
+  );
+  assert!(!unspecified.full_range());
+  let full = ColorSpec::resolve(PixelFormat::Yuv420p, DynamicRange::Full, ColorMatrix::Bt709);
+  assert!(full.full_range());
+  // Unknown ranges fall back conservatively to limited (studio swing).
+  let unknown = ColorSpec::resolve(
+    PixelFormat::Yuv420p,
+    DynamicRange::Unknown(42),
+    ColorMatrix::Bt709,
+  );
+  assert!(!unknown.full_range());
+}
+
+#[test]
+fn color_spec_resolves_format_aliases() {
+  // Pure format aliases (no range pin): the canonical decode format is
+  // followed and the range stays stream-driven.
+  let gray = ColorSpec::resolve(
+    PixelFormat::Gray8a,
+    DynamicRange::Limited,
+    ColorMatrix::Bt709,
+  );
+  assert_eq!(gray.format(), PixelFormat::Ya8);
+  assert!(!gray.full_range());
+
+  let xv30 = ColorSpec::resolve(PixelFormat::Xv30Le, DynamicRange::Full, ColorMatrix::Bt709);
+  assert_eq!(xv30.format(), PixelFormat::V410Le);
+  assert!(xv30.full_range());
+
+  // A non-alias format resolves to itself.
+  let plain = ColorSpec::resolve(
+    PixelFormat::Yuv420p,
+    DynamicRange::Limited,
+    ColorMatrix::Bt709,
+  );
+  assert_eq!(plain.format(), PixelFormat::Yuv420p);
+}
+
+#[test]
+fn yuv_options_from_color_spec_bridges_range_and_matrix() {
+  // A pinned source's resolved range/matrix flow straight into YuvOptions.
+  let spec = ColorSpec::resolve(
+    PixelFormat::Yuvj420p,
+    DynamicRange::Limited,
+    ColorMatrix::Bt601,
+  );
+  let opts = YuvOptions::from_color_spec(spec);
+  assert!(opts.full_range());
+  assert_eq!(opts.matrix(), ColorMatrix::Bt601);
+
+  // The bridge equals a direct raw construction of the resolved values.
+  assert_eq!(
+    opts,
+    YuvOptions::new()
+      .maybe_full_range(true)
+      .with_matrix(ColorMatrix::Bt601)
+  );
 }
 
 #[cfg(feature = "bayer")]
@@ -657,6 +765,71 @@ mod yuv_planar_parity {
     (0..n)
       .map(|i| (((i as u32) * 1103 + 7) & max) as u16)
       .collect()
+  }
+
+  /// The range-safe [`ColorSpec`] path is **byte-identical** to the
+  /// equivalent raw `full_range` walk — `from_color_spec` only feeds the
+  /// resolved `(full_range, matrix)` into the same kernels (additive
+  /// equivalence). Covers both a stream-driven `yuv420p` and a *pinned*
+  /// `yuvj420p` source (which decodes full-range as `yuv420p`, matching a
+  /// correct raw full-range walk byte for byte).
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn color_spec_walk_matches_raw_full_range() {
+    const W: u32 = 16;
+    const H: u32 = 4;
+    let cw = (W as usize) / 2;
+    let ch = (H as usize).div_ceil(2);
+    let y = ramp8((W * H) as usize);
+    let u = ramp8(cw * ch);
+    let v = ramp8(cw * ch);
+
+    // (format, stream_range, expected resolved full_range).
+    let cases = [
+      (PixelFormat::Yuv420p, DynamicRange::Limited, false),
+      (PixelFormat::Yuv420p, DynamicRange::Full, true),
+      (PixelFormat::Yuv420p, DynamicRange::Unspecified, false),
+      (PixelFormat::Yuvj420p, DynamicRange::Limited, true),
+      (PixelFormat::Yuvj420p, DynamicRange::Unspecified, true),
+    ];
+
+    for (fmt, stream_range, expected_fr) in cases {
+      for matrix in MATRICES {
+        let spec = ColorSpec::resolve(fmt, stream_range, matrix);
+        assert_eq!(spec.full_range(), expected_fr);
+        let spec_opts = YuvOptions::from_color_spec(spec);
+
+        // The equivalent raw path sets the resolved range directly.
+        let raw_opts = YuvOptions::new()
+          .maybe_full_range(expected_fr)
+          .with_matrix(matrix);
+        assert_eq!(spec_opts, raw_opts);
+
+        let src =
+          crate::frame::Yuv420pFrame::try_new(&y, &u, &v, W, H, W, cw as u32, cw as u32).unwrap();
+
+        let mut via_spec = std::vec![0u8; (W * H * 3) as usize];
+        let mut via_raw = std::vec![0u8; (W * H * 3) as usize];
+
+        let mut ss = MixedSinker::<crate::source::Yuv420p>::new(W as usize, H as usize)
+          .with_rgb(&mut via_spec)
+          .unwrap();
+        <crate::source::Yuv420p as Walker<_>>::walk(&src, &spec_opts, &mut ss).unwrap();
+
+        let mut sr = MixedSinker::<crate::source::Yuv420p>::new(W as usize, H as usize)
+          .with_rgb(&mut via_raw)
+          .unwrap();
+        <crate::source::Yuv420p as Walker<_>>::walk(&src, &raw_opts, &mut sr).unwrap();
+
+        assert_eq!(
+          via_spec, via_raw,
+          "ColorSpec walk byte-identical to raw (fmt={fmt:?}, stream_range={stream_range:?}, matrix={matrix:?})"
+        );
+      }
+    }
   }
 
   /// Drives a 3-plane planar YUV family (8-bit or high-bit-LE). `$ramp`
