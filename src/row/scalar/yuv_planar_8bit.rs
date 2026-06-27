@@ -214,6 +214,62 @@ pub(crate) fn yuv_420_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: boo
     x += 2;
   }
 }
+
+// ---- Chroma-siting-aware 4:2:0 horizontal upsample (#302) ------------
+
+/// Horizontally upsamples a half-width 4:2:0 chroma row to full width for
+/// **center-sited** chroma — the MPEG-1 / JPEG horizontal phase (FFmpeg
+/// `AVCHROMA_LOC_CENTER` / `Top` / `Bottom`), where the chroma sample sits
+/// at the **center** between the two luma columns it covers (a +0.5
+/// luma-sample horizontal offset relative to the left-co-sited phase the
+/// default [`yuv_420_to_rgb_row`] nearest-neighbor path assumes).
+///
+/// Reconstruction is linear interpolation between adjacent chroma samples
+/// with that half-sample phase, i.e. the standard center-siting `1/4`–`3/4`
+/// weights, computed in the **u8 sample domain** with round-to-nearest and
+/// edge clamping. For chroma sample `c[j]` (covering luma columns `2j` and
+/// `2j+1`):
+///
+/// ```text
+///   even col 2j   → (c[j-1] + 3·c[j] + 2) >> 2   (c[-1]    clamped to c[0])
+///   odd  col 2j+1 → (3·c[j] + c[j+1] + 2) >> 2   (c[half]  clamped to c[half-1])
+/// ```
+///
+/// The result is a full-width chroma row the caller feeds to the existing
+/// 4:4:4 decode ([`yuv_444_to_rgb_row`] and siblings), so the center-sited
+/// path reuses the fully-SIMD 4:4:4 kernels and stays bit-identical per
+/// tier. The left-co-sited / unspecified sitings keep colconv's default
+/// nearest-neighbor decode and never call this.
+///
+/// # Panics (debug builds)
+///
+/// - `width` must be even (4:2:0 pairs pixel columns).
+/// - `c_half.len() >= width / 2`, `c_full.len() >= width`.
+// Gated like its only caller: the centered-siting `Yuv420p` sink path stages
+// the full-width chroma in a `Vec` scratch, so the upsample is reachable only
+// when the sink (and thus heap allocation) is — mirroring the
+// `yuv_420_to_rgb_f32_unclamped_row` alloc gate above. Without it the kernel
+// is dead in the `yuv-planar`-without-alloc feature subset.
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn chroma_upsample_420_center_h(c_half: &[u8], c_full: &mut [u8], width: usize) {
+  debug_assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
+  debug_assert!(c_half.len() >= width / 2, "c_half row too short");
+  debug_assert!(c_full.len() >= width, "c_full row too short");
+
+  let half = width / 2;
+  for j in 0..half {
+    // `c[j-1]` clamps to `c[0]` at the left edge; `c[j+1]` clamps to the
+    // last sample at the right edge — boundary replication, so the edge
+    // columns collapse to `c[0]` / `c[half-1]` exactly.
+    let left = c_half[j.saturating_sub(1)] as u32;
+    let mid = c_half[j] as u32;
+    let right = c_half[if j + 1 < half { j + 1 } else { j }] as u32;
+    c_full[2 * j] = ((left + 3 * mid + 2) >> 2) as u8;
+    c_full[2 * j + 1] = ((3 * mid + right + 2) >> 2) as u8;
+  }
+}
+
 // ---- YUV 4:1:0 → RGB (fused: 4x horizontal upsample + convert) -------
 
 /// Converts one row of 4:1:0 YUV — Y at full width, U/V at

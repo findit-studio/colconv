@@ -129,6 +129,51 @@ pub use mediaframe::{
   source::{HsvFrame, HsvFrameMut, HsvPlane},
 };
 
+/// Whether `loc` places 4:2:0 chroma at the **horizontal center** between
+/// its two luma columns — the MPEG-1 / JPEG phase that needs phase-0.5
+/// reconstruction ([`chroma_upsample_420_center_h`](crate::row::scalar::chroma_upsample_420_center_h))
+/// rather than colconv's default nearest-neighbor decode (#302).
+///
+/// The full [`ChromaLocation`](crate::ChromaLocation) → 4:2:0 sample-phase
+/// map (FFmpeg `AVChromaLocation` semantics — horizontal phase in
+/// luma-column units, `0` = co-sited with the left column, `0.5` = centered;
+/// vertical phase `0` = top luma row, `0.5` = between rows, `1` = bottom):
+///
+/// | Variant            | Horizontal | Vertical |
+/// |--------------------|------------|----------|
+/// | `Unspecified`      | default    | default  |
+/// | `Unknown`          | default    | default  |
+/// | `Left`             | `0`        | `0.5`    |
+/// | `Center`           | `0.5`      | `0.5`    |
+/// | `TopLeft`          | `0`        | `0`      |
+/// | `Top`              | `0.5`      | `0`      |
+/// | `BottomLeft`       | `0`        | `1`      |
+/// | `Bottom`           | `0.5`      | `1`      |
+///
+/// This predicate consumes only the **horizontal** axis: it returns `true`
+/// for the centered group (`Center` / `Top` / `Bottom`) and `false` for the
+/// co-sited group (`Left` / `TopLeft` / `BottomLeft`) and the
+/// unspecified/unknown codes. The co-sited and unspecified sitings all keep
+/// the byte-identical default path — colconv's existing nearest-neighbor
+/// decode already places chroma at the left-column (phase-0) position, so
+/// they need no new interpolation.
+///
+/// The **vertical** phase (top / center / bottom) is intentionally not
+/// consumed here: mediaframe's 4:2:0 walker feeds the sink one chroma row
+/// per luma row (`chroma_row = row / 2`), so vertical-phase interpolation
+/// would need two chroma rows (a mediaframe-side change or a stateful
+/// row buffer). It is deferred to a follow-up; this PR corrects the
+/// horizontal axis, which is where the common MPEG-2-vs-MPEG-1 chroma shift
+/// lives.
+#[cfg(feature = "yuv-planar")]
+#[inline]
+pub(super) const fn chroma_420_center_sited_h(loc: crate::ChromaLocation) -> bool {
+  matches!(
+    loc,
+    crate::ChromaLocation::Center | crate::ChromaLocation::Top | crate::ChromaLocation::Bottom
+  )
+}
+
 /// Frame dimensions handed to `begin_frame` don't match the sinker's
 /// configured size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2496,6 +2541,15 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "yuva",
   ))]
   rgb_scratch: Vec<u8>,
+  /// Full-width `u8` chroma staging for the siting-aware 4:2:0 upsample
+  /// (#302). Holds the horizontally upsampled U then V planes back-to-back
+  /// (`2 * width` bytes: `[0..width]` = U, `[width..2*width]` = V) so the
+  /// centered-siting identity path can reuse the 4:4:4 decode kernels.
+  /// Lazily grown to `2 * width` `u8` on the first centered-siting chroma
+  /// row; empty otherwise (the default left/unspecified siting never touches
+  /// it). Gated to `yuv-planar` (the only family wired in this PR).
+  #[cfg(feature = "yuv-planar")]
+  chroma_full: Vec<u8>,
   /// Source-width `u8` luma staging for the **packed YUV 4:2:2** resample
   /// path (the interleaved Y bytes are de-interleaved here via the format's
   /// own `*_to_luma_row` kernel — the exact Y→luma derivation the direct
@@ -2845,6 +2899,18 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// [`Self::with_transfer_function`].
   #[cfg(feature = "yuv-planar")]
   transfer_function: Option<TransferFunction>,
+  /// Chroma sample location driving siting-aware 4:2:0 chroma upsampling
+  /// (#302). Defaults to [`ChromaLocation::Unspecified`](crate::ChromaLocation::Unspecified)
+  /// — colconv's nearest-neighbor decode, byte-identical to the pre-#302
+  /// behaviour. Set via [`Self::with_chroma_location`] /
+  /// [`Self::set_chroma_location`]; the centered horizontal sitings
+  /// (`Center` / `Top` / `Bottom`, per `chroma_420_center_sited_h`) route
+  /// the identity-plan 4:2:0 decode through the phase-0.5 chroma upsample +
+  /// 4:4:4 kernels. Currently consulted by the planar 8-bit `Yuv420p`
+  /// identity path; other 4:2:0 families and the resampling tiers ignore it
+  /// until the #302 rollout wires them in.
+  #[cfg(feature = "yuv-planar")]
+  chroma_location: crate::ChromaLocation,
   /// Per-frame accumulator for the RFC #238 [`AveragingDomain::Linear`]
   /// linear-light tail (planar 8-bit YUV family). Lazily created on the
   /// first output-bearing row of a linear-domain frame; reset to `None` per
@@ -3522,6 +3588,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "yuva",
       ))]
       rgb_scratch: Vec::new(),
+      #[cfg(feature = "yuv-planar")]
+      chroma_full: Vec::new(),
       #[cfg(any(feature = "yuv-packed", feature = "gray"))]
       luma_scratch: Vec::new(),
       #[cfg(feature = "rgb-legacy")]
@@ -3624,6 +3692,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       averaging_domain: AveragingDomain::Encoded,
       #[cfg(feature = "yuv-planar")]
       transfer_function: None,
+      #[cfg(feature = "yuv-planar")]
+      chroma_location: crate::ChromaLocation::Unspecified,
       #[cfg(feature = "yuv-planar")]
       linear_mode: LinearMode::DisplayReferred,
       #[cfg(all(feature = "yuv-planar", feature = "rgb"))]
@@ -4283,6 +4353,104 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
     self
   }
 
+  /// The [`ChromaLocation`](crate::ChromaLocation) driving siting-aware
+  /// 4:2:0 chroma upsampling (#302). Defaults to
+  /// [`ChromaLocation::Unspecified`](crate::ChromaLocation::Unspecified).
+  /// See [`Self::with_chroma_location`].
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn chroma_location(&self) -> crate::ChromaLocation {
+    self.chroma_location
+  }
+
+  /// Sets the chroma sample location in place. See
+  /// [`Self::with_chroma_location`] for the consuming builder variant.
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn set_chroma_location(&mut self, loc: crate::ChromaLocation) -> &mut Self {
+    self.chroma_location = loc;
+    self
+  }
+
+  /// Pins the source's [`ChromaLocation`](crate::ChromaLocation) so the
+  /// 4:2:0 decode reconstructs chroma at the correct horizontal phase
+  /// (#302). Source it from a [`ColorSpec`](crate::ColorSpec):
+  /// `sink.with_chroma_location(spec.chroma_location())`.
+  ///
+  /// The default [`ChromaLocation::Unspecified`](crate::ChromaLocation::Unspecified)
+  /// — and every horizontally co-sited value (`Left` / `TopLeft` /
+  /// `BottomLeft`) — keeps colconv's nearest-neighbor decode, byte-identical
+  /// to the pre-#302 output. The horizontally **centered** sitings (`Center`
+  /// / `Top` / `Bottom`, the MPEG-1 / JPEG phase) route the identity-plan
+  /// `Yuv420p` decode through a phase-0.5 chroma upsample + the 4:4:4
+  /// kernels, correcting the half-pixel chroma shift. The vertical phase is
+  /// not yet consumed (see `chroma_420_center_sited_h`); other 4:2:0
+  /// families and the resampling tiers ignore this knob until the #302
+  /// rollout extends them. See [`Self::set_chroma_location`] for the
+  /// in-place variant.
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn with_chroma_location(mut self, loc: crate::ChromaLocation) -> Self {
+    self.set_chroma_location(loc);
+    self
+  }
+
+  /// Applies the **sink-consumed** colour metadata of a resolved
+  /// [`ColorSpec`](crate::ColorSpec) in place — currently its
+  /// [`ChromaLocation`](crate::ChromaLocation), driving siting-aware 4:2:0
+  /// upsampling (#302). See [`Self::with_color_spec`].
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn set_color_spec(&mut self, spec: crate::ColorSpec) -> &mut Self {
+    self.chroma_location = spec.chroma_location();
+    self
+  }
+
+  /// Configures the sink from a resolved [`ColorSpec`](crate::ColorSpec),
+  /// completing the **end-to-end ColorSpec decode path** (#301 / #302).
+  ///
+  /// A `ColorSpec` splits across two consumers: its
+  /// [`matrix`](crate::ColorSpec::matrix) and
+  /// [`full_range`](crate::ColorSpec::full_range) are **walker-consumed** —
+  /// route them via [`YuvOptions::from_color_spec`](crate::YuvOptions::from_color_spec)
+  /// to the `*_to` walk — while its
+  /// [`chroma_location`](crate::ColorSpec::chroma_location) is
+  /// **sink-consumed** (mediaframe's YUV row carries only range + matrix, not
+  /// the siting). This builder threads the latter so the **same `spec`**
+  /// drives both halves:
+  ///
+  /// ```
+  /// # #[cfg(all(feature = "yuv-planar", feature = "rgb"))] {
+  /// use colconv::{
+  ///   ChromaLocation, ColorInfo, ColorMatrix, ColorSpec, DynamicRange, PixelFormat,
+  ///   Primaries, Transfer, YuvOptions, sinker::MixedSinker, source::Yuv420p,
+  /// };
+  ///
+  /// let info = ColorInfo::new(
+  ///     Primaries::Bt709, Transfer::Bt709, ColorMatrix::Bt601,
+  ///     DynamicRange::Limited, ChromaLocation::Center,
+  /// );
+  /// let spec = ColorSpec::from_info(PixelFormat::Yuv420p, info);
+  /// let opts = YuvOptions::from_color_spec(spec);
+  /// let mut rgb = [0u8; 4 * 2 * 3];
+  /// let sink = MixedSinker::<Yuv420p>::new(4, 2)
+  ///     .with_rgb(&mut rgb)
+  ///     .unwrap()
+  ///     .with_color_spec(spec); // carries ChromaLocation::Center to the decode
+  /// assert_eq!(sink.chroma_location(), ChromaLocation::Center);
+  /// # let _ = opts;
+  /// # }
+  /// ```
+  ///
+  /// See [`Self::set_color_spec`] for the in-place variant and
+  /// [`Self::with_chroma_location`] to set the siting directly.
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn with_color_spec(mut self, spec: crate::ColorSpec) -> Self {
+    self.set_color_spec(spec);
+    self
+  }
+
   /// Returns how the [`AveragingDomain::Linear`] tail decodes `YUV→RGB`
   /// before the EOTF. See [`Self::with_linear_mode`].
   #[cfg(feature = "yuv-planar")]
@@ -4764,6 +4932,28 @@ pub(crate) fn arm_rgb_scratch_alloc_failure() {
 #[cfg(all(test, feature = "std", feature = "yuva"))]
 pub(crate) fn disarm_rgb_scratch_alloc_failure() {
   FORCE_RGB_SCRATCH_ALLOC_FAILURE.with(|f| f.set(false));
+}
+
+// Test-only failpoint for the centered-siting 4:2:0 chroma scratch grow
+// (#302), mirroring `FORCE_RGB_SCRATCH_ALLOC_FAILURE`. Gated on `std` +
+// `yuv-planar` to match its only consumer — the `chroma_siting_420`
+// atomicity test (`yuv-planar`-gated; `thread_local!` needs `std`) — so it
+// is not dead code in a `std`-but-no-`yuva` test build. `reserve_420_chroma_full`
+// (in `planar_8bit`) reads it via `super::`.
+#[cfg(all(test, feature = "std", feature = "yuv-planar"))]
+std::thread_local! {
+  static FORCE_CHROMA_FULL_ALLOC_FAILURE: core::cell::Cell<bool> =
+    const { core::cell::Cell::new(false) };
+}
+
+/// Arms the `reserve_420_chroma_full` (in `planar_8bit`) allocation
+/// failpoint for the **next** call on the current thread,
+/// simulating a recoverable allocator refusal of the centered chroma-scratch
+/// grow. Consumed (take-on-read) by that call so it fires exactly once and
+/// never leaks across tests. Test-only.
+#[cfg(all(test, feature = "std", feature = "yuv-planar"))]
+pub(crate) fn arm_chroma_full_alloc_failure() {
+  FORCE_CHROMA_FULL_ALLOC_FAILURE.with(|f| f.set(true));
 }
 
 /// Pick an RGB row buffer for the kernel to write into: caller's RGB
