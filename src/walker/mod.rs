@@ -559,6 +559,14 @@ impl YuvOptions {
   /// cannot use to decode a range-pinned source (a `yuvj*` alias) with the
   /// wrong range. It feeds the **same** kernels as the raw builders, so it
   /// carries zero per-pixel cost.
+  ///
+  /// Only the **walker-consumed** half of the spec lands here: the
+  /// [`chroma_location`](ColorSpec::chroma_location) is *intentionally not*
+  /// carried, because mediaframe's YUV walker row threads only range +
+  /// matrix to the kernels, never the siting. It is **sink-consumed** instead
+  /// — pass the same `spec` to
+  /// [`MixedSinker::with_color_spec`](crate::sinker::MixedSinker::with_color_spec)
+  /// to drive siting-aware 4:2:0 upsampling (#302).
   #[inline(always)]
   pub const fn from_color_spec(spec: ColorSpec) -> Self {
     Self {

@@ -3,7 +3,7 @@
 use super::{
   AveragingDomainChanged, GeometryOverflow, HsvFrameMut, InsufficientBuffer, MixedSinker,
   MixedSinkerError, NativeRouteChanged, RowIndexOutOfRange, RowShapeMismatch, RowSlice,
-  WidthAlignment, check_dimensions_match, frozen_outputs_check,
+  WidthAlignment, check_dimensions_match, chroma_420_center_sited_h, frozen_outputs_check,
   planar_resample::{planar_dual_filter_resample, planar_dual_resample},
   rgb_row_buf_or_scratch, rgba_plane_row_slice,
 };
@@ -32,6 +32,84 @@ const YUV420P_NATIVE_ELIGIBLE: bool = true;
 /// tier ([`yuv_planar_process_native`]), so each is statically eligible to
 /// splice an [`AveragingDomain::Encoded`] area downscale at the native codes.
 const YUV_PLANAR_8BIT_NATIVE_ELIGIBLE: bool = true;
+
+/// **Fallible preflight** for the centered-siting 4:2:0 chroma scratch
+/// (#302): grows `chroma_full` to the checked `2 * width` so the later
+/// infallible [`upsample_420_chroma_center_h`] reuses an already-sized
+/// buffer. The allocation is split out from the upsample so it can run
+/// **before any output row is written** (luma included) — the crate's
+/// preflight-ordering atomicity contract (cf. the #180 resample fix): an
+/// allocator refusal must leave the output frame *untouched*, never
+/// partially mutated.
+///
+/// Mirrors [`rgb_row_buf_or_scratch`](super::rgb_row_buf_or_scratch)'s
+/// recoverable grow: the `2 * width` length is `checked_mul`'d (→
+/// [`GeometryOverflow`]) and `try_reserve_exact` precedes the resize (→
+/// [`ResampleError::AllocationFailed`]), so the failure is a typed,
+/// recoverable error rather than an abort. `height` feeds the error payloads.
+fn reserve_420_chroma_full(
+  chroma_full: &mut std::vec::Vec<u8>,
+  width: usize,
+  height: usize,
+) -> Result<(), MixedSinkerError> {
+  // Test-only failpoint: simulate a recoverable allocator refusal of the
+  // chroma-scratch grow WITHOUT exhausting memory, so the atomicity
+  // regression test can prove no output row (esp. luma) is written before
+  // this preflight. `take()` fires the armed flag exactly once. Mirrors
+  // `arm_rgb_scratch_alloc_failure`; the non-test build compiles this away.
+  #[cfg(all(test, feature = "std", feature = "yuv-planar"))]
+  if super::FORCE_CHROMA_FULL_ALLOC_FAILURE.with(|f| f.take()) {
+    return Err(MixedSinkerError::Resample(ResampleError::AllocationFailed(
+      PlanGeometry::new(width, height, width, height),
+    )));
+  }
+  let needed = width
+    .checked_mul(2)
+    .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+      width, height, 2,
+    )))?;
+  if chroma_full.len() < needed {
+    chroma_full
+      .try_reserve_exact(needed - chroma_full.len())
+      .map_err(|_| {
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
+          width, height, width, height,
+        )))
+      })?;
+    chroma_full.resize(needed, 0);
+  }
+  Ok(())
+}
+
+/// Horizontally upsamples the half-width U / V rows of a centered-siting
+/// 4:2:0 source to full width into the **already-reserved** `chroma_full`
+/// (#302), returning the two full-width chroma slices `(u_full, v_full)`.
+/// The buffer is split `[0..width]` = U, `[width..2*width]` = V; each half is
+/// filled by [`chroma_upsample_420_center_h`](crate::row::scalar::chroma_upsample_420_center_h)
+/// (the MPEG-1 / JPEG phase-0.5 reconstruction), then fed to the 4:4:4 decode
+/// kernels — so the centered path reuses their SIMD backends and stays
+/// bit-identical per tier.
+///
+/// **Infallible**: the caller must have run [`reserve_420_chroma_full`] up
+/// front (every centered-siting output path does, before any output write),
+/// so `chroma_full` is guaranteed `>= 2 * width` here and `2 * width` cannot
+/// overflow. Only the centered sitings reach here; the default
+/// left/unspecified path never touches this scratch.
+fn upsample_420_chroma_center_h<'s>(
+  chroma_full: &'s mut [u8],
+  u_half: &[u8],
+  v_half: &[u8],
+  width: usize,
+) -> (&'s [u8], &'s [u8]) {
+  debug_assert!(
+    chroma_full.len() >= 2 * width,
+    "chroma_full must be reserved via reserve_420_chroma_full first"
+  );
+  let (u_full, v_full) = chroma_full[..2 * width].split_at_mut(width);
+  crate::row::scalar::chroma_upsample_420_center_h(u_half, u_full, width);
+  crate::row::scalar::chroma_upsample_420_center_h(v_half, v_full, width);
+  (u_full, v_full)
+}
 
 // ---- Yuv420p impl --------------------------------------------------------
 
@@ -170,6 +248,9 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
     let h = self.height;
     let idx = row.row();
     let use_simd = self.simd;
+    // Chroma siting (#302): drives the identity-plan horizontal chroma
+    // phase. `Copy`, so read it out before the field split-borrow below.
+    let chroma_location = self.chroma_location;
 
     // Defense in depth: `begin_frame` already validated frame‑level
     // dimensions, so these checks are unreachable from the walker.
@@ -225,6 +306,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
       luma_u16,
       hsv,
       rgb_scratch,
+      chroma_full,
       plan,
       rgb_stream,
       luma_stream,
@@ -576,6 +658,55 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
+    // Output mode resolution (Strategy A):
+    // - RGBA-only: run dedicated `yuv_420_to_rgba_row` (4 bpp store).
+    // - RGB / HSV (with or without RGBA): run RGB kernel once, then if
+    //   RGBA is also requested, fan it out via `expand_rgb_to_rgba_row`
+    //   (memory-bound copy + 0xFF alpha pad). Saves the second YUV→RGB
+    //   per-pixel math when both buffers are attached.
+    // - None of the above: nothing to do beyond luma above.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+    // Chroma siting (#302): the centered horizontal sitings reconstruct
+    // chroma at the phase-0.5 position; the default / co-sited path keeps the
+    // byte-identical nearest-neighbor decode.
+    let center_sited = chroma_420_center_sited_h(chroma_location);
+
+    // Atomicity preflight (#302, cf. the crate's #180 resample fix): reserve
+    // EVERY fallible row scratch this `Yuv420p` row needs BEFORE any output
+    // row (luma / luma_u16 included) is written, so an allocator refusal
+    // returns a typed error leaving the output frame untouched, never
+    // partially mutated. Two scratches can grow:
+    //  1. the centered-siting full-width chroma (`chroma_full`); and
+    //  2. the RGB row scratch, when a colour decode needs an RGB row but no
+    //     caller RGB buffer is borrowable — exactly `want_hsv && want_rgba &&
+    //     !want_rgb` (`rgb_row_buf_or_scratch`'s own scratch arm; with an
+    //     attached RGB buffer it borrows that instead and never allocates).
+    // The later `upsample_420_chroma_center_h` / `rgb_row_buf_or_scratch`
+    // calls then reuse the already-sized buffers. NOTE: the identical
+    // pre-existing RGB-scratch gap in the sibling planar formats
+    // (Yuv410p / Yuv422p / Yuv444p / Yuv440p / Yuv411p) is NOT a #302
+    // regression and is tracked for a dedicated crate-wide fix in #308; this
+    // PR fixes only the `Yuv420p` instance it owns.
+    if center_sited && (want_rgb || want_rgba || want_hsv) {
+      reserve_420_chroma_full(chroma_full, w, h)?;
+    }
+    if want_hsv && want_rgba && !want_rgb {
+      // Grow the RGB scratch up front via the same helper the decode uses, so
+      // its (test-injectable) allocation runs here — before luma — and the
+      // later call is a no-op reserve. `rgb` is `None` in this arm, so this
+      // takes the scratch branch and returns a slice we discard.
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     // Luma — YUV420p luma *is* the Y plane. Just copy.
     if let Some(luma) = luma.as_deref_mut() {
       luma[one_plane_start..one_plane_end].copy_from_slice(&row.y()[..w]);
@@ -591,16 +722,6 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
       );
     }
 
-    // Output mode resolution (Strategy A):
-    // - RGBA-only: run dedicated `yuv_420_to_rgba_row` (4 bpp store).
-    // - RGB / HSV (with or without RGBA): run RGB kernel once, then if
-    //   RGBA is also requested, fan it out via `expand_rgb_to_rgba_row`
-    //   (memory-bound copy + 0xFF alpha pad). Saves the second YUV→RGB
-    //   per-pixel math when both buffers are attached.
-    // - None of the above: nothing to do beyond luma above.
-    let want_rgb = rgb.is_some();
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
     // HSV-without-RGB-or-RGBA goes through the direct `yuv_420_to_hsv_row`
     // kernel (no source-width RGB scratch). When RGB or RGBA is *also*
     // attached the RGB kernel runs anyway, so HSV derives off that buffer
@@ -611,34 +732,68 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
     if want_hsv_direct {
       let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
       let (h, s, v) = hsv.hsv();
-      yuv_420_to_hsv_row(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        &mut h[one_plane_start..one_plane_end],
-        &mut s[one_plane_start..one_plane_end],
-        &mut v[one_plane_start..one_plane_end],
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-      );
+      if center_sited {
+        // Scratch already reserved by the atomicity preflight above; this
+        // upsample is infallible.
+        let (u_full, v_full) =
+          upsample_420_chroma_center_h(chroma_full, row.u_half(), row.v_half(), w);
+        yuv_444_to_hsv_row(
+          row.y(),
+          u_full,
+          v_full,
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+        );
+      } else {
+        yuv_420_to_hsv_row(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+        );
+      }
       return Ok(());
     }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      yuv_420_to_rgba_row(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        rgba_row,
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-      );
+      if center_sited {
+        let (u_full, v_full) =
+          upsample_420_chroma_center_h(chroma_full, row.u_half(), row.v_half(), w);
+        yuv_444_to_rgba_row(
+          row.y(),
+          u_full,
+          v_full,
+          rgba_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+        );
+      } else {
+        yuv_420_to_rgba_row(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          rgba_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+        );
+      }
       return Ok(());
     }
 
@@ -668,17 +823,33 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
     )?;
 
     // Fused YUV→RGB: upsample chroma in registers inside the row
-    // primitive, no intermediate memory.
-    yuv_420_to_rgb_row(
-      row.y(),
-      row.u_half(),
-      row.v_half(),
-      rgb_row,
-      w,
-      row.matrix(),
-      row.full_range(),
-      use_simd,
-    );
+    // primitive, no intermediate memory. Centered siting (#302) instead
+    // upsamples chroma to full width (phase-0.5) and runs the 4:4:4 kernel.
+    if center_sited {
+      let (u_full, v_full) =
+        upsample_420_chroma_center_h(chroma_full, row.u_half(), row.v_half(), w);
+      yuv_444_to_rgb_row(
+        row.y(),
+        u_full,
+        v_full,
+        rgb_row,
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+    } else {
+      yuv_420_to_rgb_row(
+        row.y(),
+        row.u_half(),
+        row.v_half(),
+        rgb_row,
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+    }
 
     // HSV from the RGB row we just wrote.
     if let Some(hsv) = hsv.as_mut() {

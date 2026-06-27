@@ -78,6 +78,8 @@ use crate::source::*;
 mod ayuv64;
 #[cfg(feature = "bayer")]
 mod bayer;
+#[cfg(feature = "yuv-planar")]
+mod chroma_siting_420;
 #[cfg(feature = "gray")]
 mod gray;
 #[cfg(feature = "rgb-legacy")]
