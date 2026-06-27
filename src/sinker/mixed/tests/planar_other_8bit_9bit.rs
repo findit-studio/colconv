@@ -1611,3 +1611,141 @@ fn yuv440p_luma_u16_buffer_too_short_returns_err() {
     MixedSinkerError::InsufficientLumaU16Buffer(InsufficientBuffer::new(128, 127))
   );
 }
+
+// Atomicity (#308): for each of Yuv422p / Yuv444p / Yuv440p the up-front
+// RGB-scratch preflight must return `AllocationFailed` BEFORE any output row is
+// written, so an allocator refusal leaves the output frame untouched. The
+// triggering config is luma + RGBA + HSV with NO rgb output —
+// `want_hsv && want_rgba && !want_rgb` needs an RGB row but has no caller RGB
+// buffer, so the decode grows the RGB row scratch (`rgb_row_buf_or_scratch`'s
+// scratch arm). With that allocation armed to fail, the preflight returns
+// before the luma write. Mirrors the Yuv420p sibling; reuses the crate's
+// `yuva`-gated RGB-scratch failpoint (so these tests are `yuva`-gated too).
+#[cfg(feature = "yuva")]
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuv422p_rgb_scratch_alloc_failure_leaves_outputs_untouched() {
+  use crate::resample::ResampleError;
+
+  let (yp, up, vp) = solid_yuv422p_frame(16, 8, 42, 128, 128);
+  let src = Yuv422pFrame::new(&yp, &up, &vp, 16, 8, 16, 8, 8);
+  let mut luma = std::vec![0xABu8; 16 * 8];
+  let mut rgba = std::vec![0xCDu8; 16 * 8 * 4];
+  let (mut hh, mut ss, mut vv) = (
+    std::vec![0xCDu8; 16 * 8],
+    std::vec![0xCDu8; 16 * 8],
+    std::vec![0xCDu8; 16 * 8],
+  );
+  let mut sink = MixedSinker::<Yuv422p>::new(16, 8)
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
+
+  super::super::arm_rgb_scratch_alloc_failure();
+  let err = yuv422p_to(&src, false, ColorMatrix::Bt601, &mut sink).unwrap_err();
+  drop(sink);
+
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "RGB-scratch refusal must surface as a recoverable AllocationFailed, got {err:?}"
+  );
+  assert!(
+    luma.iter().all(|&b| b == 0xAB),
+    "luma must be untouched on the rgb-scratch alloc-failure path"
+  );
+}
+
+#[cfg(feature = "yuva")]
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuv444p_rgb_scratch_alloc_failure_leaves_outputs_untouched() {
+  use crate::resample::ResampleError;
+
+  let (yp, up, vp) = solid_yuv444p_frame(16, 8, 42, 128, 128);
+  let src = Yuv444pFrame::new(&yp, &up, &vp, 16, 8, 16, 16, 16);
+  let mut luma = std::vec![0xABu8; 16 * 8];
+  let mut rgba = std::vec![0xCDu8; 16 * 8 * 4];
+  let (mut hh, mut ss, mut vv) = (
+    std::vec![0xCDu8; 16 * 8],
+    std::vec![0xCDu8; 16 * 8],
+    std::vec![0xCDu8; 16 * 8],
+  );
+  let mut sink = MixedSinker::<Yuv444p>::new(16, 8)
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
+
+  super::super::arm_rgb_scratch_alloc_failure();
+  let err = yuv444p_to(&src, false, ColorMatrix::Bt601, &mut sink).unwrap_err();
+  drop(sink);
+
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "RGB-scratch refusal must surface as a recoverable AllocationFailed, got {err:?}"
+  );
+  assert!(
+    luma.iter().all(|&b| b == 0xAB),
+    "luma must be untouched on the rgb-scratch alloc-failure path"
+  );
+}
+
+#[cfg(feature = "yuva")]
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuv440p_rgb_scratch_alloc_failure_leaves_outputs_untouched() {
+  use crate::resample::ResampleError;
+
+  let (yp, up, vp) = solid_yuv440p_frame(16, 8, 42, 128, 128);
+  let src = Yuv440pFrame::new(&yp, &up, &vp, 16, 8, 16, 16, 16);
+  let mut luma = std::vec![0xABu8; 16 * 8];
+  let mut rgba = std::vec![0xCDu8; 16 * 8 * 4];
+  let (mut hh, mut ss, mut vv) = (
+    std::vec![0xCDu8; 16 * 8],
+    std::vec![0xCDu8; 16 * 8],
+    std::vec![0xCDu8; 16 * 8],
+  );
+  let mut sink = MixedSinker::<Yuv440p>::new(16, 8)
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
+
+  super::super::arm_rgb_scratch_alloc_failure();
+  let err = yuv440p_to(&src, false, ColorMatrix::Bt601, &mut sink).unwrap_err();
+  drop(sink);
+
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "RGB-scratch refusal must surface as a recoverable AllocationFailed, got {err:?}"
+  );
+  assert!(
+    luma.iter().all(|&b| b == 0xAB),
+    "luma must be untouched on the rgb-scratch alloc-failure path"
+  );
+}

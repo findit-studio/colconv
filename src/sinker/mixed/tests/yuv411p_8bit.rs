@@ -265,3 +265,56 @@ fn yuv411p_luma_u16_buffer_exactly_sized_accepts() {
   let result = MixedSinker::<Yuv411p>::new(16, 8).with_luma_u16(&mut buf);
   assert!(result.is_ok());
 }
+
+// Atomicity (#308): the up-front RGB-scratch preflight must return
+// `AllocationFailed` BEFORE any output row is written, so an allocator refusal
+// leaves the output frame untouched. Mirrors the Yuv420p sibling. Reuses the
+// crate's RGB-scratch failpoint (`yuva`-gated, so this test is too; under
+// `--all-features` both `yuv-planar` and `yuva` are on).
+#[cfg(feature = "yuva")]
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuv411p_rgb_scratch_alloc_failure_leaves_outputs_untouched() {
+  use crate::resample::ResampleError;
+
+  // luma + RGBA + HSV with NO rgb output: `want_hsv && want_rgba && !want_rgb`
+  // needs an RGB row but has no caller RGB buffer, so the decode grows the RGB
+  // row scratch (`rgb_row_buf_or_scratch`'s scratch arm). With that allocation
+  // armed to fail, the preflight returns AllocationFailed BEFORE any output
+  // row — luma included — is written.
+  let (yp, up, vp) = solid_yuv411p_frame(16, 8, 42, 128, 128);
+  let src = Yuv411pFrame::new(&yp, &up, &vp, 16, 8, 16, 4, 4);
+  let mut luma = std::vec![0xABu8; 16 * 8];
+  let mut rgba = std::vec![0xCDu8; 16 * 8 * 4];
+  let (mut hh, mut ss, mut vv) = (
+    std::vec![0xCDu8; 16 * 8],
+    std::vec![0xCDu8; 16 * 8],
+    std::vec![0xCDu8; 16 * 8],
+  );
+  let mut sink = MixedSinker::<Yuv411p>::new(16, 8)
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
+
+  super::super::arm_rgb_scratch_alloc_failure();
+  let err = yuv411p_to(&src, false, ColorMatrix::Bt601, &mut sink).unwrap_err();
+  drop(sink);
+
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "RGB-scratch refusal must surface as a recoverable AllocationFailed, got {err:?}"
+  );
+  assert!(
+    luma.iter().all(|&b| b == 0xAB),
+    "luma must be untouched on the rgb-scratch alloc-failure path"
+  );
+}
