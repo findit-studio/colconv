@@ -2531,6 +2531,114 @@ mod gbr_parity {
     }
   }
 
+  /// Four deterministic distinct `u32` G/B/R/A planes of `W × H` samples
+  /// (full 32-bit range, nonzero low bits), including a real alpha plane.
+  #[allow(clippy::type_complexity)]
+  fn planes32() -> (
+    std::vec::Vec<u32>,
+    std::vec::Vec<u32>,
+    std::vec::Vec<u32>,
+    std::vec::Vec<u32>,
+  ) {
+    let n = (W * H) as usize;
+    let g = (0..n)
+      .map(|i| (i as u32).wrapping_mul(0x0123_4567).wrapping_add(0x11))
+      .collect();
+    let b = (0..n)
+      .map(|i| (i as u32).wrapping_mul(0x0246_8ACE).wrapping_add(0x22))
+      .collect();
+    let r = (0..n)
+      .map(|i| (i as u32).wrapping_mul(0x0FED_CBA9).wrapping_add(0x33))
+      .collect();
+    let a = (0..n)
+      .map(|i| (i as u32).wrapping_mul(0x0777_1333).wrapping_add(0x44))
+      .collect();
+    (g, b, r, a)
+  }
+
+  /// Gbrap32 LE — the full-bit `u32` twin of `Gbrap16` on the `@const BE` arm
+  /// at the `<const BE = false>` default against the LE `gbrap32_to` wrapper.
+  /// Drives `with_rgba` so the real alpha plane rides through the walker.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_gbrap32_le_matches_direct() {
+    use crate::{
+      frame::Gbrap32LeFrame,
+      source::{Gbrap32, gbrap32_to},
+    };
+    let (g, b, r, a) = planes32();
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Gbrap32LeFrame::try_new(&g, &b, &r, &a, W, H, W, W, W, W).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H * 4) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 4) as usize];
+
+        let mut sw = MixedSinker::<Gbrap32>::new(W as usize, H as usize)
+          .with_rgba(&mut via_walker)
+          .unwrap();
+        <Gbrap32 as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Gbrap32>::new(W as usize, H as usize)
+          .with_rgba(&mut via_direct)
+          .unwrap();
+        gbrap32_to(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "gbrap32 LE parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+
+  /// Gbrap32 BE — drives the `@const BE` impl at `Gbrap32<true>` against the
+  /// `Gbrap32BeFrame` alias, compared to a direct `gbrap32_to_endian::<_, true>`.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_gbrap32_be_matches_direct() {
+    use crate::{
+      frame::Gbrap32BeFrame,
+      source::{Gbrap32, gbrap32_to_endian},
+    };
+    let (g, b, r, a) = planes32();
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Gbrap32BeFrame::try_new(&g, &b, &r, &a, W, H, W, W, W, W).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H * 4) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 4) as usize];
+
+        let mut sw = MixedSinker::<Gbrap32<true>>::new(W as usize, H as usize)
+          .with_rgba(&mut via_walker)
+          .unwrap();
+        <Gbrap32<true> as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Gbrap32<true>>::new(W as usize, H as usize)
+          .with_rgba(&mut via_direct)
+          .unwrap();
+        gbrap32_to_endian::<_, true>(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "gbrap32 BE parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+
   /// GBR → RGB is a plane permute that ignores `full_range` / `matrix`, so the
   /// `with_rgb` parity above cannot prove the Walker forwards them. GBR → luma
   /// weights G/B/R through the matrix and scales by `full_range`, so luma

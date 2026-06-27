@@ -14156,6 +14156,8 @@ pub(crate) use planar_high_bit_native::arm_planar_hb_native_alloc_failure;
 ))]
 pub(crate) use planar_high_bit_native::arm_planar_hb_native_chroma_failure;
 #[cfg(feature = "gbr")]
+mod planar_gbr_32bit;
+#[cfg(feature = "gbr")]
 mod planar_gbr_8bit;
 #[cfg(feature = "gbr")]
 mod planar_gbr_f16;

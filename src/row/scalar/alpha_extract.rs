@@ -296,6 +296,61 @@ pub(crate) fn copy_alpha_plane_u16<const BITS: u32, const BE: bool>(
   }
 }
 
+/// Gbrap32 → u8 RGBA: scatter α plane (`u32`, all 32 bits active) into
+/// `rgba_out[3 + 4*n]` (u8) with depth-conv `>> 24` (high-byte). Only slot 3
+/// of every 4-element tuple is written; R, G, B slots are untouched.
+///
+/// Used in the `Gbrap32` Strategy A+ combo path: after `expand_rgb_to_rgba_row`
+/// fills the RGBA buffer with a forced-opaque alpha, this helper overwrites the
+/// α slot with the real source alpha. `BE` selects the **byte order** of the
+/// encoded source α plane (`false` = LE on disk/wire, e.g. `AV_PIX_FMT_GBRAP32LE`;
+/// `true` = BE). Each raw u32 is normalised to host-native order via
+/// `u32::from_le` / `u32::from_be` before the `>> 24` narrow (a no-op when the
+/// source byte order matches the host). Scalar-only — mirrors the Rgba128
+/// `copy_alpha_packed_u32x4_to_u8_at_3` overwrite (no SIMD path needed for the
+/// rare combo).
+#[cfg(feature = "gbr")]
+pub(crate) fn copy_alpha_plane_u32_to_u8<const BE: bool>(
+  alpha: &[u32],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(alpha.len() >= width, "alpha plane too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
+  for n in 0..width {
+    let raw = if BE {
+      u32::from_be(alpha[n])
+    } else {
+      u32::from_le(alpha[n])
+    };
+    rgba_out[n * 4 + 3] = (raw >> 24) as u8;
+  }
+}
+
+/// Gbrap32 → u16 RGBA: scatter α plane (`u32`) into `rgba_out[3 + 4*n]` (u16)
+/// with depth-conv `>> 16` (high-halfword). No masking — all 32 bits are
+/// active so the narrow is exact. Only slot 3 is written.
+///
+/// `BE` selects the **byte order** of the encoded source α plane; see
+/// [`copy_alpha_plane_u32_to_u8`] for the full rationale.
+#[cfg(feature = "gbr")]
+pub(crate) fn copy_alpha_plane_u32<const BE: bool>(
+  alpha: &[u32],
+  rgba_out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(alpha.len() >= width, "alpha plane too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
+  for n in 0..width {
+    let raw = if BE {
+      u32::from_be(alpha[n])
+    } else {
+      u32::from_le(alpha[n])
+    };
+    rgba_out[n * 4 + 3] = (raw >> 16) as u16;
+  }
+}
+
 /// Ya8 → u8 RGBA: gather A from `packed[1 + 2*n]` into `rgba_out[3 + 4*n]`.
 ///
 /// Ya8 layout per pixel: `[Y(8), A(8)]` — α is at odd byte offsets (slot 1).
@@ -491,6 +546,24 @@ mod tests {
     host
       .iter()
       .map(|v| u16::from_ne_bytes(v.to_be_bytes()))
+      .collect()
+  }
+
+  /// Re-encode a host-native u32 slice as LE-encoded byte storage.
+  #[cfg(feature = "gbr")]
+  fn as_le_u32(host: &[u32]) -> std::vec::Vec<u32> {
+    host
+      .iter()
+      .map(|v| u32::from_ne_bytes(v.to_le_bytes()))
+      .collect()
+  }
+
+  /// Mirror of `as_le_u32` for kernels invoked with `BE = true`.
+  #[cfg(feature = "gbr")]
+  fn as_be_u32(host: &[u32]) -> std::vec::Vec<u32> {
+    host
+      .iter()
+      .map(|v| u32::from_ne_bytes(v.to_be_bytes()))
       .collect()
   }
 
@@ -838,6 +911,60 @@ mod tests {
     assert_eq!(rgba_le, expected, "LE path must match scalar reference");
     assert_eq!(rgba_be, expected, "BE path must match scalar reference");
     assert_eq!(rgba_le, rgba_be, "BE and LE outputs must agree");
+  }
+
+  #[cfg(feature = "gbr")]
+  #[test]
+  fn copy_alpha_plane_u32_to_u8_narrows_and_scatters() {
+    let alpha = as_le_u32(&[0x9000_0000, 0x12FF_FFFF, 0xFFFF_FFFF]);
+    let mut rgba = std::vec![1u8; 12];
+    copy_alpha_plane_u32_to_u8::<false>(&alpha, &mut rgba, 3);
+    assert_eq!(rgba, std::vec![1, 1, 1, 0x90, 1, 1, 1, 0x12, 1, 1, 1, 0xFF]);
+  }
+
+  #[cfg(feature = "gbr")]
+  #[test]
+  fn copy_alpha_plane_u32_narrows_and_scatters() {
+    let alpha = as_le_u32(&[0x9000_0000, 0x1234_FFFF, 0xFFFF_FFFF]);
+    let mut rgba = std::vec![1u16; 12];
+    copy_alpha_plane_u32::<false>(&alpha, &mut rgba, 3);
+    assert_eq!(
+      rgba,
+      std::vec![1, 1, 1, 0x9000, 1, 1, 1, 0x1234, 1, 1, 1, 0xFFFF]
+    );
+  }
+
+  /// BE parity for the Gbrap32 planar α helpers: one host-native fixture,
+  /// LE / BE re-encodings, both pinned to an absolute reference.
+  #[cfg(feature = "gbr")]
+  #[test]
+  fn copy_alpha_plane_u32_be_parity_with_swapped_buffer() {
+    let intended: std::vec::Vec<u32> =
+      std::vec![0x9000_0000, 0x1234_5678, 0xFFFF_FFFF, 0x0000_0001];
+    let alpha_le = as_le_u32(&intended);
+    let alpha_be = as_be_u32(&intended);
+
+    let mut u8_le = std::vec![1u8; 16];
+    let mut u8_be = std::vec![1u8; 16];
+    copy_alpha_plane_u32_to_u8::<false>(&alpha_le, &mut u8_le, 4);
+    copy_alpha_plane_u32_to_u8::<true>(&alpha_be, &mut u8_be, 4);
+    let mut exp_u8 = std::vec![1u8; 16];
+    for (n, &v) in intended.iter().enumerate() {
+      exp_u8[n * 4 + 3] = (v >> 24) as u8;
+    }
+    assert_eq!(u8_le, exp_u8, "u8 LE must match reference");
+    assert_eq!(u8_be, exp_u8, "u8 BE must match reference");
+
+    let mut u16_le = std::vec![7u16; 16];
+    let mut u16_be = std::vec![7u16; 16];
+    copy_alpha_plane_u32::<false>(&alpha_le, &mut u16_le, 4);
+    copy_alpha_plane_u32::<true>(&alpha_be, &mut u16_be, 4);
+    let mut exp_u16 = std::vec![7u16; 16];
+    for (n, &v) in intended.iter().enumerate() {
+      exp_u16[n * 4 + 3] = (v >> 16) as u16;
+    }
+    assert_eq!(u16_le, exp_u16, "u16 LE must match reference");
+    assert_eq!(u16_be, exp_u16, "u16 BE must match reference");
   }
 
   #[cfg(feature = "gray")]
