@@ -78,6 +78,45 @@ pub(crate) fn area_v_accumulate_u16(acc: &mut [u64], h_tmp: &[u64], w: u64) {
   }
 }
 
+/// 32-bit-element H-pass reference: like [`area_h_reduce_row_u16`] but the
+/// samples are `u32` and the per-span sums live in `u128`. A single term is
+/// `weight * sample` with the weight `u16`-bounded (the plan's coverage
+/// length) and the sample up to `u32::MAX`, so one term reaches `~2^48` and a
+/// span accumulates many of them — far past `u64`. The `u32` source formats
+/// are rare and the engine ships **no `u128` SIMD kernel**, so this scalar
+/// reference is the production H-pass; its exact integer sums are what keep
+/// the `u32` resample 0-ULP.
+pub(crate) fn area_h_reduce_row_u32(
+  row: &[u32],
+  channels: usize,
+  starts: &[usize],
+  offsets: &[usize],
+  weights: &[usize],
+  h_tmp: &mut [u128],
+) {
+  for (j, &start) in starts.iter().enumerate() {
+    let span = &weights[offsets[j]..offsets[j + 1]];
+    let base = j * channels;
+    for ch in 0..channels {
+      let mut sum = 0u128;
+      for (i, &w) in span.iter().enumerate() {
+        sum += w as u128 * u128::from(row[(start + i) * channels + ch]);
+      }
+      h_tmp[base + ch] = sum;
+    }
+  }
+}
+
+/// 32-bit-element V-pass AXPY reference: `acc[i] += w * h_tmp[i]` with
+/// `h_tmp` already `u128`. Exact in `u128` by the engine's denominator
+/// bound — `denom * u32::MAX` is at most `~2^96`, leaving the `u128`
+/// accumulator wide headroom (see [`area_h_reduce_row_u32`]).
+pub(crate) fn area_v_accumulate_u32(acc: &mut [u128], h_tmp: &[u128], w: u128) {
+  for (a, t) in acc.iter_mut().zip(h_tmp.iter()) {
+    *a += w * *t;
+  }
+}
+
 /// Float-element H-pass reference: the samples are `f32` but the
 /// per-span sums are `f64` — the unnormalized area numerator reaches
 /// `denom * sample`, which an `f32` accumulator would round away past

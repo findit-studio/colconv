@@ -45,6 +45,15 @@ impl FilterElem for u16 {
   }
 }
 
+impl FilterElem for u32 {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn widen(self) -> f64 {
+    // A `u32` widens to `f64` losslessly (32 bits fit the 53-bit mantissa),
+    // so the `f64` filter domain carries `u32` samples exactly.
+    f64::from(self)
+  }
+}
+
 impl FilterElem for f32 {
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn widen(self) -> f64 {

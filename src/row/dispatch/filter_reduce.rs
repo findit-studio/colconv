@@ -282,6 +282,41 @@ impl_filter_simd_elem!(u8, filter_h_reduce_row_u8_c1, filter_h_reduce_row_u8_c3)
 impl_filter_simd_elem!(u16, filter_h_reduce_row_u16_c1, filter_h_reduce_row_u16_c3);
 impl_filter_simd_elem!(f32, filter_h_reduce_row_f32_c1, filter_h_reduce_row_f32_c3);
 
+/// The `u32` filter element ships **no per-arch SIMD kernel** — the integer
+/// SIMD H-passes top out at `u16`, and a `u32` sample widens to the shared
+/// `f64` accumulation domain losslessly anyway, so the exact scalar `f64`
+/// reduce *is* the production H-pass (and is deterministic, hence 0-ULP). The
+/// impl is hand-written (not via [`impl_filter_simd_elem`]) to delegate
+/// straight to the padded-arena scalar reference, bypassing the `cfg_select!`
+/// SIMD dispatch the macro would emit. The `u32` source formats are rare and
+/// this is the downscale path, so the scalar `f64` dot product is the right
+/// cost/precision trade.
+impl FilterSimdElem for u32 {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  unsafe fn h_c1(
+    row: &[u32],
+    starts: &[usize],
+    ksize: &[usize],
+    coeffs: &[f32],
+    off: &[usize],
+    h_tmp: &mut [f64],
+  ) {
+    scalar::filter_h_reduce_row_padded_c1(row, starts, ksize, coeffs, off, h_tmp);
+  }
+
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  unsafe fn h_c3(
+    row: &[u32],
+    starts: &[usize],
+    ksize: &[usize],
+    coeffs: &[f32],
+    off: &[usize],
+    h_tmp: &mut [f64],
+  ) {
+    scalar::filter_h_reduce_row_padded_c3(row, starts, ksize, coeffs, off, h_tmp);
+  }
+}
+
 /// Runtime-dispatched filter H-pass of one source row into `h_tmp`
 /// (`starts.len() * channels` raw `f64` dot products).
 ///

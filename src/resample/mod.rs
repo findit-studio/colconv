@@ -1185,6 +1185,20 @@ fn round_div_half_up(a: u64, d: u64) -> u64 {
   q + u64::from(r >= d - d / 2)
 }
 
+/// `u128` twin of [`round_div_half_up`] for the `u32` area stream, whose
+/// numerator/denominator (`denom * u32::MAX`-bounded V-accumulation over a
+/// `src_w * src_h` denominator) overflows `u64`. Same overflow-free
+/// ties-up rounding: `r >= d - d / 2` compares the remainder against
+/// `ceil(d / 2)` without widening past `u128`.
+// Consumed only by `AreaSample<u32>::finalize`, instantiated only by `Gray32`
+// (`gray`) for now; allowed to idle in the combos with no `u32` area router.
+#[cfg_attr(not(feature = "gray"), allow(dead_code))]
+fn round_div_half_up_u128(a: u128, d: u128) -> u128 {
+  let q = a / d;
+  let r = a % d;
+  q + u128::from(r >= d - d / 2)
+}
+
 /// The sample element an [`AreaStream`] resamples — abstracts the
 /// element width, the H-pass accumulator ([`Self::HSum`]), the V-pass
 /// accumulator ([`Self::VAcc`]), the per-axis kernels, and the
@@ -1207,6 +1221,14 @@ fn round_div_half_up(a: u64, d: u64) -> u64 {
   feature = "rgb-legacy"
 ))]
 pub(crate) trait AreaSample: Copy + Default {
+  /// Whether this element routes a SIMD H-pass that consumes the plan-time
+  /// [`PaddedSpans`](crate::row::PaddedSpans) staging arena. `true` for the
+  /// SIMD-backed tiers (`u8` / `u16` / `f32` — the default); `false` for the
+  /// scalar-only `u32` tier, whose [`Self::h_reduce`] always uses the
+  /// unpadded `u128` reducer and ignores `padded`. [`AreaStream::new`] skips
+  /// building the arena entirely when this is `false`, so the scalar-only
+  /// path carries no dead staging allocation.
+  const NEEDS_SIMD_STAGING: bool = true;
   /// H-pass accumulator element. Integer samples sum exactly in a wide
   /// integer (`u32` for `u8` — an H-sum reaches `src_w * 255` and the
   /// narrow lanes drive its SIMD kernel; `u64` for `u16`); `f32` sums
@@ -1404,6 +1426,81 @@ impl AreaSample for f32 {
   }
 }
 
+/// 32-bit integer element path: area-resamples `u32` samples at **native
+/// `u32` precision** for the `u32` source formats (`Gray32` / `Rgb96` /
+/// `Rgba128` / `Gbrap32`). Both accumulators are **`u128`** ([`Self::HSum`] /
+/// [`Self::VAcc`]): a single H-term is `weight * sample` (a `u16`-bounded
+/// coverage weight times a `u32` sample, `~2^48`), a span sums many of them,
+/// and the V-pass scales by the vertical coverage up to a `denom * u32::MAX`
+/// numerator (`~2^96` worst case) — all far past `u64`. The integer adds are
+/// exact, so the single round-half-up divide at finalize makes the resample
+/// 0-ULP versus narrowing each `u32` *after* binning. **Scalar-only**: no
+/// `u128` SIMD area kernel exists (the lane widths the integer dispatchers
+/// drive top out at `u64`), and these formats are rare downscale paths, so
+/// the H/V passes route the scalar references directly (ignoring `padded` /
+/// `use_simd`). Gated like the other integer paths; the dead-code allow on
+/// the scalar references drops once a `u32` format routes.
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
+))]
+// Instantiated only by `Gray32` (`gray`) for now — the impl is compiled under
+// the shared area gate, so allow it to idle when no `u32` area router is on.
+#[cfg_attr(not(feature = "gray"), allow(dead_code))]
+impl AreaSample for u32 {
+  // Scalar-only `u128` tier: no SIMD H-pass, so the stream skips the
+  // `PaddedSpans` staging arena (`h_reduce` always uses the unpadded reducer).
+  const NEEDS_SIMD_STAGING: bool = false;
+  type HSum = u128;
+  type VAcc = u128;
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn h_sum_fits(src_w: u64) -> bool {
+    // An H-sum is bounded by `src_w * u32::MAX`; `u128` clears that for any
+    // representable `src_w` (a `usize` is at most `2^64 - 1`, so the product
+    // is below `2^96`). Expressed as the honest division bound.
+    u128::from(src_w) <= u128::MAX / u128::from(u32::MAX)
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn denom_fits(denom: u64) -> bool {
+    // The V-accumulation is bounded by `denom * u32::MAX`; `u128` clears that
+    // for any `u64` denom (`< 2^96`). Expressed as the honest bound so the
+    // predicate documents the exactness contract rather than asserting `true`.
+    u128::from(denom) <= u128::MAX / u128::from(u32::MAX)
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn h_reduce(
+    row: &[u32],
+    channels: usize,
+    h: &AxisSpans,
+    _padded: Option<&crate::row::PaddedSpans>,
+    h_tmp: &mut [u128],
+    _use_simd: bool,
+  ) {
+    // Scalar-only: there is no `u128` SIMD area kernel, so `padded` /
+    // `use_simd` are unused and the scalar reference is the production path.
+    crate::row::area_h_reduce_row_u32(row, channels, &h.starts, &h.offsets, &h.weights, h_tmp);
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn v_accumulate(acc: &mut [u128], h_tmp: &[u128], w: u64, _use_simd: bool) {
+    crate::row::area_v_accumulate_u32(acc, h_tmp, u128::from(w));
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn finalize(acc: u128, denom: u64) -> u32 {
+    round_div_half_up_u128(acc, u128::from(denom)) as u32
+  }
+}
+
 /// Streaming separable area accumulator over [`AreaSample`] elements:
 /// H-reduces each source row through the plan's horizontal spans,
 /// accumulates it under the vertical span weights, and finalizes an
@@ -1532,7 +1629,14 @@ impl<S: AreaSample> AreaStream<S> {
     let v = v
       .try_clone()
       .map_err(|_| ResampleError::AllocationFailed(geometry()))?;
-    let h_padded = crate::row::PaddedSpans::build(&h.starts, &h.offsets, &h.weights);
+    // The SIMD H-pass staging arena is an accelerator only the SIMD-backed
+    // tiers consume; the scalar-only `u32` tier always uses the unpadded
+    // reducer, so skip building (and retaining) the arena for it entirely.
+    let h_padded = if S::NEEDS_SIMD_STAGING {
+      crate::row::PaddedSpans::build(&h.starts, &h.offsets, &h.weights)
+    } else {
+      None
+    };
     Ok(Self {
       h,
       v,

@@ -1,13 +1,14 @@
 //! Fused-downscale coverage for `Gray32` — the full-bit (u32) integer twin of
-//! `Gray16`. The wire row converts to a host-native u16 luma plane first via
-//! the same `>> 16` narrow the direct `luma_u16` path uses (u16 is the widest
-//! depth colconv emits), then a single 1-channel `AreaStream<u16>` /
-//! `FilterStream<u16>` resamples that plane at u16 precision and every attached
-//! output derives from each finalized u16 luma row using the **Gray16** derive
-//! kernels — once narrowed to u16 a Gray32 sample behaves exactly like a
-//! Gray16 one. So every resampled output equals the direct Gray32 sink run over
-//! a frame that already holds the `(>> 16)`-narrowed-then-resampled luma
-//! (widened back to `u32` via `<< 16`).
+//! `Gray16`. The wire row converts to a host-native **`u32`** luma plane (the
+//! wire `BE` swap only, no depth narrow), then a single 1-channel
+//! `AreaStream<u32>` / `FilterStream<u32>` resamples that plane at **native
+//! `u32` precision** and every attached output derives from each finalized
+//! `u32` luma row using the very `gray32_to_*` kernels the direct path uses,
+//! narrowing only afterwards. So every resampled output equals the direct
+//! Gray32 sink run over a frame that already holds the `u32`-binned luma — a
+//! 0-ULP parity-vs-direct for **both** `full_range` true and false (closes
+//! issue #289; the prior `>> 16`-narrow-first staging was ≤1 LSB off the exact
+//! `u32`-domain mean).
 
 use crate::{
   ColorMatrix, PixelSink,
@@ -50,34 +51,31 @@ fn ramp() -> Vec<u32> {
   y
 }
 
-/// The host-native u16 luma plane the Gray32 resample bins: each sample is the
-/// source `u32 >> 16` narrow (the direct `luma_u16` semantics).
-fn narrowed_u16(plane: &[u32]) -> Vec<u16> {
-  plane.iter().map(|&v| (v >> 16) as u16).collect()
-}
-
-/// Exact 2x2-block area mean (round-half-up) of the narrowed u16 plane.
-fn block_mean_2x2(narrowed: &[u16]) -> Vec<u16> {
-  let mut out = vec![0u16; OUT * OUT];
+/// Exact 2x2-block area mean (round-half-up) of the **full `u32`** plane — the
+/// native-`u32`-domain binned luma the Gray32 area resample produces (binning
+/// the full samples, not their `>> 16` narrow). Each output then narrows only
+/// in the derive, so this is the 0-ULP oracle the resampled `luma_u16` must
+/// equal once narrowed `>> 16`.
+fn block_mean_2x2_u32(plane: &[u32]) -> Vec<u32> {
+  let mut out = vec![0u32; OUT * OUT];
   for oy in 0..OUT {
     for ox in 0..OUT {
-      let mut s = 0u32;
+      let mut s = 0u64;
       for dy in 0..2 {
         for dx in 0..2 {
-          s += narrowed[(oy * 2 + dy) * SRC + ox * 2 + dx] as u32;
+          s += u64::from(plane[(oy * 2 + dy) * SRC + ox * 2 + dx]);
         }
       }
-      out[oy * OUT + ox] = ((s + 2) / 4) as u16;
+      out[oy * OUT + ox] = ((s + 2) / 4) as u32;
     }
   }
   out
 }
 
-/// Widen a u16 luma plane back to a `u32` Gray32 plane (`<< 16`) so the direct
-/// Gray32 sink over it reproduces the resample path's per-output derivation:
-/// `luma_u16 = v`, `luma = v >> 8`, native broadcast `= v`, u8 `= v >> 8`.
-fn widen_to_gray32(binned: &[u16]) -> Vec<u32> {
-  binned.iter().map(|&v| (v as u32) << 16).collect()
+/// The binned `u32` plane narrowed `>> 16` — the resampled `luma_u16` (direct
+/// `luma_u16` semantics applied **after** binning).
+fn narrowed_u16_from_u32(binned: &[u32]) -> Vec<u16> {
+  binned.iter().map(|&v| (v >> 16) as u16).collect()
 }
 
 #[test]
@@ -101,8 +99,8 @@ fn gray32_downscale_luma_u16_is_exact_area_mean() {
   }
   assert_eq!(
     luma_u16,
-    block_mean_2x2(&narrowed_u16(&plane)),
-    "luma_u16 must be the exact 2x2 block mean of the (>> 16)-narrowed luma"
+    narrowed_u16_from_u32(&block_mean_2x2_u32(&plane)),
+    "luma_u16 must be the exact native-u32 2x2 block mean, narrowed >> 16 only after binning"
   );
 }
 
@@ -112,9 +110,9 @@ fn gray32_downscale_luma_u16_is_exact_area_mean() {
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn gray32_all_outputs_match_direct_over_binned_luma() {
-  // Every attached output must equal the direct Gray32 sink over the binned
-  // luma, widened back to a `u32` frame (`<< 16`) so the direct path's `>> 16`
-  // narrow recovers the binned u16 — the resample contract.
+  // Every attached output must equal the direct Gray32 sink run over the
+  // native-`u32`-binned luma frame — the 0-ULP resample contract (bin the
+  // full `u32`, narrow only in each per-output derive).
   let plane = ramp();
   let pix = as_le_u32(&plane);
   let src = Gray32Frame::new(&pix, SRC as u32, SRC as u32, SRC as u32);
@@ -149,8 +147,8 @@ fn gray32_all_outputs_match_direct_over_binned_luma() {
     gray32_to(&src, FR, M, &mut sink).unwrap();
   }
 
-  let binned = block_mean_2x2(&narrowed_u16(&plane));
-  let binned_pix = as_le_u32(&widen_to_gray32(&binned));
+  let binned = block_mean_2x2_u32(&plane);
+  let binned_pix = as_le_u32(&binned);
   let mut ref_rgb = vec![0u8; OUT * OUT * 3];
   let mut ref_rgba = vec![0u8; OUT * OUT * 4];
   let mut ref_rgb_u16 = vec![0u16; OUT * OUT * 3];
@@ -245,8 +243,8 @@ fn gray32_le_be_resample_outputs_identical() {
   assert_eq!(le_rgba, be_rgba, "rgba LE/BE diverge");
   assert_eq!(
     le_luma_u16,
-    block_mean_2x2(&narrowed_u16(&plane)),
-    "luma_u16 not area mean"
+    narrowed_u16_from_u32(&block_mean_2x2_u32(&plane)),
+    "luma_u16 not the native-u32 area mean narrowed >> 16"
   );
 }
 
@@ -279,13 +277,14 @@ fn gray32_out_of_sequence_first_row_rejected_before_allocation() {
 
 // ---- Filter-plan routing ----------------------------------------------------
 //
-// The filter path narrows the wire row to a host-native u16 luma plane (the
-// same `>> 16` narrow the area path uses) and resamples it through the
-// signed-coefficient single-channel `FilterStream<u16>` (the filter twin of the
-// area bin). Gray32 carries the full native u16 range after the narrow, so the
-// `FilterStream`'s `0..=65535` clamp *is* the native clamp — no extra clamp. So
-// the filter `luma_u16` must equal a single-channel `FilterStream<u16>`
-// resample of the narrowed source plane value for value.
+// The filter path stages the wire row as a host-native `u32` luma plane (the
+// wire `BE` swap only, no depth narrow) and resamples it through the
+// signed-coefficient single-channel `FilterStream<u32>` (the filter twin of the
+// area bin). Gray32 carries the full native `u32` range, so the
+// `FilterStream<u32>`'s `0..=u32::MAX` clamp *is* the native clamp — no extra
+// clamp. So the filter `luma_u16` must equal a single-channel
+// `FilterStream<u32>` resample of the source plane, narrowed `>> 16` only
+// after binning (0-ULP).
 
 use crate::resample::{
   CatmullRom, FilterKernel, FilterStream, FilteredResampler, Lanczos3, Resampler, Triangle,
@@ -298,7 +297,7 @@ const FUP: usize = 7;
 
 /// A u32 ramp with a hard mid-column edge plus two textured interior rows so
 /// filter windows straddling the edge produce real intermediate values,
-/// exercising the low half the `>> 16` narrow and the u16 stream must carry.
+/// exercising the full low half the native-`u32` filter stream must carry.
 fn filter_ramp() -> Vec<u32> {
   let mut y = vec![0u32; FW * FH];
   for row in 0..FH {
@@ -317,24 +316,26 @@ fn filter_ramp() -> Vec<u32> {
   y
 }
 
-/// Single-channel filter resample of the narrowed host-native u16 luma plane —
-/// the Gray32 luma oracle (full native u16 range, so the engine clamp is native).
-fn native_luma_filter<K: FilterKernel>(
+/// Single-channel `FilterStream<u32>` resample of the host-native `u32` luma
+/// plane — the Gray32 native-`u32` filter oracle (full `u32` range, so the
+/// engine clamp is native). Returns the **raw binned `u32`**; each output
+/// narrows only afterwards.
+fn native_luma_filter_u32<K: FilterKernel>(
   kernel: K,
-  luma_plane: &[u16],
+  luma_plane: &[u32],
   sw: usize,
   sh: usize,
   ow: usize,
   oh: usize,
-) -> Vec<u16> {
+) -> Vec<u32> {
   let plan = FilteredResampler::new(ow, oh, kernel)
     .plan(sw, sh)
     .expect("valid filter plan")
     .expect("non-identity");
   let fh = plan.filter_h().expect("h windows");
   let fv = plan.filter_v().expect("v windows");
-  let mut stream = FilterStream::<u16>::new(fh, fv, sw, sh, 1).expect("geometry");
-  let mut out = vec![0u16; ow * oh];
+  let mut stream = FilterStream::<u32>::new(fh, fv, sw, sh, 1).expect("geometry");
+  let mut out = vec![0u32; ow * oh];
   for row in 0..sh {
     stream
       .feed_row(
@@ -372,7 +373,7 @@ fn gray32_filter_luma_u16<K: FilterKernel + Copy>(ow: usize, oh: usize, kernel: 
     .unwrap();
     gray32_to(&src, FR, M, &mut sink).unwrap();
   }
-  // Derived outputs follow from the resampled luma exactly as the Gray16
+  // Derived outputs follow from the resampled luma exactly as the gray32
   // derive kernels do: luma = luma_u16 >> 8, rgb broadcasts that byte.
   for (i, &lv) in luma_u16.iter().enumerate() {
     assert_eq!(
@@ -391,43 +392,56 @@ fn gray32_filter_luma_u16<K: FilterKernel + Copy>(ow: usize, oh: usize, kernel: 
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn gray32_filter_luma_u16_matches_native_oracle() {
-  let narrowed = narrowed_u16(&filter_ramp());
+  // Oracle: native-`u32` filter of the full source plane, narrowed `>> 16`
+  // only after binning — the 0-ULP contract.
+  let plane = filter_ramp();
   for (ow, oh) in [(FOUT_DOWN, FOUT_DOWN), (FUP, FUP)] {
     let tri = gray32_filter_luma_u16(ow, oh, Triangle);
     assert_eq!(
       tri,
-      native_luma_filter(Triangle, &narrowed, FW, FH, ow, oh),
+      narrowed_u16_from_u32(&native_luma_filter_u32(Triangle, &plane, FW, FH, ow, oh)),
       "Triangle {ow}x{oh}"
     );
     let cat = gray32_filter_luma_u16(ow, oh, CatmullRom);
     assert_eq!(
       cat,
-      native_luma_filter(CatmullRom, &narrowed, FW, FH, ow, oh),
+      narrowed_u16_from_u32(&native_luma_filter_u32(CatmullRom, &plane, FW, FH, ow, oh)),
       "CatmullRom {ow}x{oh}"
     );
     let lan = gray32_filter_luma_u16(ow, oh, Lanczos3);
     assert_eq!(
       lan,
-      native_luma_filter(Lanczos3, &narrowed, FW, FH, ow, oh),
+      narrowed_u16_from_u32(&native_luma_filter_u32(Lanczos3, &plane, FW, FH, ow, oh)),
       "Lanczos3 {ow}x{oh}"
     );
   }
 }
 
-// ---- Limited-range (full_range=false) narrow-first behavior pin -------------
+// ---- Limited-range (full_range=false) 0-ULP parity-vs-direct (issue #289) ----
 //
-// This pins the accepted within-1-LSB narrow-first behavior of the Gray32
-// *limited-range* resample per issue #289 — NOT a parity-vs-direct oracle.
+// Closing #289, the limited-range Gray32 resample is now exact: binning at
+// native `u32` and narrowing only in each per-output derive is byte-identical
+// to the direct Gray32 limited sink run over the `u32`-binned luma. (The old
+// narrow-first staging dropped the low 16 bits ahead of the limited-range
+// affine, ≤1 LSB off — the gap is now closed.) Verified for area + filter,
+// LE + BE, every output.
 
-/// Run a Gray32 `full_range = false` resample of a constant source through
-/// `resampler` (BE flag `BE`), attaching every output, and assert the pinned
-/// narrow-first values. A constant source makes binning trivial — the area
-/// mean and a normalized filter of a constant are the constant — so area and
-/// filter, LE and BE all yield identical, pinnable outputs.
-fn pin_narrow_first<R: Resampler, const BE: bool>(plane: &[u32], resampler: R, label: &str) {
+/// Resample a Gray32 `full_range = false` source (`host`, as host-native u32)
+/// through `resampler` (wire `BE`) with every output attached, then assert
+/// each output equals the **direct** Gray32 limited sink run over `binned` —
+/// the native-`u32`-binned luma the engine produces (block mean for area,
+/// `FilterStream<u32>` for filter). A clean parity-vs-direct: the resample is
+/// 0-ULP, no longer the narrow-first ≤1-LSB approximation.
+fn pin_limited_exact_over_u32_binned<R: Resampler, const BE: bool>(
+  host: &[u32],
+  binned: &[u32],
+  resampler: R,
+  label: &str,
+) {
   const PSRC: usize = 8;
   const POUT: usize = 4;
-  let frame = Gray32Frame::<BE>::new(plane, PSRC as u32, PSRC as u32, PSRC as u32);
+  let wire = if BE { as_be_u32(host) } else { as_le_u32(host) };
+  let frame = Gray32Frame::<BE>::new(&wire, PSRC as u32, PSRC as u32, PSRC as u32);
   let mut rgb = vec![0u8; POUT * POUT * 3];
   let mut rgb_u16 = vec![0u16; POUT * POUT * 3];
   let mut rgba = vec![0u8; POUT * POUT * 4];
@@ -454,30 +468,55 @@ fn pin_narrow_first<R: Resampler, const BE: bool>(plane: &[u32], resampler: R, l
       .unwrap()
       .with_hsv(&mut h, &mut s, &mut v)
       .unwrap();
-    // full_range = false — the limited-range narrow-first path under test.
+    // full_range = false — the limited-range path under test.
     gray32_to_endian::<_, BE>(&frame, false, M, &mut sink).unwrap();
   }
-  // Source 0x106dedee: narrow `>> 16` = 0x106d = 4205. The narrow-first
-  // limited path yields rgb_u16 = limited16(4205) = 127, rgb_u8 = 0; the
-  // 0-ULP direct Gray32 limited path would yield 129 / 1 (the <=1 LSB gap
-  // accepted in #289). Luma is unrescaled: luma_u16 = 4205, luma_u8 = 16.
-  assert!(rgb.iter().all(|&x| x == 0), "{label} rgb");
-  assert!(rgb_u16.iter().all(|&x| x == 127), "{label} rgb_u16");
-  for (i, &x) in rgba.iter().enumerate() {
-    assert_eq!(x, if i % 4 == 3 { 0xFF } else { 0 }, "{label} rgba[{i}]");
+
+  // Reference: the direct (identity-plan) Gray32 limited sink over the
+  // `u32`-binned luma frame. Equality proves the resample bins at native `u32`
+  // and derives each output identically — 0-ULP, no narrow-first gap.
+  let binned_wire = if BE {
+    as_be_u32(binned)
+  } else {
+    as_le_u32(binned)
+  };
+  let ref_frame = Gray32Frame::<BE>::new(&binned_wire, POUT as u32, POUT as u32, POUT as u32);
+  let mut ref_rgb = vec![0u8; POUT * POUT * 3];
+  let mut ref_rgb_u16 = vec![0u16; POUT * POUT * 3];
+  let mut ref_rgba = vec![0u8; POUT * POUT * 4];
+  let mut ref_rgba_u16 = vec![0u16; POUT * POUT * 4];
+  let mut ref_luma = vec![0u8; POUT * POUT];
+  let mut ref_luma_u16 = vec![0u16; POUT * POUT];
+  let mut ref_h = vec![0u8; POUT * POUT];
+  let mut ref_s = vec![0u8; POUT * POUT];
+  let mut ref_v = vec![0u8; POUT * POUT];
+  {
+    let mut ref_sink = MixedSinker::<Gray32<BE>>::new(POUT, POUT)
+      .with_rgb(&mut ref_rgb)
+      .unwrap()
+      .with_rgb_u16(&mut ref_rgb_u16)
+      .unwrap()
+      .with_rgba(&mut ref_rgba)
+      .unwrap()
+      .with_rgba_u16(&mut ref_rgba_u16)
+      .unwrap()
+      .with_luma(&mut ref_luma)
+      .unwrap()
+      .with_luma_u16(&mut ref_luma_u16)
+      .unwrap()
+      .with_hsv(&mut ref_h, &mut ref_s, &mut ref_v)
+      .unwrap();
+    gray32_to_endian::<_, BE>(&ref_frame, false, M, &mut ref_sink).unwrap();
   }
-  for (i, &x) in rgba_u16.iter().enumerate() {
-    assert_eq!(
-      x,
-      if i % 4 == 3 { 0xFFFF } else { 127 },
-      "{label} rgba_u16[{i}]"
-    );
-  }
-  assert!(luma.iter().all(|&x| x == 16), "{label} luma");
-  assert!(luma_u16.iter().all(|&x| x == 4205), "{label} luma_u16");
-  assert!(h.iter().all(|&x| x == 0), "{label} h");
-  assert!(s.iter().all(|&x| x == 0), "{label} s");
-  assert!(v.iter().all(|&x| x == 0), "{label} v");
+  assert_eq!(rgb, ref_rgb, "{label} rgb");
+  assert_eq!(rgb_u16, ref_rgb_u16, "{label} rgb_u16");
+  assert_eq!(rgba, ref_rgba, "{label} rgba");
+  assert_eq!(rgba_u16, ref_rgba_u16, "{label} rgba_u16");
+  assert_eq!(luma, ref_luma, "{label} luma");
+  assert_eq!(luma_u16, ref_luma_u16, "{label} luma_u16");
+  assert_eq!(h, ref_h, "{label} h");
+  assert_eq!(s, ref_s, "{label} s");
+  assert_eq!(v, ref_v, "{label} v");
 }
 
 #[test]
@@ -485,15 +524,39 @@ fn pin_narrow_first<R: Resampler, const BE: bool>(plane: &[u32], resampler: R, l
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
-fn gray32_limited_resample_pins_narrow_first_behavior() {
-  // Constant source with nonzero low 16 bits near a rounding threshold.
+fn gray32_limited_resample_is_exact_u32_domain() {
+  // Constant source with nonzero low 16 bits near a rounding threshold — the
+  // case the narrow-first staging mis-rounded at limited range (#289).
   const V: u32 = 0x106d_edee;
-  let le = as_le_u32(&vec![V; 8 * 8]);
-  let be = as_be_u32(&vec![V; 8 * 8]);
-  // Area engine, LE + BE.
-  pin_narrow_first::<_, false>(&le, AreaResampler::to(4, 4), "area LE");
-  pin_narrow_first::<_, true>(&be, AreaResampler::to(4, 4), "area BE");
-  // Filter engine (Triangle), LE + BE.
-  pin_narrow_first::<_, false>(&le, FilteredResampler::new(4, 4, Triangle), "filter LE");
-  pin_narrow_first::<_, true>(&be, FilteredResampler::new(4, 4, Triangle), "filter BE");
+  let host = vec![V; 8 * 8];
+  // Area engine, LE + BE: the u32 block mean is the binned oracle.
+  let area_binned = block_mean_2x2_u32(&host);
+  pin_limited_exact_over_u32_binned::<_, false>(
+    &host,
+    &area_binned,
+    AreaResampler::to(4, 4),
+    "area LE",
+  );
+  pin_limited_exact_over_u32_binned::<_, true>(
+    &host,
+    &area_binned,
+    AreaResampler::to(4, 4),
+    "area BE",
+  );
+  // Filter engine (Triangle), LE + BE: a standalone FilterStream<u32> is the
+  // binned oracle (a constant need not filter to itself in f64, so use the
+  // actual native-u32 filter result).
+  let filt_binned = native_luma_filter_u32(Triangle, &host, 8, 8, 4, 4);
+  pin_limited_exact_over_u32_binned::<_, false>(
+    &host,
+    &filt_binned,
+    FilteredResampler::new(4, 4, Triangle),
+    "filter LE",
+  );
+  pin_limited_exact_over_u32_binned::<_, true>(
+    &host,
+    &filt_binned,
+    FilteredResampler::new(4, 4, Triangle),
+    "filter BE",
+  );
 }
