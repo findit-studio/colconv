@@ -912,3 +912,308 @@ pub(crate) unsafe fn bgr444_to_rgba_u16_row(src: &[u8], rgba_u16_out: &mut [u16]
     }
   }
 }
+
+// =========================================================================
+// Legacy bit-packed RGB/BGR (8bpp 3:3:2 + 1:2:1; 4bpp 1:2:1 two-per-byte)
+// (Rgb8 / Bgr8 / Rgb4Byte / Bgr4Byte — 1 byte/pixel;
+//  Rgb4 / Bgr4 — 4 bits/pixel, two pixels per byte).
+//
+// Each iteration produces 8 pixels as 8 u16 lanes of native source bytes
+// (byte formats: widen 8 source bytes via `_mm_cvtepu8_epi16`; nibble
+// formats: de-interleave 4 source bytes into 8 nibble lanes), then reuses the
+// same shift+mask extraction, bit-replication expansion, and
+// `write_rgb_*` / `write_rgba_*` interleaved stores as the 16-bit formats
+// above. The `width % 8` remainder defers to `scalar`.
+// =========================================================================
+
+/// Bit-replicate u16 lanes of 1-bit values (`0`/`1`) to 8-bit: `c * 0xFF`.
+#[inline(always)]
+unsafe fn expand1(c: __m128i) -> __m128i {
+  unsafe { _mm_mullo_epi16(c, _mm_set1_epi16(0xFF)) }
+}
+
+/// Bit-replicate u16 lanes of 2-bit values (`0..=3`) to 8-bit: `c * 0x55`.
+#[inline(always)]
+unsafe fn expand2(c: __m128i) -> __m128i {
+  unsafe { _mm_mullo_epi16(c, _mm_set1_epi16(0x55)) }
+}
+
+/// Bit-replicate u16 lanes of 3-bit values (`0..=7`) to 8-bit:
+/// `(c << 5) | (c << 2) | (c >> 1)`.
+#[inline(always)]
+unsafe fn expand3(c: __m128i) -> __m128i {
+  unsafe {
+    _mm_or_si128(
+      _mm_or_si128(_mm_slli_epi16(c, 5), _mm_slli_epi16(c, 2)),
+      _mm_srli_epi16(c, 1),
+    )
+  }
+}
+
+/// Load 8 packed 1-byte-per-pixel source bytes and widen to 8 u16 lanes.
+///
+/// # Safety
+///
+/// `ptr` valid for an 8-byte read; SSE4.1 available.
+#[inline(always)]
+unsafe fn load_byte_px8(ptr: *const u8) -> __m128i {
+  unsafe { _mm_cvtepu8_epi16(_mm_loadl_epi64(ptr.cast())) }
+}
+
+/// Load 4 packed 2-pixel-per-byte source bytes and de-interleave the nibbles
+/// into 8 u16 lanes (even pixel = high nibble `[7:4]`, odd = low nibble).
+///
+/// # Safety
+///
+/// `ptr` valid for a 4-byte read; SSE4.1 available.
+#[inline(always)]
+unsafe fn load_nibble_px8(ptr: *const u8) -> __m128i {
+  unsafe {
+    let raw = _mm_cvtsi32_si128(core::ptr::read_unaligned(ptr.cast::<u32>()) as i32);
+    // Duplicate each of the 4 low bytes: [b0, b0, b1, b1, b2, b2, b3, b3, …].
+    let dup = _mm_unpacklo_epi8(raw, raw);
+    let w = _mm_cvtepu8_epi16(dup);
+    let hi = _mm_srli_epi16(w, 4);
+    let lo = _mm_and_si128(w, _mm_set1_epi16(0x0F));
+    // Even lanes take the high nibble (imm 0x55 selects lanes 0,2,4,6 from `hi`).
+    _mm_blend_epi16(lo, hi, 0x55)
+  }
+}
+
+/// Emits the four SSE4.1 output kernels (rgb / rgba / rgb_u16 / rgba_u16) for
+/// one legacy bit-packed format. `$kind` is `byte` or `nibble`; each channel
+/// is `(right_shift, native_mask, expand_fn)`.
+macro_rules! sse_lowbit_format {
+  (@load byte, $src:expr, $x:expr) => { load_byte_px8($src.as_ptr().add($x)) };
+  (@load nibble, $src:expr, $x:expr) => { load_nibble_px8($src.as_ptr().add($x / 2)) };
+  (@srcmin byte, $w:expr) => { $w };
+  (@srcmin nibble, $w:expr) => { $w.div_ceil(2) };
+  (@tail byte, $src:expr, $x:expr) => { &$src[$x..] };
+  (@tail nibble, $src:expr, $x:expr) => { &$src[$x / 2..] };
+  (
+    kind: $kind:tt,
+    rgb: $to_rgb:ident, rgba: $to_rgba:ident,
+    rgb_u16: $to_rgb_u16:ident, rgba_u16: $to_rgba_u16:ident,
+    s_rgb: $s_rgb:path, s_rgba: $s_rgba:path,
+    s_rgb_u16: $s_rgb_u16:path, s_rgba_u16: $s_rgba_u16:path,
+    r: ($rsh:literal, $rmask:expr, $rexp:ident),
+    g: ($gsh:literal, $gmask:expr, $gexp:ident),
+    b: ($bsh:literal, $bmask:expr, $bexp:ident),
+  ) => {
+    /// SSE4.1: packed legacy RGB/BGR → `R, G, B` bytes (8 px/iter).
+    ///
+    /// # Safety
+    ///
+    /// SSE4.1 available; `src` and `rgb_out` long enough for `width`.
+    #[inline]
+    #[target_feature(enable = "sse4.1")]
+    pub(crate) unsafe fn $to_rgb(src: &[u8], rgb_out: &mut [u8], width: usize) {
+      debug_assert!(src.len() >= sse_lowbit_format!(@srcmin $kind, width), "src too short");
+      debug_assert!(rgb_out.len() >= width * 3, "rgb_out too short");
+      unsafe {
+        let rmask = _mm_set1_epi16($rmask);
+        let gmask = _mm_set1_epi16($gmask);
+        let bmask = _mm_set1_epi16($bmask);
+        let zero = _mm_setzero_si128();
+        let mut x = 0usize;
+        while x + 8 <= width {
+          let px = sse_lowbit_format!(@load $kind, src, x);
+          let r = _mm_and_si128(_mm_srli_epi16(px, $rsh), rmask);
+          let g = _mm_and_si128(_mm_srli_epi16(px, $gsh), gmask);
+          let b = _mm_and_si128(_mm_srli_epi16(px, $bsh), bmask);
+          let r_u8 = _mm_packus_epi16($rexp(r), zero);
+          let g_u8 = _mm_packus_epi16($gexp(g), zero);
+          let b_u8 = _mm_packus_epi16($bexp(b), zero);
+          let mut tmp = [0u8; 48];
+          write_rgb_16(r_u8, g_u8, b_u8, tmp.as_mut_ptr());
+          core::ptr::copy_nonoverlapping(tmp.as_ptr(), rgb_out.as_mut_ptr().add(x * 3), 24);
+          x += 8;
+        }
+        if x < width {
+          $s_rgb(sse_lowbit_format!(@tail $kind, src, x), &mut rgb_out[x * 3..], width - x);
+        }
+      }
+    }
+
+    /// SSE4.1: packed legacy RGB/BGR → `R, G, B, A` bytes (α = `0xFF`).
+    ///
+    /// # Safety
+    ///
+    /// SSE4.1 available; `src` and `rgba_out` long enough for `width`.
+    #[inline]
+    #[target_feature(enable = "sse4.1")]
+    pub(crate) unsafe fn $to_rgba(src: &[u8], rgba_out: &mut [u8], width: usize) {
+      debug_assert!(src.len() >= sse_lowbit_format!(@srcmin $kind, width), "src too short");
+      debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
+      unsafe {
+        let rmask = _mm_set1_epi16($rmask);
+        let gmask = _mm_set1_epi16($gmask);
+        let bmask = _mm_set1_epi16($bmask);
+        let zero = _mm_setzero_si128();
+        let alpha = _mm_set1_epi8(-1i8);
+        let mut x = 0usize;
+        while x + 8 <= width {
+          let px = sse_lowbit_format!(@load $kind, src, x);
+          let r = _mm_and_si128(_mm_srli_epi16(px, $rsh), rmask);
+          let g = _mm_and_si128(_mm_srli_epi16(px, $gsh), gmask);
+          let b = _mm_and_si128(_mm_srli_epi16(px, $bsh), bmask);
+          let r_u8 = _mm_packus_epi16($rexp(r), zero);
+          let g_u8 = _mm_packus_epi16($gexp(g), zero);
+          let b_u8 = _mm_packus_epi16($bexp(b), zero);
+          let mut tmp = [0u8; 64];
+          write_rgba_16(r_u8, g_u8, b_u8, alpha, tmp.as_mut_ptr());
+          core::ptr::copy_nonoverlapping(tmp.as_ptr(), rgba_out.as_mut_ptr().add(x * 4), 32);
+          x += 8;
+        }
+        if x < width {
+          $s_rgba(sse_lowbit_format!(@tail $kind, src, x), &mut rgba_out[x * 4..], width - x);
+        }
+      }
+    }
+
+    /// SSE4.1: packed legacy RGB/BGR → native `R, G, B` u16 (8 px/iter).
+    ///
+    /// # Safety
+    ///
+    /// SSE4.1 available; `src` and `rgb_u16_out` long enough for `width`.
+    #[inline]
+    #[target_feature(enable = "sse4.1")]
+    pub(crate) unsafe fn $to_rgb_u16(src: &[u8], rgb_u16_out: &mut [u16], width: usize) {
+      debug_assert!(src.len() >= sse_lowbit_format!(@srcmin $kind, width), "src too short");
+      debug_assert!(rgb_u16_out.len() >= width * 3, "rgb_u16_out too short");
+      unsafe {
+        let rmask = _mm_set1_epi16($rmask);
+        let gmask = _mm_set1_epi16($gmask);
+        let bmask = _mm_set1_epi16($bmask);
+        let mut x = 0usize;
+        while x + 8 <= width {
+          let px = sse_lowbit_format!(@load $kind, src, x);
+          let r = _mm_and_si128(_mm_srli_epi16(px, $rsh), rmask);
+          let g = _mm_and_si128(_mm_srli_epi16(px, $gsh), gmask);
+          let b = _mm_and_si128(_mm_srli_epi16(px, $bsh), bmask);
+          write_rgb_u16_8(r, g, b, rgb_u16_out.as_mut_ptr().add(x * 3));
+          x += 8;
+        }
+        if x < width {
+          $s_rgb_u16(
+            sse_lowbit_format!(@tail $kind, src, x),
+            &mut rgb_u16_out[x * 3..],
+            width - x,
+          );
+        }
+      }
+    }
+
+    /// SSE4.1: packed legacy RGB/BGR → native `R, G, B, A` u16 (α = `0xFFFF`).
+    ///
+    /// # Safety
+    ///
+    /// SSE4.1 available; `src` and `rgba_u16_out` long enough for `width`.
+    #[inline]
+    #[target_feature(enable = "sse4.1")]
+    pub(crate) unsafe fn $to_rgba_u16(src: &[u8], rgba_u16_out: &mut [u16], width: usize) {
+      debug_assert!(src.len() >= sse_lowbit_format!(@srcmin $kind, width), "src too short");
+      debug_assert!(rgba_u16_out.len() >= width * 4, "rgba_u16_out too short");
+      unsafe {
+        let rmask = _mm_set1_epi16($rmask);
+        let gmask = _mm_set1_epi16($gmask);
+        let bmask = _mm_set1_epi16($bmask);
+        let alpha = _mm_set1_epi16(-1i16);
+        let mut x = 0usize;
+        while x + 8 <= width {
+          let px = sse_lowbit_format!(@load $kind, src, x);
+          let r = _mm_and_si128(_mm_srli_epi16(px, $rsh), rmask);
+          let g = _mm_and_si128(_mm_srli_epi16(px, $gsh), gmask);
+          let b = _mm_and_si128(_mm_srli_epi16(px, $bsh), bmask);
+          write_rgba_u16_8(r, g, b, alpha, rgba_u16_out.as_mut_ptr().add(x * 4));
+          x += 8;
+        }
+        if x < width {
+          $s_rgba_u16(
+            sse_lowbit_format!(@tail $kind, src, x),
+            &mut rgba_u16_out[x * 4..],
+            width - x,
+          );
+        }
+      }
+    }
+  };
+}
+
+sse_lowbit_format! {
+  kind: byte,
+  rgb: rgb8_to_rgb_row, rgba: rgb8_to_rgba_row,
+  rgb_u16: rgb8_to_rgb_u16_row, rgba_u16: rgb8_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::rgb8_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::rgb8_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::rgb8_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::rgb8_to_rgba_u16_row,
+  r: (5, 0x07, expand3),
+  g: (2, 0x07, expand3),
+  b: (0, 0x03, expand2),
+}
+
+sse_lowbit_format! {
+  kind: byte,
+  rgb: bgr8_to_rgb_row, rgba: bgr8_to_rgba_row,
+  rgb_u16: bgr8_to_rgb_u16_row, rgba_u16: bgr8_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::bgr8_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::bgr8_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::bgr8_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::bgr8_to_rgba_u16_row,
+  r: (0, 0x07, expand3),
+  g: (3, 0x07, expand3),
+  b: (6, 0x03, expand2),
+}
+
+sse_lowbit_format! {
+  kind: byte,
+  rgb: rgb4_byte_to_rgb_row, rgba: rgb4_byte_to_rgba_row,
+  rgb_u16: rgb4_byte_to_rgb_u16_row, rgba_u16: rgb4_byte_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::rgb4_byte_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::rgb4_byte_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::rgb4_byte_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::rgb4_byte_to_rgba_u16_row,
+  r: (3, 0x01, expand1),
+  g: (1, 0x03, expand2),
+  b: (0, 0x01, expand1),
+}
+
+sse_lowbit_format! {
+  kind: byte,
+  rgb: bgr4_byte_to_rgb_row, rgba: bgr4_byte_to_rgba_row,
+  rgb_u16: bgr4_byte_to_rgb_u16_row, rgba_u16: bgr4_byte_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::bgr4_byte_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::bgr4_byte_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::bgr4_byte_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::bgr4_byte_to_rgba_u16_row,
+  r: (0, 0x01, expand1),
+  g: (1, 0x03, expand2),
+  b: (3, 0x01, expand1),
+}
+
+sse_lowbit_format! {
+  kind: nibble,
+  rgb: rgb4_to_rgb_row, rgba: rgb4_to_rgba_row,
+  rgb_u16: rgb4_to_rgb_u16_row, rgba_u16: rgb4_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::rgb4_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::rgb4_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::rgb4_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::rgb4_to_rgba_u16_row,
+  r: (3, 0x01, expand1),
+  g: (1, 0x03, expand2),
+  b: (0, 0x01, expand1),
+}
+
+sse_lowbit_format! {
+  kind: nibble,
+  rgb: bgr4_to_rgb_row, rgba: bgr4_to_rgba_row,
+  rgb_u16: bgr4_to_rgb_u16_row, rgba_u16: bgr4_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::bgr4_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::bgr4_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::bgr4_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::bgr4_to_rgba_u16_row,
+  r: (0, 0x01, expand1),
+  g: (1, 0x03, expand2),
+  b: (3, 0x01, expand1),
+}

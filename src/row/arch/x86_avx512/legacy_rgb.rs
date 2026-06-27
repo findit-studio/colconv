@@ -1151,3 +1151,323 @@ pub(crate) unsafe fn bgr444_to_rgba_u16_row(src: &[u8], rgba_u16_out: &mut [u16]
     }
   }
 }
+
+// =========================================================================
+// Legacy bit-packed RGB/BGR (8bpp 3:3:2 + 1:2:1; 4bpp 1:2:1 two-per-byte)
+// (Rgb8 / Bgr8 / Rgb4Byte / Bgr4Byte — 1 byte/pixel;
+//  Rgb4 / Bgr4 — 4 bits/pixel, two pixels per byte).
+//
+// Each iteration produces 32 pixels as 32 u16 lanes of native source bytes
+// (byte formats: widen 32 source bytes via `_mm512_cvtepu8_epi16`; nibble
+// formats: de-interleave 16 source bytes into 32 nibble lanes), then reuses
+// the same shift+mask extraction, bit-replication expansion, and quarter-wise
+// `write_*_32` stores as the 16-bit formats above. The `width % 32` remainder
+// defers to `scalar`. The nibble de-interleave uses 256-bit AVX2
+// broadcast+shuffle intrinsics, which `avx512f` implies (so the kernels stay
+// `avx512f,avx512bw`-declared and gate on `avx512_available()`, matching every
+// other AVX-512 backend in this crate — e.g. `yuv_planar_8bit`).
+// =========================================================================
+
+/// Bit-replicate u16 lanes of 1-bit values (`0`/`1`) to 8-bit: `c * 0xFF`.
+#[inline(always)]
+unsafe fn expand1(c: __m512i) -> __m512i {
+  unsafe { _mm512_mullo_epi16(c, _mm512_set1_epi16(0xFF)) }
+}
+
+/// Bit-replicate u16 lanes of 2-bit values (`0..=3`) to 8-bit: `c * 0x55`.
+#[inline(always)]
+unsafe fn expand2(c: __m512i) -> __m512i {
+  unsafe { _mm512_mullo_epi16(c, _mm512_set1_epi16(0x55)) }
+}
+
+/// Bit-replicate u16 lanes of 3-bit values (`0..=7`) to 8-bit:
+/// `(c << 5) | (c << 2) | (c >> 1)`.
+#[inline(always)]
+unsafe fn expand3(c: __m512i) -> __m512i {
+  unsafe {
+    _mm512_or_si512(
+      _mm512_or_si512(_mm512_slli_epi16(c, 5), _mm512_slli_epi16(c, 2)),
+      _mm512_srli_epi16(c, 1),
+    )
+  }
+}
+
+/// Load 32 packed 1-byte-per-pixel source bytes and widen to 32 u16 lanes.
+///
+/// # Safety
+///
+/// `ptr` valid for a 32-byte read; AVX-512BW available.
+#[inline(always)]
+unsafe fn load_byte_px32(ptr: *const u8) -> __m512i {
+  unsafe { _mm512_cvtepu8_epi16(_mm256_loadu_si256(ptr.cast())) }
+}
+
+/// Load 16 packed 2-pixel-per-byte source bytes and de-interleave the nibbles
+/// into 32 u16 lanes (even pixel = high nibble `[7:4]`, odd = low nibble).
+///
+/// Uses 256-bit AVX2 broadcast+shuffle intrinsics, which `avx512f` implies; the
+/// caller is `avx512f,avx512bw`-gated like every other AVX-512 kernel.
+///
+/// # Safety
+///
+/// `ptr` valid for a 16-byte read; AVX-512BW available.
+#[inline(always)]
+unsafe fn load_nibble_px32(ptr: *const u8) -> __m512i {
+  unsafe {
+    let v = _mm_loadu_si128(ptr.cast());
+    // Duplicate each of the 16 bytes → [b0, b0, b1, b1, …, b15, b15] (32 bytes).
+    let bcast = _mm256_broadcastsi128_si256(v);
+    let dupmask = _mm256_setr_epi8(
+      0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13,
+      14, 14, 15, 15,
+    );
+    let dup = _mm256_shuffle_epi8(bcast, dupmask);
+    let w = _mm512_cvtepu8_epi16(dup);
+    let hi = _mm512_srli_epi16(w, 4);
+    let lo = _mm512_and_si512(w, _mm512_set1_epi16(0x0F));
+    // Even lanes take the high nibble (mask 0x5555_5555).
+    _mm512_mask_blend_epi16(0x5555_5555, lo, hi)
+  }
+}
+
+/// Emits the four AVX-512 output kernels (rgb / rgba / rgb_u16 / rgba_u16) for
+/// one legacy bit-packed format. `$kind` is `byte` or `nibble`; each channel
+/// is `(right_shift, native_mask, expand_fn)`.
+macro_rules! avx512_lowbit_format {
+  (@load byte, $src:expr, $x:expr) => { load_byte_px32($src.as_ptr().add($x)) };
+  (@load nibble, $src:expr, $x:expr) => { load_nibble_px32($src.as_ptr().add($x / 2)) };
+  (@srcmin byte, $w:expr) => { $w };
+  (@srcmin nibble, $w:expr) => { $w.div_ceil(2) };
+  (@tail byte, $src:expr, $x:expr) => { &$src[$x..] };
+  (@tail nibble, $src:expr, $x:expr) => { &$src[$x / 2..] };
+  (
+    kind: $kind:tt,
+    rgb: $to_rgb:ident, rgba: $to_rgba:ident,
+    rgb_u16: $to_rgb_u16:ident, rgba_u16: $to_rgba_u16:ident,
+    s_rgb: $s_rgb:path, s_rgba: $s_rgba:path,
+    s_rgb_u16: $s_rgb_u16:path, s_rgba_u16: $s_rgba_u16:path,
+    r: ($rsh:literal, $rmask:expr, $rexp:ident),
+    g: ($gsh:literal, $gmask:expr, $gexp:ident),
+    b: ($bsh:literal, $bmask:expr, $bexp:ident),
+  ) => {
+    /// AVX-512 (F+BW): packed legacy RGB/BGR → `R, G, B` bytes (32 px/iter).
+    ///
+    /// # Safety
+    ///
+    /// AVX-512BW available; `src` and `rgb_out` long enough for `width`.
+    #[inline]
+    #[target_feature(enable = "avx512f,avx512bw")]
+    pub(crate) unsafe fn $to_rgb(src: &[u8], rgb_out: &mut [u8], width: usize) {
+      debug_assert!(src.len() >= avx512_lowbit_format!(@srcmin $kind, width), "src too short");
+      debug_assert!(rgb_out.len() >= width * 3, "rgb_out too short");
+      unsafe {
+        let rmask = _mm512_set1_epi16($rmask);
+        let gmask = _mm512_set1_epi16($gmask);
+        let bmask = _mm512_set1_epi16($bmask);
+        let zero128 = _mm_setzero_si128();
+        let mut x = 0usize;
+        while x + 32 <= width {
+          let px = avx512_lowbit_format!(@load $kind, src, x);
+          let r = _mm512_and_si512(_mm512_srli_epi16(px, $rsh), rmask);
+          let g = _mm512_and_si512(_mm512_srli_epi16(px, $gsh), gmask);
+          let b = _mm512_and_si512(_mm512_srli_epi16(px, $bsh), bmask);
+          write_rgb_32_from_u16lanes(
+            $rexp(r),
+            $gexp(g),
+            $bexp(b),
+            zero128,
+            rgb_out.as_mut_ptr().add(x * 3),
+          );
+          x += 32;
+        }
+        if x < width {
+          $s_rgb(avx512_lowbit_format!(@tail $kind, src, x), &mut rgb_out[x * 3..], width - x);
+        }
+      }
+    }
+
+    /// AVX-512 (F+BW): packed legacy RGB/BGR → `R, G, B, A` bytes (α = `0xFF`).
+    ///
+    /// # Safety
+    ///
+    /// AVX-512BW available; `src` and `rgba_out` long enough for `width`.
+    #[inline]
+    #[target_feature(enable = "avx512f,avx512bw")]
+    pub(crate) unsafe fn $to_rgba(src: &[u8], rgba_out: &mut [u8], width: usize) {
+      debug_assert!(src.len() >= avx512_lowbit_format!(@srcmin $kind, width), "src too short");
+      debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
+      unsafe {
+        let rmask = _mm512_set1_epi16($rmask);
+        let gmask = _mm512_set1_epi16($gmask);
+        let bmask = _mm512_set1_epi16($bmask);
+        let zero128 = _mm_setzero_si128();
+        let alpha_u8 = _mm_set1_epi8(-1i8);
+        let mut x = 0usize;
+        while x + 32 <= width {
+          let px = avx512_lowbit_format!(@load $kind, src, x);
+          let r = _mm512_and_si512(_mm512_srli_epi16(px, $rsh), rmask);
+          let g = _mm512_and_si512(_mm512_srli_epi16(px, $gsh), gmask);
+          let b = _mm512_and_si512(_mm512_srli_epi16(px, $bsh), bmask);
+          write_rgba_32_from_u16lanes(
+            $rexp(r),
+            $gexp(g),
+            $bexp(b),
+            alpha_u8,
+            zero128,
+            rgba_out.as_mut_ptr().add(x * 4),
+          );
+          x += 32;
+        }
+        if x < width {
+          $s_rgba(avx512_lowbit_format!(@tail $kind, src, x), &mut rgba_out[x * 4..], width - x);
+        }
+      }
+    }
+
+    /// AVX-512 (F+BW): packed legacy RGB/BGR → native `R, G, B` u16 (32 px/iter).
+    ///
+    /// # Safety
+    ///
+    /// AVX-512BW available; `src` and `rgb_u16_out` long enough for `width`.
+    #[inline]
+    #[target_feature(enable = "avx512f,avx512bw")]
+    pub(crate) unsafe fn $to_rgb_u16(src: &[u8], rgb_u16_out: &mut [u16], width: usize) {
+      debug_assert!(src.len() >= avx512_lowbit_format!(@srcmin $kind, width), "src too short");
+      debug_assert!(rgb_u16_out.len() >= width * 3, "rgb_u16_out too short");
+      unsafe {
+        let rmask = _mm512_set1_epi16($rmask);
+        let gmask = _mm512_set1_epi16($gmask);
+        let bmask = _mm512_set1_epi16($bmask);
+        let mut x = 0usize;
+        while x + 32 <= width {
+          let px = avx512_lowbit_format!(@load $kind, src, x);
+          let r = _mm512_and_si512(_mm512_srli_epi16(px, $rsh), rmask);
+          let g = _mm512_and_si512(_mm512_srli_epi16(px, $gsh), gmask);
+          let b = _mm512_and_si512(_mm512_srli_epi16(px, $bsh), bmask);
+          write_rgb_u16_32_quarters(r, g, b, rgb_u16_out.as_mut_ptr().add(x * 3));
+          x += 32;
+        }
+        if x < width {
+          $s_rgb_u16(
+            avx512_lowbit_format!(@tail $kind, src, x),
+            &mut rgb_u16_out[x * 3..],
+            width - x,
+          );
+        }
+      }
+    }
+
+    /// AVX-512 (F+BW): packed legacy RGB/BGR → native `R, G, B, A` u16
+    /// (α = `0xFFFF`, 32 px/iter).
+    ///
+    /// # Safety
+    ///
+    /// AVX-512BW available; `src` and `rgba_u16_out` long enough for `width`.
+    #[inline]
+    #[target_feature(enable = "avx512f,avx512bw")]
+    pub(crate) unsafe fn $to_rgba_u16(src: &[u8], rgba_u16_out: &mut [u16], width: usize) {
+      debug_assert!(src.len() >= avx512_lowbit_format!(@srcmin $kind, width), "src too short");
+      debug_assert!(rgba_u16_out.len() >= width * 4, "rgba_u16_out too short");
+      unsafe {
+        let rmask = _mm512_set1_epi16($rmask);
+        let gmask = _mm512_set1_epi16($gmask);
+        let bmask = _mm512_set1_epi16($bmask);
+        let alpha = _mm_set1_epi16(-1i16);
+        let mut x = 0usize;
+        while x + 32 <= width {
+          let px = avx512_lowbit_format!(@load $kind, src, x);
+          let r = _mm512_and_si512(_mm512_srli_epi16(px, $rsh), rmask);
+          let g = _mm512_and_si512(_mm512_srli_epi16(px, $gsh), gmask);
+          let b = _mm512_and_si512(_mm512_srli_epi16(px, $bsh), bmask);
+          write_rgba_u16_32_quarters(r, g, b, alpha, rgba_u16_out.as_mut_ptr().add(x * 4));
+          x += 32;
+        }
+        if x < width {
+          $s_rgba_u16(
+            avx512_lowbit_format!(@tail $kind, src, x),
+            &mut rgba_u16_out[x * 4..],
+            width - x,
+          );
+        }
+      }
+    }
+  };
+}
+
+avx512_lowbit_format! {
+  kind: byte,
+  rgb: rgb8_to_rgb_row, rgba: rgb8_to_rgba_row,
+  rgb_u16: rgb8_to_rgb_u16_row, rgba_u16: rgb8_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::rgb8_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::rgb8_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::rgb8_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::rgb8_to_rgba_u16_row,
+  r: (5, 0x07, expand3),
+  g: (2, 0x07, expand3),
+  b: (0, 0x03, expand2),
+}
+
+avx512_lowbit_format! {
+  kind: byte,
+  rgb: bgr8_to_rgb_row, rgba: bgr8_to_rgba_row,
+  rgb_u16: bgr8_to_rgb_u16_row, rgba_u16: bgr8_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::bgr8_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::bgr8_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::bgr8_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::bgr8_to_rgba_u16_row,
+  r: (0, 0x07, expand3),
+  g: (3, 0x07, expand3),
+  b: (6, 0x03, expand2),
+}
+
+avx512_lowbit_format! {
+  kind: byte,
+  rgb: rgb4_byte_to_rgb_row, rgba: rgb4_byte_to_rgba_row,
+  rgb_u16: rgb4_byte_to_rgb_u16_row, rgba_u16: rgb4_byte_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::rgb4_byte_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::rgb4_byte_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::rgb4_byte_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::rgb4_byte_to_rgba_u16_row,
+  r: (3, 0x01, expand1),
+  g: (1, 0x03, expand2),
+  b: (0, 0x01, expand1),
+}
+
+avx512_lowbit_format! {
+  kind: byte,
+  rgb: bgr4_byte_to_rgb_row, rgba: bgr4_byte_to_rgba_row,
+  rgb_u16: bgr4_byte_to_rgb_u16_row, rgba_u16: bgr4_byte_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::bgr4_byte_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::bgr4_byte_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::bgr4_byte_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::bgr4_byte_to_rgba_u16_row,
+  r: (0, 0x01, expand1),
+  g: (1, 0x03, expand2),
+  b: (3, 0x01, expand1),
+}
+
+avx512_lowbit_format! {
+  kind: nibble,
+  rgb: rgb4_to_rgb_row, rgba: rgb4_to_rgba_row,
+  rgb_u16: rgb4_to_rgb_u16_row, rgba_u16: rgb4_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::rgb4_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::rgb4_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::rgb4_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::rgb4_to_rgba_u16_row,
+  r: (3, 0x01, expand1),
+  g: (1, 0x03, expand2),
+  b: (0, 0x01, expand1),
+}
+
+avx512_lowbit_format! {
+  kind: nibble,
+  rgb: bgr4_to_rgb_row, rgba: bgr4_to_rgba_row,
+  rgb_u16: bgr4_to_rgb_u16_row, rgba_u16: bgr4_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::bgr4_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::bgr4_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::bgr4_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::bgr4_to_rgba_u16_row,
+  r: (0, 0x01, expand1),
+  g: (1, 0x03, expand2),
+  b: (3, 0x01, expand1),
+}

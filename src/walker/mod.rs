@@ -209,11 +209,15 @@ use crate::{
 // arm exactly like the 8-bit packed families and reuse [`YuvOptions`].
 #[cfg(feature = "rgb-legacy")]
 use crate::{
-  frame::{Bgr444Frame, Bgr555Frame, Bgr565Frame, Rgb444Frame, Rgb555Frame, Rgb565Frame},
+  frame::{
+    Bgr4ByteFrame, Bgr4Frame, Bgr8Frame, Bgr444Frame, Bgr555Frame, Bgr565Frame, Rgb4ByteFrame,
+    Rgb4Frame, Rgb8Frame, Rgb444Frame, Rgb555Frame, Rgb565Frame,
+  },
   source::{
-    Bgr444, Bgr444Sink, Bgr555, Bgr555Sink, Bgr565, Bgr565Sink, Rgb444, Rgb444Sink, Rgb555,
-    Rgb555Sink, Rgb565, Rgb565Sink, bgr444_to, bgr555_to, bgr565_to, rgb444_to, rgb555_to,
-    rgb565_to,
+    Bgr4, Bgr4Byte, Bgr4ByteSink, Bgr4Sink, Bgr8, Bgr8Sink, Bgr444, Bgr444Sink, Bgr555, Bgr555Sink,
+    Bgr565, Bgr565Sink, Rgb4, Rgb4Byte, Rgb4ByteSink, Rgb4Sink, Rgb8, Rgb8Sink, Rgb444, Rgb444Sink,
+    Rgb555, Rgb555Sink, Rgb565, Rgb565Sink, bgr4_byte_to, bgr4_to, bgr8_to, bgr444_to, bgr555_to,
+    bgr565_to, rgb4_byte_to, rgb4_to, rgb8_to, rgb444_to, rgb555_to, rgb565_to,
   },
 };
 // Packed float RGB — already-RGB half/single-precision sources (no chroma
@@ -1452,6 +1456,49 @@ walker!(
   YuvOptions,
   |src, opts, sink| bgr444_to(src, opts.full_range(), opts.matrix(), sink)
 );
+
+// ---- Legacy bit-packed RGB (8bpp 3:3:2 + 1:2:1; 4bpp 1:2:1) ------------
+// One byte per pixel (Rgb8 / Bgr8 / Rgb4Byte / Bgr4Byte) or two pixels per
+// byte (Rgb4 / Bgr4). No byte-order axis (sub-byte / single-byte), so each
+// rides the plain arm and reuses [`YuvOptions`].
+#[cfg(feature = "rgb-legacy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
+walker!(Rgb8, Rgb8Sink, Rgb8Frame, YuvOptions, |src, opts, sink| {
+  rgb8_to(src, opts.full_range(), opts.matrix(), sink)
+});
+#[cfg(feature = "rgb-legacy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
+walker!(Bgr8, Bgr8Sink, Bgr8Frame, YuvOptions, |src, opts, sink| {
+  bgr8_to(src, opts.full_range(), opts.matrix(), sink)
+});
+#[cfg(feature = "rgb-legacy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
+walker!(
+  Rgb4Byte,
+  Rgb4ByteSink,
+  Rgb4ByteFrame,
+  YuvOptions,
+  |src, opts, sink| rgb4_byte_to(src, opts.full_range(), opts.matrix(), sink)
+);
+#[cfg(feature = "rgb-legacy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
+walker!(
+  Bgr4Byte,
+  Bgr4ByteSink,
+  Bgr4ByteFrame,
+  YuvOptions,
+  |src, opts, sink| bgr4_byte_to(src, opts.full_range(), opts.matrix(), sink)
+);
+#[cfg(feature = "rgb-legacy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
+walker!(Rgb4, Rgb4Sink, Rgb4Frame, YuvOptions, |src, opts, sink| {
+  rgb4_to(src, opts.full_range(), opts.matrix(), sink)
+});
+#[cfg(feature = "rgb-legacy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
+walker!(Bgr4, Bgr4Sink, Bgr4Frame, YuvOptions, |src, opts, sink| {
+  bgr4_to(src, opts.full_range(), opts.matrix(), sink)
+});
 
 // ===== Gray families ===================================================
 //
