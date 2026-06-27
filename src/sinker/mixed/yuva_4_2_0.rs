@@ -18,7 +18,7 @@
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, NativeRouteChanged,
   RowIndexOutOfRange, RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match,
-  check_frozen_alpha_mode, deinterleave_y_high_bit, packed_yuva444_filter_resample,
+  check_frozen_alpha_mode, deinterleave_y_high_bit_masked, packed_yuva444_filter_resample,
   packed_yuva444_resample, planar_8bit::yuva420p_process_native, reset_high_bit_yuva_streams,
   rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
 };
@@ -888,6 +888,149 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuva420p10<BE>, R> {
   }
 }
 
+// ---- Yuva420p12 impl --------------------------------------------------
+
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuva420p12<BE>, R> {
+  /// Attaches a packed **8-bit** RGBA output buffer. Source-derived
+  /// alpha (depth-converted via `>> 4`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
+    self.set_rgba(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_rgba`](Self::with_rgba).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_elems(4)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::InsufficientRgbaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
+    }
+    self.rgba = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a packed **`u16`** RGBA output buffer (12‑bit
+  /// low‑packed, `[0, 4095]`). Alpha is sourced at native depth.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_rgba_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_rgba_u16`](Self::with_rgba_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_elems(4)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
+    }
+    self.rgba_u16 = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a packed **`u16`** RGB output buffer (alpha-drop).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_rgb_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_rgb_u16`](Self::with_rgb_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_elems(3)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::InsufficientRgbU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
+    }
+    self.rgb_u16 = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a **`u16`** luma output buffer. Luma is the **native Y**
+  /// (the binned Y plane at native depth under a non-identity plan; the
+  /// Y plane verbatim otherwise). Length in u16 **elements**
+  /// (`width x height`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_pixels()?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
+    }
+    self.luma_u16 = Some(buf);
+    Ok(self)
+  }
+}
+
+impl<R, const BE: bool> Yuva420p12Sink<BE> for MixedSinker<'_, Yuva420p12<BE>, R> {}
+
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuva420p12<BE>, R> {
+  type Input<'r> = Yuva420p12Row<'r>;
+  type Error = MixedSinkerError;
+
+  fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
+    if self.width & 1 != 0 {
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(
+        self.width,
+      )));
+    }
+    check_dimensions_match(self.width, self.height, width, height)?;
+    reset_high_bit_yuva_streams(self);
+    Ok(())
+  }
+
+  fn process(&mut self, row: Yuva420p12Row<'_>) -> Result<(), Self::Error> {
+    if self.plan.is_some() {
+      return yuva420p_high_bit_resample::<12, BE>(
+        self,
+        row.row(),
+        row.y(),
+        row.u_half(),
+        row.v_half(),
+        row.a(),
+        row.matrix(),
+        row.full_range(),
+        RowSlice::Y12,
+        RowSlice::UHalf12,
+        RowSlice::VHalf12,
+        RowSlice::AFull12,
+        yuva420p12_to_rgba_row_endian,
+        yuva420p12_to_rgba_u16_row_endian,
+      );
+    }
+    yuva420p_high_bit_process::<12, BE, _, _, _, _, _, _>(
+      self,
+      row.row(),
+      row.y(),
+      row.u_half(),
+      row.v_half(),
+      row.a(),
+      row.matrix(),
+      row.full_range(),
+      RowSlice::Y12,
+      RowSlice::UHalf12,
+      RowSlice::VHalf12,
+      RowSlice::AFull12,
+      yuv420p12_to_rgb_row_endian,
+      yuv420p12_to_rgb_u16_row_endian,
+      yuva420p12_to_rgba_row_endian,
+      yuv420p12_to_hsv_row_endian,
+      yuva420p12_to_rgba_u16_row_endian,
+    )
+  }
+}
+
 // ---- Yuva420p16 impl --------------------------------------------------
 
 impl<'a, R, const BE: bool> MixedSinker<'a, Yuva420p16<BE>, R> {
@@ -1203,12 +1346,19 @@ fn yuva420p_high_bit_process<
     // writes (the two outputs are disjoint fields).
     let mut luma_row = luma_dst.map(|b| &mut b[one_plane_start..one_plane_end]);
     let mut luma_u16_row = luma_u16_dst.map(|b| &mut b[one_plane_start..one_plane_end]);
+    // Mask each decoded Y to the source's native depth `(1 << BITS) - 1`
+    // (a no-op at `BITS = 16`). `Yuva420p*Frame::try_new` is geometry-only,
+    // so a malformed-but-accepted frame can carry out-of-range Y (e.g.
+    // `0x1000` at 12-bit); without this mask `luma_u16` would publish that
+    // raw value, inconsistent with the `(1 << BITS) - 1`-masked Y the
+    // RGB/RGBA row kernels decode from the same row.
+    let sample_mask = ((1u32 << BITS) - 1) as u16;
     for (i, &s) in y_row.iter().enumerate().take(w) {
       // Normalize BE-encoded wire bytes to host-native before use —
       // without this, a valid BE sample like mid-gray `0x0200` (10-bit)
       // would be read as `0x0002` on a LE host and the `>> (BITS - 8)`
       // would write 0 instead of 128.
-      let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+      let logical = (if BE { u16::from_be(s) } else { u16::from_le(s) }) & sample_mask;
       if let Some(row) = luma_row.as_deref_mut() {
         row[i] = (logical >> (BITS - 8)) as u8;
       }
@@ -1353,9 +1503,10 @@ fn yuva420p_high_bit_process<
 // with real source α, chroma upsampled 4:2:0), the **independent** native u16
 // colour stream (the `_to_rgba_u16` kernel — never a narrowing of the u8
 // bin), and the **low-packed** native-Y luma stream
-// (`deinterleave_y_high_bit::<BE>`, a raw host-native copy — planar YUVA Y
-// stores logical values directly, unlike the high-bit-packed semi-planar
-// P-formats, so luma is `binned_Y >> (BITS - 8)`). The `Filter` arm routes
+// (`deinterleave_y_high_bit_masked::<BITS, BE>`, a host-native copy masked to
+// the native depth — planar YUVA Y stores logical values directly, unlike the
+// high-bit-packed semi-planar P-formats, so luma is `binned_Y >> (BITS - 8)`).
+// The `Filter` arm routes
 // the SAME converted RGBA / native-Y through the signed-coefficient filter
 // tail (`NATIVE_LUMA_U8 = false`, the u16-luma branch — native Y is u16),
 // straight alpha only. The 4:2:0-vs-4:2:2 difference (chroma row index `r / 2`
@@ -1518,7 +1669,7 @@ fn yuva420p_high_bit_resample<const BITS: u32, const BE: bool>(
           y_row, u_half_row, v_half_row, a_row, dst, w, matrix, full_range, use_simd, BE,
         )
       },
-      |dst| deinterleave_y_high_bit::<BE>(y_row, dst, w),
+      |dst| deinterleave_y_high_bit_masked::<BITS, BE>(y_row, dst, w),
     ),
     crate::resample::SpanKind::Filter if alpha_mode.is_premultiplied() => {
       // Premultiplied + filter has no analogue: route to the area tail with
@@ -1555,7 +1706,7 @@ fn yuva420p_high_bit_resample<const BITS: u32, const BE: bool>(
             y_row, u_half_row, v_half_row, a_row, dst, w, matrix, full_range, use_simd, BE,
           )
         },
-        |dst| deinterleave_y_high_bit::<BE>(y_row, dst, w),
+        |dst| deinterleave_y_high_bit_masked::<BITS, BE>(y_row, dst, w),
       )
     }
     crate::resample::SpanKind::Filter => packed_yuva444_filter_resample::<BITS, false, false>(
@@ -1596,7 +1747,7 @@ fn yuva420p_high_bit_resample<const BITS: u32, const BE: bool>(
           y_row, u_half_row, v_half_row, a_row, dst, w, matrix, full_range, use_simd, BE,
         )
       },
-      |dst| deinterleave_y_high_bit::<BE>(y_row, dst, w),
+      |dst| deinterleave_y_high_bit_masked::<BITS, BE>(y_row, dst, w),
       |_dst: &mut [u8]| {},
     ),
   }

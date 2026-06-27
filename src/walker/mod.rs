@@ -159,14 +159,15 @@ use crate::{
     Yuva420pFrame, Yuva420pFrame16, Yuva422pFrame, Yuva422pFrame16, Yuva444pFrame, Yuva444pFrame16,
   },
   source::{
-    Yuva420p, Yuva420p9, Yuva420p9Sink, Yuva420p10, Yuva420p10Sink, Yuva420p16, Yuva420p16Sink,
-    Yuva420pSink, Yuva422p, Yuva422p9, Yuva422p9Sink, Yuva422p10, Yuva422p10Sink, Yuva422p12,
-    Yuva422p12Sink, Yuva422p16, Yuva422p16Sink, Yuva422pSink, Yuva444p, Yuva444p9, Yuva444p9Sink,
-    Yuva444p10, Yuva444p10Sink, Yuva444p12, Yuva444p12Sink, Yuva444p14, Yuva444p14Sink, Yuva444p16,
-    Yuva444p16Sink, Yuva444pSink, yuva420p_to, yuva420p9_to_endian, yuva420p10_to_endian,
-    yuva420p16_to_endian, yuva422p_to, yuva422p9_to_endian, yuva422p10_to_endian,
-    yuva422p12_to_endian, yuva422p16_to_endian, yuva444p_to, yuva444p9_to_endian,
-    yuva444p10_to_endian, yuva444p12_to_endian, yuva444p14_to_endian, yuva444p16_to_endian,
+    Yuva420p, Yuva420p9, Yuva420p9Sink, Yuva420p10, Yuva420p10Sink, Yuva420p12, Yuva420p12Sink,
+    Yuva420p16, Yuva420p16Sink, Yuva420pSink, Yuva422p, Yuva422p9, Yuva422p9Sink, Yuva422p10,
+    Yuva422p10Sink, Yuva422p12, Yuva422p12Sink, Yuva422p16, Yuva422p16Sink, Yuva422pSink, Yuva444p,
+    Yuva444p9, Yuva444p9Sink, Yuva444p10, Yuva444p10Sink, Yuva444p12, Yuva444p12Sink, Yuva444p14,
+    Yuva444p14Sink, Yuva444p16, Yuva444p16Sink, Yuva444pSink, yuva420p_to, yuva420p9_to_endian,
+    yuva420p10_to_endian, yuva420p12_to_endian, yuva420p16_to_endian, yuva422p_to,
+    yuva422p9_to_endian, yuva422p10_to_endian, yuva422p12_to_endian, yuva422p16_to_endian,
+    yuva444p_to, yuva444p9_to_endian, yuva444p10_to_endian, yuva444p12_to_endian,
+    yuva444p14_to_endian, yuva444p16_to_endian,
   },
 };
 // Packed RGB — already-RGB sources (no chroma matrix). The 8-bit packed
@@ -1189,6 +1190,10 @@ walker!(@const_bits 9, BE; Yuva420p9, Yuva420p9Sink, Yuva420pFrame16, YuvOptions
 #[cfg_attr(docsrs, doc(cfg(feature = "yuva")))]
 walker!(@const_bits 10, BE; Yuva420p10, Yuva420p10Sink, Yuva420pFrame16, YuvOptions,
   |src, opts, sink| yuva420p10_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "yuva")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuva")))]
+walker!(@const_bits 12, BE; Yuva420p12, Yuva420p12Sink, Yuva420pFrame16, YuvOptions,
+  |src, opts, sink| yuva420p12_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
 #[cfg(feature = "yuva")]
 #[cfg_attr(docsrs, doc(cfg(feature = "yuva")))]
 walker!(@const_bits 16, BE; Yuva420p16, Yuva420p16Sink, Yuva420pFrame16, YuvOptions,

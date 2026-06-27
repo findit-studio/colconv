@@ -7416,6 +7416,32 @@ pub(super) fn deinterleave_y_high_bit<const BE: bool>(
   }
 }
 
+/// Endian-normalizes one high-bit planar Y row into `scratch`, masking each
+/// sample to the source's native depth `(1 << BITS) - 1` (a no-op at
+/// `BITS = 16`).
+///
+/// The masking twin of [`deinterleave_y_high_bit`] for the **native-Y luma**
+/// resample streams. `Yuva*pN*Frame::try_new` is geometry-only, so a
+/// malformed-but-accepted frame can carry out-of-range Y (e.g. `0x1000` at
+/// 12-bit); binning it unmasked would publish a `luma` / `luma_u16` above the
+/// native range, inconsistent with the `(1 << BITS) - 1`-masked Y the colour
+/// RGB/RGBA kernels decode from the same row. Unlike the plain variant — which
+/// also feeds the **colour** U/V native decode in the planar native-codes
+/// tier — this is luma-only, so the mask matches the per-pixel kernels without
+/// changing any colour binning.
+#[cfg(feature = "yuva")]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(super) fn deinterleave_y_high_bit_masked<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  scratch: &mut [u16],
+  width: usize,
+) {
+  let mask = ((1u32 << BITS) - 1) as u16;
+  for (dst, &s) in scratch[..width].iter_mut().zip(y.iter()) {
+    *dst = (if BE { u16::from_be(s) } else { u16::from_le(s) }) & mask;
+  }
+}
+
 /// Row-stage fused downscale for the high-bit packed 4:4:4 YUV family
 /// (`V30X` / `V410` / `Xv36`). Unlike the 8-bit packed-YUV-4:2:2 path,
 /// which carries a single u8 colour binning, this routes **three
