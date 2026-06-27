@@ -23,7 +23,10 @@
 #[cfg(all(test, feature = "std"))]
 mod tests;
 
-use crate::{ColorMatrix, DcpTargetGamut, DynamicRange, PixelFormat, PixelSink};
+use crate::{
+  ChromaLocation, ColorInfo, ColorMatrix, DcpTargetGamut, DynamicRange, PixelFormat, PixelSink,
+  Primaries, Transfer,
+};
 #[cfg(feature = "xyz")]
 use crate::{
   frame::Xyz12Frame,
@@ -656,6 +659,17 @@ impl Default for YuvOptions {
 /// `V410Le` — so an aliased source is decoded as its one representative
 /// layout.
 ///
+/// Beyond the range and [`matrix`](Self::matrix) the YCbCr→RGB kernels
+/// consume, a `ColorSpec` also **carries** the rest of mediaframe's
+/// [`ColorInfo`]: the [`primaries`](Self::primaries),
+/// [`transfer`](Self::transfer) and [`chroma_location`](Self::chroma_location).
+/// These three are pass-through metadata — the conversion math does not
+/// consume them yet (siting-aware chroma upsampling is what will read
+/// `chroma_location`) — but threading them through keeps a source's full
+/// colour description in one value. [`from_info`](Self::from_info) populates
+/// all of them from a [`ColorInfo`]; the range-only
+/// [`resolve`](Self::resolve) leaves the three `Unspecified`.
+///
 /// ```
 /// use colconv::{ColorMatrix, ColorSpec, DynamicRange, PixelFormat, YuvOptions};
 ///
@@ -672,11 +686,37 @@ impl Default for YuvOptions {
 /// assert!(!opts.full_range());
 /// assert_eq!(opts.matrix(), ColorMatrix::Bt601);
 /// ```
+///
+/// [`from_info`](Self::from_info) pins the range exactly like `resolve`
+/// while carrying the full colour description:
+///
+/// ```
+/// use colconv::{ChromaLocation, ColorInfo, ColorMatrix, ColorSpec, DynamicRange, Primaries, PixelFormat, Transfer};
+///
+/// // The stream claims limited range, but a `yuvj420p` source still pins full.
+/// let info = ColorInfo::new(
+///     Primaries::Bt709,
+///     Transfer::Iec6196621,
+///     ColorMatrix::Bt709,
+///     DynamicRange::Limited,
+///     ChromaLocation::Left,
+/// );
+/// let spec = ColorSpec::from_info(PixelFormat::Yuvj420p, info);
+/// assert!(spec.full_range());
+/// assert_eq!(spec.format(), PixelFormat::Yuv420p);
+/// // primaries / transfer / chroma_location carry through unchanged.
+/// assert_eq!(spec.primaries(), Primaries::Bt709);
+/// assert_eq!(spec.transfer(), Transfer::Iec6196621);
+/// assert_eq!(spec.chroma_location(), ChromaLocation::Left);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ColorSpec {
   format: PixelFormat,
   full_range: bool,
   matrix: ColorMatrix,
+  primaries: Primaries,
+  transfer: Transfer,
+  chroma_location: ChromaLocation,
 }
 
 impl ColorSpec {
@@ -697,17 +737,55 @@ impl ColorSpec {
   /// as limited-range** (`false`) — an unrecognised range falls back to
   /// studio swing, the video-pipeline norm (and what FFmpeg's
   /// `AVCOL_RANGE_UNSPECIFIED` itself implies).
+  ///
+  /// This range-only entry point leaves [`primaries`](Self::primaries),
+  /// [`transfer`](Self::transfer) and
+  /// [`chroma_location`](Self::chroma_location) `Unspecified`; use
+  /// [`from_info`](Self::from_info) to carry those through as well.
   #[inline]
   pub const fn resolve(fmt: PixelFormat, stream_range: DynamicRange, matrix: ColorMatrix) -> Self {
+    // Delegate to `from_info` so the format-pinned-range rule lives in one
+    // place: an all-`Unspecified` `ColorInfo` carrying just the stream range
+    // and matrix reproduces the original range-only resolution.
+    Self::from_info(
+      fmt,
+      ColorInfo::UNSPECIFIED
+        .with_range(stream_range)
+        .with_matrix(matrix),
+    )
+  }
+
+  /// Resolves the colour-decode spec from a source `fmt` and its full
+  /// stream [`ColorInfo`].
+  ///
+  /// Range pinning is identical to [`resolve`](Self::resolve): when
+  /// [`PixelFormat::canonical`] reports a pinned range (the `yuvj*`
+  /// full-range aliases) it **wins** and `stream.range()` is ignored;
+  /// otherwise the range follows `stream.range()`. The
+  /// [`matrix`](Self::matrix) likewise carries through from
+  /// `stream.matrix()`.
+  ///
+  /// The remaining colour metadata — [`primaries`](Self::primaries),
+  /// [`transfer`](Self::transfer) and
+  /// [`chroma_location`](Self::chroma_location) — is carried verbatim from
+  /// `stream`. These three are **not** consumed by the YCbCr→RGB kernels;
+  /// they are threaded through so a source's full colour description lives
+  /// in one value (siting-aware chroma upsampling is what will read
+  /// `chroma_location`).
+  #[inline]
+  pub const fn from_info(fmt: PixelFormat, stream: ColorInfo) -> Self {
     let (format, pinned) = fmt.canonical();
     let range = match pinned {
       Some(pinned_range) => pinned_range,
-      None => stream_range,
+      None => stream.range(),
     };
     Self {
       format,
       full_range: matches!(range, DynamicRange::Full),
-      matrix,
+      matrix: stream.matrix(),
+      primaries: stream.primaries(),
+      transfer: stream.transfer(),
+      chroma_location: stream.chroma_location(),
     }
   }
 
@@ -725,10 +803,44 @@ impl ColorSpec {
     self.full_range
   }
 
-  /// The YCbCr matrix carried through from [`resolve`](Self::resolve).
+  /// The YCbCr matrix carried through from [`resolve`](Self::resolve) /
+  /// [`from_info`](Self::from_info). Consumed by the YCbCr→RGB kernels.
   #[inline(always)]
   pub const fn matrix(&self) -> ColorMatrix {
     self.matrix
+  }
+
+  /// The colour [`Primaries`] carried from the source's
+  /// [`ColorInfo`] (`Unspecified` after
+  /// [`resolve`](Self::resolve)).
+  ///
+  /// Carried-for-completeness metadata: the YCbCr→RGB conversion does not
+  /// consume it yet.
+  #[inline(always)]
+  pub const fn primaries(&self) -> Primaries {
+    self.primaries
+  }
+
+  /// The [`Transfer`] characteristics carried from the
+  /// source's [`ColorInfo`] (`Unspecified` after
+  /// [`resolve`](Self::resolve)).
+  ///
+  /// Carried-for-completeness metadata: the YCbCr→RGB conversion does not
+  /// consume it yet.
+  #[inline(always)]
+  pub const fn transfer(&self) -> Transfer {
+    self.transfer
+  }
+
+  /// The [`ChromaLocation`] carried from the
+  /// source's [`ColorInfo`] (`Unspecified` after
+  /// [`resolve`](Self::resolve)).
+  ///
+  /// Carried-for-completeness metadata today; siting-aware chroma
+  /// upsampling is what will consume it.
+  #[inline(always)]
+  pub const fn chroma_location(&self) -> ChromaLocation {
+    self.chroma_location
   }
 }
 
