@@ -1846,6 +1846,16 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "yuv-semi-planar"
   ))]
   luma_stream_u16: Option<std::boxed::Box<crate::resample::AreaStream<u16>>>,
+  /// Row-stage area stream for single-plane **u32** luma binning. Used by
+  /// the [`Gray32`](crate::source::Gray32) source, whose luma plane is a
+  /// native `u32`: binning at native `u32` precision (then narrowing each
+  /// output) is **0-ULP** (closes issue #289), whereas the `u16`
+  /// [`Self::luma_stream_u16`] would drop the low 16 bits before averaging
+  /// (≤1-LSB off the exact mean). Lazily created in `process`, reset in
+  /// `begin_frame`. Gated to `gray`; widens if more `u32` luma families
+  /// wire in.
+  #[cfg(feature = "gray")]
+  luma_stream_u32: Option<std::boxed::Box<crate::resample::AreaStream<u32>>>,
   /// Row-stage area stream for single-plane **f32** luma binning. Used
   /// by the [`Grayf32`](crate::source::Grayf32) source, whose luma plane
   /// is a native `f32` and so bins at f32 precision (the `u8` / `u16`
@@ -2056,6 +2066,15 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "yuv-semi-planar"
   ))]
   luma_filter_stream_u16: Option<std::boxed::Box<crate::resample::FilterStream<u16>>>,
+  /// Row-stage **filter** stream for single-plane **u32** luma — the
+  /// signed-coefficient twin of [`Self::luma_stream_u32`] for
+  /// [`Gray32`](crate::source::Gray32). Filters the native `u32` luma plane
+  /// at full precision (the `f64` filter domain carries a `u32` sample
+  /// exactly), then narrows each output, so the filter resample is 0-ULP
+  /// versus narrowing first (closes issue #289). Lazily created in
+  /// `process`, reset in `begin_frame`. Gated to `gray`.
+  #[cfg(feature = "gray")]
+  luma_filter_stream_u32: Option<std::boxed::Box<crate::resample::FilterStream<u32>>>,
   /// Output configuration frozen at a resampled frame's first
   /// processed row; `None` between frames. Captures presence AND
   /// attachment identity (pointer/length) of every output the emit
@@ -2548,6 +2567,15 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "yuv-semi-planar"
   ))]
   luma_scratch_u16: Vec<u16>,
+  /// Source-width host-native `u32` luma staging for the
+  /// [`Gray32`](crate::source::Gray32) resample path: the wire `Gray32` row
+  /// converts here (source wire `BE` → host-native `u32` value) before
+  /// feeding [`Self::luma_stream_u32`] / [`Self::luma_filter_stream_u32`],
+  /// so binning runs at native `u32` precision and each output narrows only
+  /// afterwards (0-ULP, closes issue #289). Lazily grown to `width` `u32`;
+  /// empty otherwise. Gated to `gray`.
+  #[cfg(feature = "gray")]
+  luma_scratch_u32: Vec<u32>,
   /// Source-width host-native `f32` luma staging for the
   /// [`Grayf32`](crate::source::Grayf32) resample path: the wire
   /// `Grayf32` row converts here (source wire `BE` → host-native f32 via
@@ -3246,6 +3274,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       ))]
       luma_stream_u16: None,
       #[cfg(feature = "gray")]
+      luma_stream_u32: None,
+      #[cfg(feature = "gray")]
       luma_stream_f32: None,
       #[cfg(any(
         feature = "rgb",
@@ -3302,6 +3332,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "yuv-semi-planar"
       ))]
       luma_filter_stream_u16: None,
+      #[cfg(feature = "gray")]
+      luma_filter_stream_u32: None,
       #[cfg(any(
         feature = "yuv-planar",
         feature = "rgb",
@@ -3454,6 +3486,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "yuv-semi-planar"
       ))]
       luma_scratch_u16: Vec::new(),
+      #[cfg(feature = "gray")]
+      luma_scratch_u32: Vec::new(),
       #[cfg(feature = "gray")]
       luma_scratch_f32: Vec::new(),
       #[cfg(feature = "gray")]
@@ -4891,6 +4925,39 @@ pub(super) fn source_luma_u16_scratch<'s>(
   width: usize,
   plan: &ResamplePlan,
 ) -> Result<&'s mut [u16], MixedSinkerError> {
+  if scratch.len() < width {
+    scratch
+      .try_reserve_exact(width - scratch.len())
+      .map_err(|_| {
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?;
+    scratch.resize(width, 0);
+  }
+  Ok(&mut scratch[..width])
+}
+
+/// Source-width host-native `u32` luma staging for the
+/// [`Gray32`](crate::source::Gray32) resample path — the wire row converts
+/// here (source wire `BE` → host-native `u32` value) before feeding the
+/// native-`u32` luma streams, so binning runs at full `u32` precision (the
+/// `u32` twin of [`source_luma_u16_scratch`]). Grows the scratch under the
+/// planner's recoverable-allocation contract (output-proportional, so a
+/// refusal surfaces as `AllocationFailed` in the preflight, never an abort
+/// in infallible growth).
+#[cfg(feature = "gray")]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(super) fn source_luma_u32_scratch<'s>(
+  scratch: &'s mut Vec<u32>,
+  width: usize,
+  plan: &ResamplePlan,
+) -> Result<&'s mut [u32], MixedSinkerError> {
   if scratch.len() < width {
     scratch
       .try_reserve_exact(width - scratch.len())

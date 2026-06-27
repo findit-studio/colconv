@@ -808,6 +808,33 @@ pub(crate) fn gray32_to_luma_u16_row<const BE: bool>(
   }
 }
 
+/// Gray32 → host-native `u32` value (the wire `BE` swap only, **no depth
+/// narrow**). Stages the source plane for the native-`u32` resample tier so
+/// binning runs at full `u32` precision and each output narrows only after
+/// binning (0-ULP, closes issue #289).
+///
+/// When `BE = true`, each wire `u32` is byte-swapped to the host value;
+/// `BE = false` reads it host-native (swapping only on a big-endian host).
+/// The emitted samples derive through the `gray32_to_*::<HOST_NATIVE_BE>`
+/// kernels, whose swap is then the identity recovery for an already-native
+/// value. Scalar-only (the `u32` resample tier ships no SIMD).
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn gray32_to_native_u32_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u32],
+  width: usize,
+) {
+  debug_assert!(y_plane.len() >= width, "y_plane too short");
+  debug_assert!(out.len() >= width, "out too short");
+  for (o, &raw) in out[..width].iter_mut().zip(y_plane[..width].iter()) {
+    *o = if BE {
+      u32::from_be(raw)
+    } else {
+      u32::from_le(raw)
+    };
+  }
+}
+
 /// Gray32 → HSV u8. `>> 24` to u8, H=0 S=0 V=Y8.
 ///
 /// When `BE = true`, each u32 sample is byte-swapped before processing.

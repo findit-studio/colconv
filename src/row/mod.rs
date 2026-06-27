@@ -144,6 +144,29 @@ pub(crate) use dispatch::area_reduce::{
   PaddedSpans, area_h_reduce_row, area_h_reduce_row_f32, area_h_reduce_row_u16, area_v_accumulate,
   area_v_accumulate_f32, area_v_accumulate_u16,
 };
+// The `u32` area H/V passes have no SIMD tier (their `u128` accumulators
+// exceed every lane width the integer kernels handle), so they re-export
+// straight from the scalar reference rather than through a `dispatch`
+// wrapper. Consumed by `AreaSample<u32>` for the `u32` source formats.
+#[cfg(all(
+  any(feature = "std", feature = "alloc"),
+  any(
+    feature = "yuv-planar",
+    feature = "rgb",
+    feature = "gbr",
+    feature = "gray",
+    feature = "xyz",
+    feature = "bayer",
+    feature = "mono",
+    feature = "yuv-semi-planar",
+    feature = "yuv-packed",
+    feature = "yuv-444-packed",
+    feature = "y2xx",
+    feature = "v210",
+    feature = "rgb-legacy"
+  )
+))]
+pub(crate) use scalar::area_reduce::{area_h_reduce_row_u32, area_v_accumulate_u32};
 // Separable filter H/V passes; consumed by `crate::resample::filter`'s
 // `FilterStream` (the signed twin of `AreaStream`).
 #[cfg(all(

@@ -44,6 +44,15 @@ use super::{
 /// [`crate::row::FilterSimdElem`] supplies the per-element kernel
 /// selection the H-pass dispatcher routes through.
 pub(crate) trait FilterSample: crate::row::FilterSimdElem {
+  /// Whether this element routes a SIMD H-pass that consumes the plan-time
+  /// [`FilterPaddedSpans`](crate::row::FilterPaddedSpans) staging arena.
+  /// `true` for the SIMD-backed tiers (`u8` / `u16` / `f32` — the default);
+  /// `false` for the scalar-only `u32` tier, whose H-pass widens to the exact
+  /// `f64` domain with no per-backend SIMD kernel. [`FilterStream::new`] skips
+  /// building the arena when this is `false`, routing the dispatcher to the
+  /// unpadded scalar reduce (the identical exact `f64` dot product) with no
+  /// dead staging allocation.
+  const NEEDS_SIMD_STAGING: bool = true;
   /// Selects this element's H/V coefficient set from a [`FilterAxis`].
   /// `u8` returns PIL's 8bpc fixed-point (`PRECISION_BITS = 22`) snapped
   /// set, so both passes' `clip8` quantize byte-for-byte with Pillow's
@@ -156,6 +165,35 @@ impl FilterSample for u16 {
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn finalize(acc: f64) -> u16 {
     floor_f64_local(acc + 0.5).clamp(0.0, 65535.0) as u16
+  }
+}
+
+impl FilterSample for u32 {
+  // Scalar-only `f64`-domain tier: no SIMD H-pass kernel, so the stream skips
+  // the `FilterPaddedSpans` arena and the dispatcher uses the unpadded scalar
+  // reduce (the same exact dot product the padded fallback would compute).
+  const NEEDS_SIMD_STAGING: bool = false;
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn coeffs(axis: &FilterAxis) -> &[f32] {
+    // Wide-integer (`u32`) resampler: use the full-precision coefficient set,
+    // like the `u16` (PIL 32bpc `I`) path. The `f64` accumulation carries a
+    // `u32` sample exactly, so the dot product is exact.
+    &axis.coeffs
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn quantize_intermediate(acc: f64) -> f64 {
+    // Wide-integer intermediate (the `u16` `I`-mode rule, widened to `u32`):
+    // round-half-up but **do not clamp** — a negative-lobe overshoot must
+    // survive into the vertical pass (clamping is final-output only). Exact:
+    // a binned `u32` magnitude (`< 2^32`) is integer-valued in `f64`.
+    floor_f64_local(acc + 0.5)
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn finalize(acc: f64) -> u32 {
+    // Round-half-up and clamp to the full `u32` range; `u32::MAX` is exactly
+    // representable in `f64`, and the saturating `as u32` cast pins the upper
+    // edge.
+    floor_f64_local(acc + 0.5).clamp(0.0, u32::MAX as f64) as u32
   }
 }
 
@@ -284,7 +322,14 @@ impl<S: FilterSample> FilterStream<S> {
     // this element's coefficient set ([`FilterSample::coeffs`]) — the `u8`
     // SIMD H-pass thus consumes the same 8bpc fixed-point coefficients its
     // scalar path does, so both stay byte-exact with PIL.
-    let h_padded = crate::row::FilterPaddedSpans::build(&h.starts, &h.offsets, S::coeffs(&h));
+    // The SIMD H-pass staging arena is an accelerator only the SIMD-backed
+    // tiers consume; the scalar-only `u32` filter tier always uses the
+    // unpadded reducer, so skip building (and retaining) it for that tier.
+    let h_padded = if S::NEEDS_SIMD_STAGING {
+      crate::row::FilterPaddedSpans::build(&h.starts, &h.offsets, S::coeffs(&h))
+    } else {
+      None
+    };
     Ok(Self {
       h,
       v,
