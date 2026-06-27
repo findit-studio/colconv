@@ -163,6 +163,96 @@ pub(crate) unsafe fn v410_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   }
 }
 
+// ---- V410 → HSV (reused 8-bit RGB chunk) -------------------------------
+//
+// Reuses the WASM simd128 [`v410_to_rgb_or_rgba_row`] to fill a small fixed stack
+// 8-bit RGB scratch (one `HSV_CHUNK`-pixel chunk at a time) then runs the
+// WASM simd128 [`rgb_to_hsv_row`] on the chunk — byte-identical to
+// `rgb_to_hsv_row(v410_to_rgb_or_rgba_row::<false, BE>(...))` within the
+// WASM simd128 tier, with no source-width RGB allocation. The driver is local
+// (mirroring `xv36_hsv_via_rgb_chunks`), gated `yuv-444-packed` with the rest of this
+// file; only `rgb_to_hsv_row` (ungated) is shared.
+
+/// One reused 8-bit RGB chunk's worth of pixels staged before the HSV pass.
+const HSV_CHUNK: usize = 64;
+
+/// Shared WASM simd128 driver: walks `width` in `HSV_CHUNK`-pixel chunks, fills a
+/// small reused stack RGB scratch via `fill_rgb` (the existing WASM simd128
+/// V410 RGB kernel), then runs the WASM simd128 [`rgb_to_hsv_row`] on that
+/// chunk into the H/S/V planes.
+///
+/// `fill_rgb` receives `(offset, n, &mut rgb_chunk)` and must write `n * 3`
+/// packed RGB bytes for the `n` pixels at `offset`.
+///
+/// # Safety
+///
+/// WASM simd128 must be available, and `fill_rgb` must uphold the underlying RGB
+/// kernel's safety contract for each chunk. Each of `h_out` / `s_out` /
+/// `v_out` must be `>= width`.
+#[inline]
+unsafe fn v410_hsv_via_rgb_chunks(
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  mut fill_rgb: impl FnMut(usize, usize, &mut [u8]),
+) {
+  let mut scratch = [0u8; HSV_CHUNK * 3];
+  let mut offset = 0;
+  while offset < width {
+    let n = (width - offset).min(HSV_CHUNK);
+    fill_rgb(offset, n, &mut scratch[..n * 3]);
+    // SAFETY: WASM simd128 verified by the wrapper's `#[target_feature]`; the chunk
+    // and the output sub-slices are all length `n`.
+    unsafe {
+      rgb_to_hsv_row(
+        &scratch[..n * 3],
+        &mut h_out[offset..offset + n],
+        &mut s_out[offset..offset + n],
+        &mut v_out[offset..offset + n],
+        n,
+      );
+    }
+    offset += n;
+  }
+}
+
+/// WASM simd128: V410 (packed 4:4:4, 10-bit) → planar HSV bytes (OpenCV
+/// encoding), staged via the reused-8-bit-RGB-chunk pattern over the
+/// WASM simd128 [`v410_to_rgb_or_rgba_row`] + [`rgb_to_hsv_row`]. Const-generic over `BE`. Byte-identical
+/// to `rgb_to_hsv_row(v410_to_rgb_or_rgba_row::<false, BE>(...))` within the WASM simd128 tier.
+///
+/// # Safety
+///
+/// 1. The WASM simd128 feature must be available.
+/// 2. `packed.len() >= width`.
+/// 3. `h_out.len()`, `s_out.len()`, `v_out.len()` `>= width`.
+#[inline]
+#[target_feature(enable = "simd128")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn v410_to_hsv_row<const BE: bool>(
+  packed: &[u32],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(packed.len() >= width, "packed row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+  // SAFETY: the feature is the caller's obligation; the chunk filler
+  // forwards the per-chunk sub-slices to the WASM simd128 V410 RGB kernel under
+  // the same contract (its own scalar tail covers small n).
+  unsafe {
+    v410_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      v410_to_rgb_or_rgba_row::<false, BE>(&packed[offset..], rgb, n, matrix, full_range);
+    });
+  }
+}
+
 // ---- u16 RGB / RGBA native-depth output ---------------------------------
 
 /// wasm-simd128 V410 → packed native-depth u16 RGB or RGBA (low-bit-packed

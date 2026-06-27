@@ -473,3 +473,100 @@ fn v210_le_be_roundtrip_byte_identical() {
     "V210 luma u16 LE/BE outputs diverge — `<const BE>` propagation broken"
   );
 }
+
+// ---- #263 direct YUV→HSV ----------------------------------------------
+
+/// Row-kernel parity: the direct `v210_to_hsv_row_endian` dispatcher is
+/// byte-identical to `rgb_to_hsv_row(v210_to_rgb_row_endian(...))` within
+/// each tier — scalar (`use_simd = false`) AND host SIMD (`use_simd = true`)
+/// — across matrices / range / endianness and a width sweep covering
+/// partial-word tails (2 / 4 / 8 / 10 / 14) plus the SIMD HSV driver's
+/// word-aligned multi-chunk path (62 / 66 straddle the 60-px chunk). Both
+/// sides read the same packed buffer through the same `big_endian` decode, so
+/// this proves the fused HSV kernel reproduces the via-RGB pipeline exactly
+/// (and, via the RGB tier's own SIMD≡scalar parity, that the SIMD HSV kernel
+/// matches scalar).
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn v210_hsv_row_matches_rgb_then_hsv() {
+  use crate::row::{rgb_to_hsv_row, v210_to_hsv_row_endian, v210_to_rgb_row_endian};
+  for &w in &[2usize, 4, 6, 8, 10, 12, 14, 60, 62, 66] {
+    let mut buf = std::vec![0u8; w.div_ceil(6) * 16];
+    pseudo_random_u8(&mut buf, 0x51A7_F00D);
+    for &matrix in &[
+      ColorMatrix::Bt601,
+      ColorMatrix::Bt709,
+      ColorMatrix::Bt2020Ncl,
+    ] {
+      for &full in &[true, false] {
+        for &use_simd in &[false, true] {
+          for &be in &[false, true] {
+            let mut rgb = std::vec![0u8; w * 3];
+            v210_to_rgb_row_endian(&buf, &mut rgb, w, matrix, full, use_simd, be);
+            let mut rh = std::vec![0u8; w];
+            let mut rs = std::vec![0u8; w];
+            let mut rv = std::vec![0u8; w];
+            rgb_to_hsv_row(&rgb, &mut rh, &mut rs, &mut rv, w, use_simd);
+
+            let mut h = std::vec![0u8; w];
+            let mut s = std::vec![0u8; w];
+            let mut v = std::vec![0u8; w];
+            v210_to_hsv_row_endian(&buf, &mut h, &mut s, &mut v, w, matrix, full, use_simd, be);
+            assert_eq!(
+              (h, s, v),
+              (rh, rs, rv),
+              "v210 HSV≠RGB→HSV (w={w} {matrix:?} full={full} simd={use_simd} be={be})"
+            );
+          }
+        }
+      }
+    }
+  }
+}
+
+/// Structural: an HSV-only V210 sink (no `with_rgb` / `with_rgba`) routes
+/// through the direct kernel and must NOT grow the source-width RGB scratch
+/// (`rgb_scratch.len() == 0`); its HSV equals the explicit
+/// `v210_to_rgb_row` → `rgb_to_hsv_row` reference (row 0).
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn v210_hsv_only_is_rgb_free_and_matches_reference() {
+  use crate::row::{rgb_to_hsv_row, v210_to_rgb_row};
+  let (w, h) = (16usize, 8usize);
+  let stride = w.div_ceil(6) * 16;
+  let mut buf = std::vec![0u8; stride * h];
+  pseudo_random_u8(&mut buf, 0xBEEF_2210);
+  let src = V210Frame::new(&buf, w as u32, h as u32, stride as u32);
+  let mut hh = std::vec![0u8; w * h];
+  let mut ss = std::vec![0u8; w * h];
+  let mut vv = std::vec![0u8; w * h];
+  let scratch_len = {
+    let mut sink = MixedSinker::<V210>::new(w, h)
+      .with_hsv(&mut hh, &mut ss, &mut vv)
+      .unwrap();
+    v210_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+    sink.rgb_scratch.len()
+  };
+  assert_eq!(
+    scratch_len, 0,
+    "V210 HSV-only must not grow the RGB scratch"
+  );
+
+  let mut rgb0 = std::vec![0u8; w * 3];
+  v210_to_rgb_row(&buf[..stride], &mut rgb0, w, ColorMatrix::Bt709, true, true);
+  let mut rh = std::vec![0u8; w];
+  let mut rs = std::vec![0u8; w];
+  let mut rv = std::vec![0u8; w];
+  rgb_to_hsv_row(&rgb0, &mut rh, &mut rs, &mut rv, w, true);
+  assert_eq!(&hh[..w], &rh[..], "row 0 H");
+  assert_eq!(&ss[..w], &rs[..], "row 0 S");
+  assert_eq!(&vv[..w], &rv[..], "row 0 V");
+}

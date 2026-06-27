@@ -645,6 +645,124 @@ pub fn v210_to_luma_u16_row(packed: &[u8], luma_out: &mut [u16], width: usize, u
   v210_to_luma_u16_row_endian(packed, luma_out, width, use_simd, false)
 }
 
+/// Converts one row of v210 (packed YUV 4:2:2, 10-bit) **directly** to
+/// planar HSV bytes (OpenCV `cv2.COLOR_RGB2HSV` encoding: `H ∈ [0, 179]`,
+/// `S, V ∈ [0, 255]`), without materializing a source-width RGB row.
+/// Byte-identical to `rgb_to_hsv_row(v210_to_rgb_row_endian(...))` within the
+/// selected tier — the SIMD path stages a fixed 8-bit RGB chunk internally.
+/// See `scalar::v210_to_hsv_row` for the reference. `use_simd = false`
+/// forces the scalar path; `big_endian = true` selects big-endian wire
+/// decoding.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn v210_to_hsv_row_endian(
+  packed: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+  big_endian: bool,
+) {
+  assert!(
+    width.is_multiple_of(2),
+    "v210 requires even width (4:2:2 chroma pair)"
+  );
+  assert!(
+    packed.len() >= v210_row_bytes(width),
+    "packed row too short"
+  );
+  assert!(h_out.len() >= width, "h_out row too short");
+  assert!(s_out.len() >= width, "s_out row too short");
+  assert!(v_out.len() >= width, "v_out row too short");
+
+  macro_rules! dispatch_be {
+    ($call_le:expr, $call_be:expr) => {
+      if big_endian { $call_be } else { $call_le }
+    };
+  }
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified at runtime.
+          dispatch_be!(
+            unsafe { arch::neon::v210_to_hsv_row::<false>(packed, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::neon::v210_to_hsv_row::<true>(packed, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512BW verified.
+          dispatch_be!(
+            unsafe { arch::x86_avx512::v210_to_hsv_row::<false>(packed, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::x86_avx512::v210_to_hsv_row::<true>(packed, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified.
+          dispatch_be!(
+            unsafe { arch::x86_avx2::v210_to_hsv_row::<false>(packed, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::x86_avx2::v210_to_hsv_row::<true>(packed, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified.
+          dispatch_be!(
+            unsafe { arch::x86_sse41::v210_to_hsv_row::<false>(packed, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::x86_sse41::v210_to_hsv_row::<true>(packed, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 compile-time verified.
+          dispatch_be!(
+            unsafe { arch::wasm_simd128::v210_to_hsv_row::<false>(packed, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::wasm_simd128::v210_to_hsv_row::<true>(packed, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+
+  dispatch_be!(
+    scalar::v210_to_hsv_row::<false>(packed, h_out, s_out, v_out, width, matrix, full_range),
+    scalar::v210_to_hsv_row::<true>(packed, h_out, s_out, v_out, width, matrix, full_range)
+  );
+}
+
+/// LE-only wrapper around [`v210_to_hsv_row_endian`]; preserves the
+/// pre-endian-aware public signature so existing little-endian callers
+/// compile unchanged. Equivalent to `v210_to_hsv_row_endian(..., big_endian
+/// = false)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn v210_to_hsv_row(
+  packed: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  v210_to_hsv_row_endian(
+    packed, h_out, s_out, v_out, width, matrix, full_range, use_simd, false,
+  )
+}
+
 #[cfg(all(test, feature = "std"))]
 mod tests {
   //! Smoke tests for the public v210 dispatchers. Walker / kernel

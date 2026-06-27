@@ -352,6 +352,70 @@ pub fn v30x_to_luma_u16_row(packed: &[u32], luma_out: &mut [u16], width: usize, 
   scalar::v30x_to_luma_u16_row(packed, luma_out, width);
 }
 
+/// Converts one row of V30X **directly** to planar HSV bytes (OpenCV
+/// `cv2.COLOR_RGB2HSV` encoding: `H ∈ [0, 179]`, `S, V ∈ [0, 255]`), without
+/// materializing a source-width RGB row. Byte-identical to
+/// `rgb_to_hsv_row(v30x_to_rgb_row(...))` within the selected tier — the
+/// SIMD path stages a fixed 8-bit RGB chunk internally. See
+/// `scalar::v30x_to_hsv_row` for the reference. `use_simd = false` forces
+/// the scalar path. V30X is host-native u32 (no endian variant).
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn v30x_to_hsv_row(
+  packed: &[u32],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  assert!(packed.len() >= width, "packed row too short");
+  assert!(h_out.len() >= width, "h_out row too short");
+  assert!(s_out.len() >= width, "s_out row too short");
+  assert!(v_out.len() >= width, "v_out row too short");
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified at runtime.
+          unsafe { arch::neon::v30x_to_hsv_row(packed, h_out, s_out, v_out, width, matrix, full_range); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512BW verified.
+          unsafe { arch::x86_avx512::v30x_to_hsv_row(packed, h_out, s_out, v_out, width, matrix, full_range); }
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified.
+          unsafe { arch::x86_avx2::v30x_to_hsv_row(packed, h_out, s_out, v_out, width, matrix, full_range); }
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified.
+          unsafe { arch::x86_sse41::v30x_to_hsv_row(packed, h_out, s_out, v_out, width, matrix, full_range); }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 compile-time verified.
+          unsafe { arch::wasm_simd128::v30x_to_hsv_row(packed, h_out, s_out, v_out, width, matrix, full_range); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+
+  scalar::v30x_to_hsv_row(packed, h_out, s_out, v_out, width, matrix, full_range);
+}
+
 #[cfg(all(test, feature = "std"))]
 mod tests {
   //! Smoke tests for the public V30X dispatchers. Walker / kernel

@@ -272,6 +272,119 @@ pub(crate) unsafe fn v210_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   }
 }
 
+// ---- v210 → HSV (reused 8-bit RGB chunk) -------------------------------
+//
+// Reuses the SSE4.1 [`v210_to_rgb_or_rgba_row`] to fill a small fixed stack
+// 8-bit RGB scratch (one `HSV_CHUNK`-pixel chunk at a time) then runs the
+// SSE4.1 [`rgb_to_hsv_row`] on the chunk — byte-identical to
+// `rgb_to_hsv_row(v210_to_rgb_or_rgba_row::<false, BE>(...))` within the
+// SSE4.1 tier, with no source-width RGB allocation. The driver is local
+// (mirroring `xv36_hsv_via_rgb_chunks`), gated `v210` with the rest of this
+// file; only `rgb_to_hsv_row` (ungated) is shared.
+
+/// One reused 8-bit RGB chunk's worth of pixels. `192 = lcm(6, 64)`, making
+/// every chunk **a multiple of 6** AND **a multiple of 64**:
+/// - multiple of 6 — each chunk begins on a v210 16-byte word boundary (6
+///   px/word), so the fill closure's `offset` → word offset `(offset / 6) *
+///   16` mapping is exact (every non-final chunk advances by `HSV_CHUNK`,
+///   keeping `offset` word-aligned; the final partial chunk starts
+///   word-aligned and the v210 RGB kernel resolves its own partial-word tail).
+/// - multiple of 64 — 64 is the widest `rgb_to_hsv_row` SIMD block (AVX-512;
+///   the others are 16 / 32). A chunk that is whole SIMD blocks has no
+///   misplaced scalar tail, so re-running `rgb_to_hsv_row` per chunk stays
+///   byte-identical to one full-width call — the chunked HSV matches
+///   `rgb_to_hsv_row(v210_to_rgb_or_rgba_row::<false, BE>(full row))` exactly.
+const HSV_CHUNK: usize = 192;
+
+/// Shared SSE4.1 driver: walks `width` in `HSV_CHUNK`-pixel chunks, fills a
+/// small reused stack RGB scratch via `fill_rgb` (the existing SSE4.1 v210
+/// RGB kernel), then runs the SSE4.1 [`rgb_to_hsv_row`] on that chunk into the
+/// H/S/V planes.
+///
+/// `fill_rgb` receives `(offset, n, &mut rgb_chunk)` and must write `n * 3`
+/// packed RGB bytes for the `n` pixels at `offset` (always a multiple of 6).
+///
+/// # Safety
+///
+/// SSE4.1 must be available, and `fill_rgb` must uphold the underlying RGB
+/// kernel's safety contract for each chunk. Each of `h_out` / `s_out` /
+/// `v_out` must be `>= width`.
+#[inline]
+unsafe fn v210_hsv_via_rgb_chunks(
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  mut fill_rgb: impl FnMut(usize, usize, &mut [u8]),
+) {
+  let mut scratch = [0u8; HSV_CHUNK * 3];
+  let mut offset = 0;
+  while offset < width {
+    let n = (width - offset).min(HSV_CHUNK);
+    fill_rgb(offset, n, &mut scratch[..n * 3]);
+    // SAFETY: SSE4.1 verified by the wrapper's `#[target_feature]`; the chunk
+    // and the output sub-slices are all length `n`.
+    unsafe {
+      rgb_to_hsv_row(
+        &scratch[..n * 3],
+        &mut h_out[offset..offset + n],
+        &mut s_out[offset..offset + n],
+        &mut v_out[offset..offset + n],
+        n,
+      );
+    }
+    offset += n;
+  }
+}
+
+/// SSE4.1: v210 (packed 4:2:2, 10-bit) → planar HSV bytes (OpenCV encoding),
+/// staged via the reused-8-bit-RGB-chunk pattern over the SSE4.1
+/// [`v210_to_rgb_or_rgba_row`] + [`rgb_to_hsv_row`]. Const-generic over
+/// `BE`. Byte-identical to
+/// `rgb_to_hsv_row(v210_to_rgb_or_rgba_row::<false, BE>(...))` within the
+/// SSE4.1 tier.
+///
+/// # Safety
+///
+/// 1. The SSE4.1 feature must be available.
+/// 2. `width % 2 == 0` (4:2:2 chroma pair).
+/// 3. `packed.len() >= ceil(width / 6) * 16`.
+/// 4. `h_out.len()`, `s_out.len()`, `v_out.len()` `>= width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn v210_to_hsv_row<const BE: bool>(
+  packed: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(width.is_multiple_of(2), "v210 requires even width");
+  let total_words = width.div_ceil(6);
+  debug_assert!(packed.len() >= total_words * 16, "packed row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+  // SAFETY: the feature is the caller's obligation; the chunk filler
+  // forwards each word-aligned chunk to the SSE4.1 v210 RGB kernel (its own
+  // scalar tail covers the final partial word). `offset` is always a
+  // multiple of 6, so `(offset / 6) * 16` is the exact word byte index.
+  unsafe {
+    v210_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      v210_to_rgb_or_rgba_row::<false, BE>(
+        &packed[(offset / 6) * 16..],
+        rgb,
+        n,
+        matrix,
+        full_range,
+      );
+    });
+  }
+}
+
 /// SSE4.1 v210 → packed `u16` RGB / RGBA at native 10-bit depth
 /// (low-bit-packed). Byte-identical to
 /// `scalar::v210_to_rgb_u16_or_rgba_u16_row::<ALPHA>`.

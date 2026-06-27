@@ -174,6 +174,79 @@ pub(crate) fn v210_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   }
 }
 
+// ---- v210 → HSV (direct: no RGB scratch) -------------------------------
+
+/// Scalar v210 → planar HSV bytes (OpenCV `cv2.COLOR_RGB2HSV` encoding:
+/// `H ∈ [0, 179]`, `S, V ∈ [0, 255]`). Const-generic over `BE` (source u32
+/// word byte order), exactly like [`v210_to_rgb_or_rgba_row`]. 4:2:2: each
+/// chroma pair `(U[i], V[i])` covers `Y[2i]` and `Y[2i+1]`. Shares that
+/// kernel's EXACT **8-bit-output** Q15 decode + word unpack + partial-word
+/// tail, then feeds the clamped `(r, g, b)` straight into
+/// [`rgb_to_hsv_pixel`] — byte-identical to
+/// `rgb_to_hsv_row(v210_to_rgb_or_rgba_row::<false, BE>(...))`, with no RGB
+/// allocation.
+///
+/// # Panics (debug builds)
+/// - `width` must be even.
+/// - `packed.len() >= ceil(width / 6) * 16`.
+/// - each of `h_out` / `s_out` / `v_out` `>= width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn v210_to_hsv_row<const BE: bool>(
+  packed: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(width.is_multiple_of(2), "v210 requires even width");
+  let total_words = width.div_ceil(6);
+  debug_assert!(packed.len() >= total_words * 16, "packed row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  let coeffs = Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = range_params_n::<10, 8>(full_range);
+  let bias = chroma_bias::<10>();
+
+  let full_words = width / 6;
+  let tail_pixels = width - full_words * 6; // 0, 2, or 4
+
+  // Each complete word emits 3 chroma pairs (6 px); a trailing partial word
+  // emits only its `tail_pixels / 2` valid pairs. Mirrors the RGB kernel's
+  // main-loop + tail split exactly, deriving HSV per pixel from the same
+  // clamped u8 RGB.
+  for w in 0..total_words {
+    let word = &packed[w * 16..w * 16 + 16];
+    let (ys, us, vs) = unpack_v210_word::<BE>(word);
+    let pairs = if w < full_words { 3 } else { tail_pixels / 2 };
+    for i in 0..pairs {
+      let u_d = q15_scale(us[i] as i32 - bias, c_scale);
+      let v_d = q15_scale(vs[i] as i32 - bias, c_scale);
+      let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
+      let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
+      let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
+
+      for k in 0..2 {
+        let y = ys[i * 2 + k] as i32;
+        let y_s = q15_scale(y - y_off, y_scale);
+        let px = w * 6 + i * 2 + k;
+        let (hh, ss, vv) = rgb_to_hsv_pixel(
+          clamp_u8(y_s + r_chroma) as i32,
+          clamp_u8(y_s + g_chroma) as i32,
+          clamp_u8(y_s + b_chroma) as i32,
+        );
+        h_out[px] = hh;
+        s_out[px] = ss;
+        v_out[px] = vv;
+      }
+    }
+  }
+}
+
 // ---- u16 RGB / RGBA native-depth output --------------------------------
 
 /// Scalar v210 → packed `u16` RGB / RGBA at native 10-bit depth
