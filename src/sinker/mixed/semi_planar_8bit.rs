@@ -723,6 +723,32 @@ impl<R> PixelSink for MixedSinker<'_, Nv12, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
+    // Strategy A output mode resolution — see Yuv420p impl above.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // planar_8bit / Yuv420p siblings): reserve EVERY fallible row scratch this
+    // row needs BEFORE any output row (luma / luma_u16 included) is written, so
+    // an allocator refusal returns a typed `AllocationFailed` leaving the output
+    // frame untouched rather than partially mutated. The only growable scratch
+    // here is the RGB row buffer, reserved exactly when a colour decode needs an
+    // RGB row but no caller RGB buffer is borrowable — `want_hsv && want_rgba &&
+    // !want_rgb` (`rgb_row_buf_or_scratch`'s own scratch arm; an attached RGB
+    // buffer is borrowed instead and never allocates). The later decode call
+    // then reuses the already-sized buffer.
+    if want_hsv && want_rgba && !want_rgb {
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     // Luma — NV12 luma is the Y plane, copied verbatim by the native-Y
     // kernel (bit-identical to the former inline `copy_from_slice`).
     if let Some(luma) = luma.as_deref_mut() {
@@ -739,14 +765,10 @@ impl<R> PixelSink for MixedSinker<'_, Nv12, R> {
       );
     }
 
-    // Strategy A output mode resolution — see Yuv420p impl above.
     // HSV-without-RGB-or-RGBA goes through the direct `nv12_to_hsv_row`
     // kernel (no source-width RGB scratch). When RGB or RGBA is *also*
     // attached the RGB kernel runs anyway, so HSV derives off that buffer
     // for free (the cheap path) and `need_rgb_kernel` keeps it alive.
-    let want_rgb = rgb.is_some();
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
     let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
     let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
 
@@ -1123,6 +1145,32 @@ impl<R> PixelSink for MixedSinker<'_, Nv16, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
+    // Strategy A output mode resolution — see Yuv420p impl above.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // planar_8bit / Yuv420p siblings): reserve EVERY fallible row scratch this
+    // row needs BEFORE any output row (luma / luma_u16 included) is written, so
+    // an allocator refusal returns a typed `AllocationFailed` leaving the output
+    // frame untouched rather than partially mutated. The only growable scratch
+    // here is the RGB row buffer, reserved exactly when a colour decode needs an
+    // RGB row but no caller RGB buffer is borrowable — `want_hsv && want_rgba &&
+    // !want_rgb` (`rgb_row_buf_or_scratch`'s own scratch arm; an attached RGB
+    // buffer is borrowed instead and never allocates). The later decode call
+    // then reuses the already-sized buffer.
+    if want_hsv && want_rgba && !want_rgb {
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     if let Some(luma) = luma.as_deref_mut() {
       nv_to_luma_row(row.y(), &mut luma[one_plane_start..one_plane_end], w);
     }
@@ -1137,14 +1185,10 @@ impl<R> PixelSink for MixedSinker<'_, Nv16, R> {
       );
     }
 
-    // Strategy A output mode resolution — see Yuv420p impl above.
     // Reuses NV12 dispatchers (RGB, RGBA, and the direct HSV kernel)
     // since 4:2:2's row contract is identical to 4:2:0's. HSV-only (no
     // RGB / RGBA) goes direct through `nv12_to_hsv_row` (no source-width
     // RGB scratch); see the Nv12 impl above for the routing rationale.
-    let want_rgb = rgb.is_some();
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
     let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
     let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
 
@@ -1544,6 +1588,32 @@ impl<R> PixelSink for MixedSinker<'_, Nv21, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
+    // Strategy A output mode resolution — see Yuv420p impl above.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // planar_8bit / Yuv420p siblings): reserve EVERY fallible row scratch this
+    // row needs BEFORE any output row (luma / luma_u16 included) is written, so
+    // an allocator refusal returns a typed `AllocationFailed` leaving the output
+    // frame untouched rather than partially mutated. The only growable scratch
+    // here is the RGB row buffer, reserved exactly when a colour decode needs an
+    // RGB row but no caller RGB buffer is borrowable — `want_hsv && want_rgba &&
+    // !want_rgb` (`rgb_row_buf_or_scratch`'s own scratch arm; an attached RGB
+    // buffer is borrowed instead and never allocates). The later decode call
+    // then reuses the already-sized buffer.
+    if want_hsv && want_rgba && !want_rgb {
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     if let Some(luma) = luma.as_deref_mut() {
       nv_to_luma_row(row.y(), &mut luma[one_plane_start..one_plane_end], w);
     }
@@ -1558,12 +1628,8 @@ impl<R> PixelSink for MixedSinker<'_, Nv21, R> {
       );
     }
 
-    // Strategy A output mode resolution — see Yuv420p impl above.
     // HSV-only (no RGB / RGBA) goes direct through `nv21_to_hsv_row`
     // (no source-width RGB scratch); see the Nv12 impl for the rationale.
-    let want_rgb = rgb.is_some();
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
     let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
     let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
 
@@ -1923,6 +1989,32 @@ impl<R> PixelSink for MixedSinker<'_, Nv24, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
+    // Strategy A output mode resolution — see Yuv420p impl above.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // planar_8bit / Yuv420p siblings): reserve EVERY fallible row scratch this
+    // row needs BEFORE any output row (luma / luma_u16 included) is written, so
+    // an allocator refusal returns a typed `AllocationFailed` leaving the output
+    // frame untouched rather than partially mutated. The only growable scratch
+    // here is the RGB row buffer, reserved exactly when a colour decode needs an
+    // RGB row but no caller RGB buffer is borrowable — `want_hsv && want_rgba &&
+    // !want_rgb` (`rgb_row_buf_or_scratch`'s own scratch arm; an attached RGB
+    // buffer is borrowed instead and never allocates). The later decode call
+    // then reuses the already-sized buffer.
+    if want_hsv && want_rgba && !want_rgb {
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     if let Some(luma) = luma.as_deref_mut() {
       nv_to_luma_row(row.y(), &mut luma[one_plane_start..one_plane_end], w);
     }
@@ -1939,9 +2031,6 @@ impl<R> PixelSink for MixedSinker<'_, Nv24, R> {
 
     // HSV-only (no RGB / RGBA) goes direct through `nv24_to_hsv_row`
     // (no source-width RGB scratch); see the Nv12 impl for the rationale.
-    let want_rgb = rgb.is_some();
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
     let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
     let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
 
@@ -2299,6 +2388,32 @@ impl<R> PixelSink for MixedSinker<'_, Nv42, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
+    // Strategy A output mode resolution — see Yuv420p impl above.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // planar_8bit / Yuv420p siblings): reserve EVERY fallible row scratch this
+    // row needs BEFORE any output row (luma / luma_u16 included) is written, so
+    // an allocator refusal returns a typed `AllocationFailed` leaving the output
+    // frame untouched rather than partially mutated. The only growable scratch
+    // here is the RGB row buffer, reserved exactly when a colour decode needs an
+    // RGB row but no caller RGB buffer is borrowable — `want_hsv && want_rgba &&
+    // !want_rgb` (`rgb_row_buf_or_scratch`'s own scratch arm; an attached RGB
+    // buffer is borrowed instead and never allocates). The later decode call
+    // then reuses the already-sized buffer.
+    if want_hsv && want_rgba && !want_rgb {
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     if let Some(luma) = luma.as_deref_mut() {
       nv_to_luma_row(row.y(), &mut luma[one_plane_start..one_plane_end], w);
     }
@@ -2315,9 +2430,6 @@ impl<R> PixelSink for MixedSinker<'_, Nv42, R> {
 
     // HSV-only (no RGB / RGBA) goes direct through `nv42_to_hsv_row`
     // (no source-width RGB scratch); see the Nv12 impl for the rationale.
-    let want_rgb = rgb.is_some();
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
     let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
     let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
 
