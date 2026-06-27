@@ -45,9 +45,6 @@
 // dead_code until then.
 #![allow(dead_code)]
 
-#[cfg_attr(miri, allow(unused_imports))]
-use core::arch::x86_64::*;
-
 use super::*;
 // Shared deinterleave helper (stride-3, 8-pixel, SSE4.1-level — same masks as
 // the AVX2 and SSE4.1 siblings)

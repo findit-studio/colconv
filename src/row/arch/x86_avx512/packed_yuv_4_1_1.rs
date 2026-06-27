@@ -48,9 +48,6 @@
 //! for U/V; 4 × `_mm512_inserti32x4` for Y), shaving ~96 + 16 + 16
 //! bytes of per‑iter stack traffic.
 
-#[cfg_attr(miri, allow(unused_imports))]
-use core::arch::x86_64::*;
-
 use super::*;
 
 /// Loads 4 overlapping 16‑byte windows from `packed` starting at

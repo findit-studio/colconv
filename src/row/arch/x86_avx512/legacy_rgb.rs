@@ -42,9 +42,6 @@
 //!
 //! NO `_mm512_permutex2var_epi8` (VBMI) — only F+BW tier intrinsics.
 
-#[cfg_attr(miri, allow(unused_imports))]
-use core::arch::x86_64::*;
-
 use super::*;
 
 // Internal helpers.

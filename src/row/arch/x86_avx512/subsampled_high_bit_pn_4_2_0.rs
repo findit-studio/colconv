@@ -1,6 +1,3 @@
-#[cfg_attr(miri, allow(unused_imports))]
-use core::arch::x86_64::*;
-
 use super::*;
 
 /// Compile-time host endianness. `true` on BE targets, `false` on LE
@@ -25,12 +22,10 @@ unsafe fn depack_u16x32<const LOW_PACKED: bool>(
   shr_count: __m128i,
   low_mask: __m512i,
 ) -> __m512i {
-  unsafe {
-    if LOW_PACKED {
-      _mm512_and_si512(v, low_mask)
-    } else {
-      _mm512_srl_epi16(v, shr_count)
-    }
+  if LOW_PACKED {
+    _mm512_and_si512(v, low_mask)
+  } else {
+    _mm512_srl_epi16(v, shr_count)
   }
 }
 

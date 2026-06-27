@@ -60,9 +60,6 @@
 //! 10's lesson, mirrored by Ship 11a v210). Permute indices live in
 //! `static [i16; 32]` arrays loaded via `_mm512_loadu_si512(ptr.cast())`.
 
-#[cfg_attr(miri, allow(unused_imports))]
-use core::arch::x86_64::*;
-
 use super::*;
 use crate::{ColorMatrix, row::scalar};
 

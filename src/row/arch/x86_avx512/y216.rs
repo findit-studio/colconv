@@ -36,9 +36,6 @@
 //!
 //! `width % 64` (u8/luma) or `width % 32` (u16) → `scalar::y216_*`.
 
-#[cfg_attr(miri, allow(unused_imports))]
-use core::arch::x86_64::*;
-
 use super::*;
 use crate::{ColorMatrix, row::scalar};
 

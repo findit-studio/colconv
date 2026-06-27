@@ -1,6 +1,3 @@
-#[cfg_attr(miri, allow(unused_imports))]
-use core::arch::x86_64::*;
-
 use super::*;
 
 pub(crate) unsafe fn yuv_420p_n_to_rgb_row<const BITS: u32, const BE: bool>(

@@ -62,9 +62,6 @@
 // dead_code until then.
 #![allow(dead_code)]
 
-#[cfg_attr(miri, allow(unused_imports))]
-use core::arch::x86_64::*;
-
 use super::*;
 
 // Deinterleave helpers — Rgb48 / Bgr48 (3 u16 per pixel, 3 loads per 8 px).

@@ -5,9 +5,6 @@
 //! [`super::write_rgb_16`] / [`super::write_rgba_16`] helpers four
 //! times per 64-pixel iteration. Same scalar tail as SSE4.1 / AVX2.
 
-#[cfg_attr(miri, allow(unused_imports))]
-use core::arch::x86_64::*;
-
 use super::*;
 
 /// AVX-512 G/B/R planar → packed `R, G, B`.

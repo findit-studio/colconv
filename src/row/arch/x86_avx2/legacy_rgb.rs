@@ -42,9 +42,6 @@
 //!
 //! When `width % 16 ≠ 0` the remainder is handled by `scalar::legacy_rgb`.
 
-#[cfg_attr(miri, allow(unused_imports))]
-use core::arch::x86_64::*;
-
 use super::*;
 
 // Internal helpers.

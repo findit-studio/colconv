@@ -38,9 +38,6 @@
 //! built via stack scratch + scalar interleave (same pattern as the
 //! AVX2 sibling).
 
-#[cfg_attr(miri, allow(unused_imports))]
-use core::arch::x86_64::*;
-
 use super::{endian::load_endian_u32x16, *};
 use crate::{ColorMatrix, row::scalar};
 

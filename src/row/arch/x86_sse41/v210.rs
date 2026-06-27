@@ -12,9 +12,6 @@
 //! `yuv_420p_n_to_rgb_or_rgba_row<10, _, _>` byte-for-byte — same
 //! `chroma_i16x8` / `scale_y` / `q15_shift` / `clamp_u16_max` calls.
 
-#[cfg_attr(miri, allow(unused_imports))]
-use core::arch::x86_64::*;
-
 use super::{endian::load_endian_u32x4, *};
 use crate::{ColorMatrix, row::scalar};
 
