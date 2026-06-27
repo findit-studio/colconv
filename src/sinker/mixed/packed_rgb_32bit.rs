@@ -17,31 +17,28 @@
 //!
 //! ## Resampling
 //!
-//! Non-identity plans stage a source-width **native u16** RGB row (the
-//! `>> 16` narrow) and reuse the shared `packed_rgb_u16_*` engine at 16-bit
-//! depth — identical to the 16-bit packed-RGB family. The `>> 16` staging plus
-//! the engine's `>> 8` u8 derivation reproduce the direct path's `>> 24` u8
-//! narrow.
+//! Non-identity plans stage a source-width **host-native u32** RGB row (the
+//! `BE` swap only, NO depth narrow) and bin at full `u32` precision through the
+//! shared `packed_rgb_u32_*` / `packed_rgba_u32_*` engine, narrowing only in
+//! the per-output derive: `rgb_u16` = `binned >> 16`, the u8 outputs
+//! `binned >> 24`, luma / hsv from the narrowed u8 RGB. Binning the full `u32`
+//! and narrowing only **after** is exact — byte-identical to a direct convert
+//! of the `u32`-binned frame.
 //!
-//! ### Precision (`full_range = false`) — issue #289
+//! ### Precision — issue #289 (closed)
 //!
-//! Because the wire u32 is narrowed `>> 16` **before** binning, a downscaled
-//! output is the area/filter mean of the *narrowed* samples — within 1 LSB of
-//! an exact u32-domain mean (most visible for `full_range = false`). Every
-//! **direct** (identity-plan) conversion is exact and byte-identical, and
-//! full-range downscale is unaffected by the limited-range scaling. This u32
-//! family deliberately ACCEPTS the ≤1-LSB limited-range resample rather than
-//! building new u32 resample infrastructure; the exact 0-ULP fix (a `u128`
-//! area tier + a `u32` filter tier) is tracked in issue #289. The current
-//! narrow-first behaviour is pinned by the `full_range = false` resample tests
-//! (area + filter, LE + BE) in `tests/resample_packed_rgb_32bit.rs`.
+//! Binning at native `u32` and narrowing only after the bin is **0-ULP** for
+//! **both** `full_range` true and false: the area / filter output equals the
+//! exact `u32`-domain mean / filter, narrowed `>> 16`, not the prior
+//! narrow-first ≤1-LSB approximation. The 0-ULP behaviour is pinned by the
+//! resample tests (area + filter, LE + BE) in `tests/resample_packed_rgb_32bit.rs`.
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
   RowShapeMismatch, RowSlice, check_dimensions_match, check_frozen_alpha_mode,
-  packed_rgb_u16_filter_stream, packed_rgb_u16_resample_emit, packed_rgb_u16_resample_preflight,
-  packed_rgb_u16_resample_stream, packed_rgba_u16_filter_resample, packed_rgba_u16_resample,
-  rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice, source_rgb_u16_scratch,
+  packed_rgb_u16_resample_preflight, packed_rgb_u32_filter_stream, packed_rgb_u32_resample_emit,
+  packed_rgb_u32_resample_stream, packed_rgba_u32_filter_resample, packed_rgba_u32_resample,
+  rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice, source_rgb_u32_scratch,
 };
 use crate::{
   PixelSink,
@@ -155,10 +152,10 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgb96<BE>, R> {
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     check_dimensions_match(self.width, self.height, width, height)?;
-    if let Some(stream) = self.rgb_stream_u16.as_mut() {
+    if let Some(stream) = self.rgb_stream_u32.as_mut() {
       stream.reset();
     }
-    if let Some(stream) = self.rgb_filter_stream_u16.as_mut() {
+    if let Some(stream) = self.rgb_filter_stream_u32.as_mut() {
       stream.reset();
     }
     self.resample_outputs = None;
@@ -201,27 +198,27 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgb96<BE>, R> {
       hsv,
       rgb_scratch,
       rgb_scratch_u16,
-      rgb_stream_u16,
-      rgb_filter_stream_u16,
+      rgb_scratch_u32,
+      rgb_stream_u32,
+      rgb_filter_stream_u32,
       resample_outputs,
       plan,
       ..
     } = self;
 
-    // Non-identity plan: convert the wire row to source-width host u16 RGB
-    // (the `>> 16` narrow), bin it at native 16-bit depth, then derive every
-    // attached output from each finalized output row (native-depth u16 outputs
-    // copy the binned row; u8 / luma_u16 outputs narrow it `>> 8`, reproducing
-    // the direct path's `>> 24`). The span kind picks the engine — integer
-    // area or signed-coefficient filter (both bin the same staged native-u16
-    // row). Narrowing `>> 16` before binning makes a `full_range = false`
-    // downscale within 1 LSB of an exact u32-domain mean (direct conversion is
-    // exact); the u32 family accepts this — 0-ULP fix tracked in issue #289.
+    // Non-identity plan: convert the wire row to a source-width **host-native
+    // u32** RGB row (the `BE` swap only, NO depth narrow), bin it at full `u32`
+    // precision, then derive every attached output from each finalized output
+    // row — `rgb_u16` copies `binned >> 16`, the u8 outputs take `binned >> 24`,
+    // luma / hsv come from the narrowed u8 RGB. The span kind picks the engine
+    // (integer area or signed-coefficient filter). Binning the full `u32` and
+    // narrowing only after the bin is **0-ULP** for both ranges (closes #289):
+    // the prior u16 staging narrowed `>> 16` before binning (≤1-LSB off).
     if let Some(plan) = plan.as_ref() {
       let stream_next_y = match plan.kind() {
-        crate::resample::SpanKind::Area => rgb_stream_u16.as_ref().map_or(0, |s| s.next_y()),
+        crate::resample::SpanKind::Area => rgb_stream_u32.as_ref().map_or(0, |s| s.next_y()),
         crate::resample::SpanKind::Filter => {
-          rgb_filter_stream_u16.as_ref().map_or(0, |s| s.next_y())
+          rgb_filter_stream_u32.as_ref().map_or(0, |s| s.next_y())
         }
       };
       if !packed_rgb_u16_resample_preflight(
@@ -240,10 +237,10 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgb96<BE>, R> {
       }
       return match plan.kind() {
         crate::resample::SpanKind::Area => {
-          let stream = packed_rgb_u16_resample_stream(rgb_stream_u16, plan, idx)?;
-          let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
-          rgb96_to_rgb_u16_row_endian::<BE>(row.rgb96(), src_u16, w, use_simd);
-          packed_rgb_u16_resample_emit::<16, false>(
+          let stream = packed_rgb_u32_resample_stream(rgb_stream_u32, plan, idx)?;
+          let src_u32 = source_rgb_u32_scratch(rgb_scratch_u32, w, plan)?;
+          crate::row::scalar::rgb96_to_rgb_u32_row::<BE>(row.rgb96(), src_u32, w);
+          packed_rgb_u32_resample_emit::<false>(
             stream,
             plan,
             rgb,
@@ -253,7 +250,8 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgb96<BE>, R> {
             rgba_u16,
             luma_u16,
             hsv,
-            src_u16,
+            src_u32,
+            rgb_scratch_u16,
             rgb_scratch,
             row.matrix(),
             row.full_range(),
@@ -262,10 +260,10 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgb96<BE>, R> {
           )
         }
         crate::resample::SpanKind::Filter => {
-          let stream = packed_rgb_u16_filter_stream(rgb_filter_stream_u16, plan, idx)?;
-          let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
-          rgb96_to_rgb_u16_row_endian::<BE>(row.rgb96(), src_u16, w, use_simd);
-          packed_rgb_u16_resample_emit::<16, false>(
+          let stream = packed_rgb_u32_filter_stream(rgb_filter_stream_u32, plan, idx)?;
+          let src_u32 = source_rgb_u32_scratch(rgb_scratch_u32, w, plan)?;
+          crate::row::scalar::rgb96_to_rgb_u32_row::<BE>(row.rgb96(), src_u32, w);
+          packed_rgb_u32_resample_emit::<false>(
             stream,
             plan,
             rgb,
@@ -275,7 +273,8 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgb96<BE>, R> {
             rgba_u16,
             luma_u16,
             hsv,
-            src_u16,
+            src_u32,
+            rgb_scratch_u16,
             rgb_scratch,
             row.matrix(),
             row.full_range(),
@@ -464,16 +463,16 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba128<BE>, R> {
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     check_dimensions_match(self.width, self.height, width, height)?;
-    if let Some(stream) = self.rgb_stream_u16.as_mut() {
+    if let Some(stream) = self.rgb_stream_u32.as_mut() {
       stream.reset();
     }
-    if let Some(stream) = self.rgba_stream_u16.as_mut() {
+    if let Some(stream) = self.rgba_stream_u32.as_mut() {
       stream.reset();
     }
-    if let Some(stream) = self.rgb_filter_stream_u16.as_mut() {
+    if let Some(stream) = self.rgb_filter_stream_u32.as_mut() {
       stream.reset();
     }
-    if let Some(stream) = self.rgba_filter_stream_u16.as_mut() {
+    if let Some(stream) = self.rgba_filter_stream_u32.as_mut() {
       stream.reset();
     }
     self.resample_outputs = None;
@@ -506,15 +505,14 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba128<BE>, R> {
       ));
     }
 
-    // Non-identity plan. Route the alpha-aware 4-channel u16 tail when
+    // Non-identity plan. Route the alpha-aware 4-channel `u32` tail when
     // resampled alpha would be dropped (rgba / rgba_u16 attached) or the color
     // must be alpha-weighted (premultiplied); otherwise the rgb-only straight
-    // outputs keep the 3-channel u16 RGB path. Rgba128 stages canonical
-    // host-native RGBA via `rgba128_to_rgba_u16_row_endian` (all four channels
-    // narrowed `>> 16`, α pass-through) and drop-alpha RGB via
-    // `rgba128_to_rgb_u16_row_endian`. Narrowing `>> 16` before binning makes a
-    // `full_range = false` downscale within 1 LSB of an exact u32-domain mean
-    // (direct conversion is exact); accepted — 0-ULP fix tracked in issue #289.
+    // outputs keep the 3-channel `u32` RGB path. Rgba128 stages canonical
+    // host-native RGBA via `rgba128_to_rgba_u32_row` (the `BE` swap only, NO
+    // narrow; α pass-through) and drop-alpha RGB via `rgba128_to_rgb_u32_row`.
+    // Binning at full `u32` and narrowing only after the bin is **0-ULP** for
+    // both ranges (closes #289): the prior u16 staging narrowed `>> 16` first.
     if self.plan.is_some() {
       let alpha_mode = self.alpha_mode;
       let in128 = row.rgba128();
@@ -530,12 +528,14 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba128<BE>, R> {
         hsv,
         rgb_scratch,
         rgb_scratch_u16,
-        rgba_scratch_u16,
         rgba_color_scratch_u16,
-        rgb_stream_u16,
-        rgba_stream_u16,
-        rgb_filter_stream_u16,
-        rgba_filter_stream_u16,
+        rgb_scratch_u32,
+        rgba_scratch_u32,
+        rgba_color_scratch_u32,
+        rgb_stream_u32,
+        rgba_stream_u32,
+        rgb_filter_stream_u32,
+        rgba_filter_stream_u32,
         resample_outputs,
         frozen_alpha_mode,
         plan,
@@ -550,9 +550,8 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba128<BE>, R> {
       match plan.kind() {
         crate::resample::SpanKind::Area => {
           if rgba.is_some() || rgba_u16.is_some() || alpha_mode.is_premultiplied() {
-            return packed_rgba_u16_resample::<16, false, false>(
-              rgba_stream_u16,
-              &mut None,
+            return packed_rgba_u32_resample::<false>(
+              rgba_stream_u32,
               resample_outputs,
               rgb,
               rgba,
@@ -561,11 +560,11 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba128<BE>, R> {
               luma,
               luma_u16,
               hsv,
-              rgba_scratch_u16,
+              rgba_scratch_u32,
+              rgba_color_scratch_u32,
               rgba_color_scratch_u16,
-              rgb_scratch,
               rgb_scratch_u16,
-              &mut std::vec::Vec::new(),
+              rgb_scratch,
               w,
               plan,
               idx,
@@ -573,8 +572,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba128<BE>, R> {
               alpha_mode,
               matrix,
               full_range,
-              |dst| rgba128_to_rgba_u16_row_endian::<BE>(in128, dst, w, use_simd),
-              |_| {},
+              |dst| crate::row::scalar::rgba128_to_rgba_u32_row::<BE>(in128, dst, w),
             );
           }
           if !packed_rgb_u16_resample_preflight(
@@ -586,15 +584,15 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba128<BE>, R> {
             rgba_u16,
             luma_u16,
             hsv,
-            rgb_stream_u16.as_ref().map_or(0, |s| s.next_y()),
+            rgb_stream_u32.as_ref().map_or(0, |s| s.next_y()),
             idx,
           )? {
             return Ok(());
           }
-          let stream = packed_rgb_u16_resample_stream(rgb_stream_u16, plan, idx)?;
-          let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
-          rgba128_to_rgb_u16_row_endian::<BE>(in128, src_u16, w, use_simd);
-          return packed_rgb_u16_resample_emit::<16, false>(
+          let stream = packed_rgb_u32_resample_stream(rgb_stream_u32, plan, idx)?;
+          let src_u32 = source_rgb_u32_scratch(rgb_scratch_u32, w, plan)?;
+          crate::row::scalar::rgba128_to_rgb_u32_row::<BE>(in128, src_u32, w);
+          return packed_rgb_u32_resample_emit::<false>(
             stream,
             plan,
             rgb,
@@ -604,7 +602,8 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba128<BE>, R> {
             rgba_u16,
             luma_u16,
             hsv,
-            src_u16,
+            src_u32,
+            rgb_scratch_u16,
             rgb_scratch,
             matrix,
             full_range,
@@ -615,12 +614,11 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba128<BE>, R> {
         crate::resample::SpanKind::Filter => {
           // Premultiplied alpha has no filter analogue; surface the typed
           // `UnsupportedFilter` via the area tail's reject. Straight alpha:
-          // filter all four native u16 channels independently when alpha
-          // survives, else the 3-channel u16 filter for rgb-only outputs.
+          // filter all four native `u32` channels independently when alpha
+          // survives, else the 3-channel `u32` filter for rgb-only outputs.
           if alpha_mode.is_premultiplied() {
-            return packed_rgba_u16_resample::<16, false, false>(
-              rgba_stream_u16,
-              &mut None,
+            return packed_rgba_u32_resample::<false>(
+              rgba_stream_u32,
               resample_outputs,
               rgb,
               rgba,
@@ -629,11 +627,11 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba128<BE>, R> {
               luma,
               luma_u16,
               hsv,
-              rgba_scratch_u16,
+              rgba_scratch_u32,
+              rgba_color_scratch_u32,
               rgba_color_scratch_u16,
-              rgb_scratch,
               rgb_scratch_u16,
-              &mut std::vec::Vec::new(),
+              rgb_scratch,
               w,
               plan,
               idx,
@@ -641,13 +639,12 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba128<BE>, R> {
               alpha_mode,
               matrix,
               full_range,
-              |dst| rgba128_to_rgba_u16_row_endian::<BE>(in128, dst, w, use_simd),
-              |_| {},
+              |dst| crate::row::scalar::rgba128_to_rgba_u32_row::<BE>(in128, dst, w),
             );
           }
           if rgba.is_some() || rgba_u16.is_some() {
-            return packed_rgba_u16_filter_resample::<16, false>(
-              rgba_filter_stream_u16,
+            return packed_rgba_u32_filter_resample::<false>(
+              rgba_filter_stream_u32,
               resample_outputs,
               rgb,
               rgba,
@@ -656,8 +653,9 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba128<BE>, R> {
               luma,
               luma_u16,
               hsv,
-              rgba_scratch_u16,
+              rgba_scratch_u32,
               rgba_color_scratch_u16,
+              rgb_scratch_u16,
               rgb_scratch,
               w,
               plan,
@@ -665,7 +663,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba128<BE>, R> {
               use_simd,
               matrix,
               full_range,
-              |dst| rgba128_to_rgba_u16_row_endian::<BE>(in128, dst, w, use_simd),
+              |dst| crate::row::scalar::rgba128_to_rgba_u32_row::<BE>(in128, dst, w),
             );
           }
           if !packed_rgb_u16_resample_preflight(
@@ -677,15 +675,15 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba128<BE>, R> {
             rgba_u16,
             luma_u16,
             hsv,
-            rgb_filter_stream_u16.as_ref().map_or(0, |s| s.next_y()),
+            rgb_filter_stream_u32.as_ref().map_or(0, |s| s.next_y()),
             idx,
           )? {
             return Ok(());
           }
-          let stream = packed_rgb_u16_filter_stream(rgb_filter_stream_u16, plan, idx)?;
-          let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
-          rgba128_to_rgb_u16_row_endian::<BE>(in128, src_u16, w, use_simd);
-          return packed_rgb_u16_resample_emit::<16, false>(
+          let stream = packed_rgb_u32_filter_stream(rgb_filter_stream_u32, plan, idx)?;
+          let src_u32 = source_rgb_u32_scratch(rgb_scratch_u32, w, plan)?;
+          crate::row::scalar::rgba128_to_rgb_u32_row::<BE>(in128, src_u32, w);
+          return packed_rgb_u32_resample_emit::<false>(
             stream,
             plan,
             rgb,
@@ -695,7 +693,8 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba128<BE>, R> {
             rgba_u16,
             luma_u16,
             hsv,
-            src_u16,
+            src_u32,
+            rgb_scratch_u16,
             rgb_scratch,
             matrix,
             full_range,

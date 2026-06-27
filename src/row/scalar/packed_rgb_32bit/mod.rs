@@ -231,6 +231,66 @@ pub(crate) fn rgba128_to_rgba_u16_row<const BE: bool>(
   }
 }
 
+// ---- Native-u32 staging (no depth narrow) — 0-ULP resample tier -------------
+//
+// The wire row converts to **host-native `u32`** (the `BE` swap only, NO `>> 16`
+// narrow) so the area / filter resample bins at full `u32` precision and each
+// output narrows only afterwards — exact 0-ULP for both ranges (issue #289).
+// Scalar-only (the `u32` resample tier ships no SIMD): no `use_simd` parameter.
+
+/// Rgb96 → host-native `u32` RGB (canonical `R, G, B`, no narrow). Each of the
+/// `width * 3` wire elements is swapped to host order; the channel order is
+/// already canonical, so this is a pure endian normalization.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgb96_to_rgb_u32_row<const BE: bool>(
+  rgb96: &[u32],
+  rgb_u32_out: &mut [u32],
+  width: usize,
+) {
+  debug_assert!(rgb96.len() >= width * 3, "rgb96 row too short");
+  debug_assert!(rgb_u32_out.len() >= width * 3, "rgb_u32_out row too short");
+  for (o, &raw) in rgb_u32_out[..width * 3].iter_mut().zip(rgb96.iter()) {
+    *o = load_u32::<BE>(raw);
+  }
+}
+
+/// Rgba128 → host-native `u32` RGBA (canonical `R, G, B, A`, no narrow). Pure
+/// endian normalization of the `width * 4` wire elements (α passes through).
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgba128_to_rgba_u32_row<const BE: bool>(
+  rgba128: &[u32],
+  rgba_u32_out: &mut [u32],
+  width: usize,
+) {
+  debug_assert!(rgba128.len() >= width * 4, "rgba128 row too short");
+  debug_assert!(
+    rgba_u32_out.len() >= width * 4,
+    "rgba_u32_out row too short"
+  );
+  for (o, &raw) in rgba_u32_out[..width * 4].iter_mut().zip(rgba128.iter()) {
+    *o = load_u32::<BE>(raw);
+  }
+}
+
+/// Rgba128 → host-native `u32` RGB (drop alpha, no narrow). Reorders the `4`→`3`
+/// element stride; the surviving R/G/B are swapped to host order.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgba128_to_rgb_u32_row<const BE: bool>(
+  rgba128: &[u32],
+  rgb_u32_out: &mut [u32],
+  width: usize,
+) {
+  debug_assert!(rgba128.len() >= width * 4, "rgba128 row too short");
+  debug_assert!(rgb_u32_out.len() >= width * 3, "rgb_u32_out row too short");
+  for x in 0..width {
+    let src = x * 4;
+    let dst = x * 3;
+    rgb_u32_out[dst] = load_u32::<BE>(rgba128[src]);
+    rgb_u32_out[dst + 1] = load_u32::<BE>(rgba128[src + 1]);
+    rgb_u32_out[dst + 2] = load_u32::<BE>(rgba128[src + 2]);
+  }
+}
+
 // ---- Unit tests -------------------------------------------------------------
 
 #[cfg(all(test, feature = "std"))]
