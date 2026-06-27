@@ -162,6 +162,148 @@ fn yuv_options_from_color_spec_bridges_range_and_matrix() {
   );
 }
 
+// ---- ColorSpec::from_info: carries the full colour Info ----------------
+
+#[test]
+fn color_spec_from_info_pins_yuvj_full_and_carries_metadata() {
+  // `from_info` pins the `yuvj*` aliases full-range exactly like `resolve`
+  // (the stream's claimed range loses) while threading the primaries /
+  // transfer / chroma_location straight through.
+  for fmt in [
+    PixelFormat::Yuvj420p,
+    PixelFormat::Yuvj422p,
+    PixelFormat::Yuvj444p,
+    PixelFormat::Yuvj440p,
+    PixelFormat::Yuvj411p,
+  ] {
+    for stream_range in [
+      DynamicRange::Limited,
+      DynamicRange::Unspecified,
+      DynamicRange::Full,
+      DynamicRange::Unknown(7),
+    ] {
+      let info = ColorInfo::new(
+        Primaries::Bt2020,
+        Transfer::SmpteSt2084Pq,
+        ColorMatrix::Bt601,
+        stream_range,
+        ChromaLocation::TopLeft,
+      );
+      let spec = ColorSpec::from_info(fmt, info);
+      assert!(
+        spec.full_range(),
+        "{fmt:?} pins full-range even with stream_range={stream_range:?}"
+      );
+      // The kernel-facing matrix flows through…
+      assert_eq!(spec.matrix(), ColorMatrix::Bt601);
+      // …and the carried-for-completeness metadata round-trips untouched.
+      assert_eq!(spec.primaries(), Primaries::Bt2020);
+      assert_eq!(spec.transfer(), Transfer::SmpteSt2084Pq);
+      assert_eq!(spec.chroma_location(), ChromaLocation::TopLeft);
+    }
+  }
+}
+
+#[test]
+fn color_spec_from_info_leaves_plain_format_stream_driven() {
+  // No range pin → the resolved range follows `stream.range()`, the
+  // canonical format is the format itself, and the metadata still carries.
+  for (stream_range, expect_full) in [
+    (DynamicRange::Limited, false),
+    (DynamicRange::Unspecified, false),
+    (DynamicRange::Unknown(42), false),
+    (DynamicRange::Full, true),
+  ] {
+    let info = ColorInfo::new(
+      Primaries::Bt709,
+      Transfer::Bt709,
+      ColorMatrix::Bt709,
+      stream_range,
+      ChromaLocation::Left,
+    );
+    let spec = ColorSpec::from_info(PixelFormat::Yuv420p, info);
+    assert_eq!(
+      spec.full_range(),
+      expect_full,
+      "Yuv420p range follows stream_range={stream_range:?}"
+    );
+    assert_eq!(spec.format(), PixelFormat::Yuv420p);
+    assert_eq!(spec.primaries(), Primaries::Bt709);
+    assert_eq!(spec.transfer(), Transfer::Bt709);
+    assert_eq!(spec.chroma_location(), ChromaLocation::Left);
+  }
+}
+
+#[test]
+fn color_spec_from_info_follows_format_alias() {
+  // A pure format alias (no range pin) is followed to its canonical decode
+  // form, and the carried metadata is independent of that aliasing.
+  let info = ColorInfo::new(
+    Primaries::Bt2020,
+    Transfer::AribStdB67Hlg,
+    ColorMatrix::Bt709,
+    DynamicRange::Full,
+    ChromaLocation::Center,
+  );
+  let spec = ColorSpec::from_info(PixelFormat::Xv30Le, info);
+  assert_eq!(spec.format(), PixelFormat::V410Le);
+  assert!(spec.full_range());
+  assert_eq!(spec.primaries(), Primaries::Bt2020);
+  assert_eq!(spec.transfer(), Transfer::AribStdB67Hlg);
+  assert_eq!(spec.chroma_location(), ChromaLocation::Center);
+}
+
+#[test]
+fn color_spec_resolve_defaults_carried_metadata_to_unspecified() {
+  // The range-only entry point leaves the three carried fields at their
+  // `Unspecified` defaults, while range + matrix resolve as before.
+  for fmt in [
+    PixelFormat::Yuv420p,
+    PixelFormat::Yuvj420p,
+    PixelFormat::Xv30Le,
+  ] {
+    let spec = ColorSpec::resolve(fmt, DynamicRange::Full, ColorMatrix::Bt709);
+    assert_eq!(spec.primaries(), Primaries::Unspecified);
+    assert_eq!(spec.transfer(), Transfer::Unspecified);
+    assert_eq!(spec.chroma_location(), ChromaLocation::Unspecified);
+    assert_eq!(spec.matrix(), ColorMatrix::Bt709);
+  }
+}
+
+#[test]
+fn color_spec_resolve_equals_from_info_with_range_only_info() {
+  // `resolve` is exactly `from_info` fed an otherwise-`Unspecified` Info
+  // carrying just the stream range + matrix — the delegation invariant.
+  for fmt in [
+    PixelFormat::Yuv420p,
+    PixelFormat::Yuvj420p,
+    PixelFormat::Yuvj444p,
+    PixelFormat::Xv30Le,
+    PixelFormat::Gray8a,
+  ] {
+    for stream_range in [
+      DynamicRange::Limited,
+      DynamicRange::Unspecified,
+      DynamicRange::Full,
+      DynamicRange::Unknown(9),
+    ] {
+      for matrix in [ColorMatrix::Bt709, ColorMatrix::Bt601] {
+        let via_resolve = ColorSpec::resolve(fmt, stream_range, matrix);
+        let via_info = ColorSpec::from_info(
+          fmt,
+          ColorInfo::UNSPECIFIED
+            .with_range(stream_range)
+            .with_matrix(matrix),
+        );
+        assert_eq!(
+          via_resolve, via_info,
+          "resolve vs from_info mismatch (fmt={fmt:?}, range={stream_range:?}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+}
+
 #[cfg(feature = "bayer")]
 mod bayer_options {
   use super::*;

@@ -249,8 +249,13 @@ pub use mediaframe::{
   // `mediaframe::color::Matrix` is re-exported as `ColorMatrix` so colconv's
   // public surface and every internal `crate::ColorMatrix` reference keep
   // the disambiguated name (`videoframe::color::ColorMatrix` was renamed to
-  // `Matrix` upstream during the videoframe → mediaframe rename).
-  color::{DcpTargetGamut, DynamicRange, Matrix as ColorMatrix},
+  // `Matrix` upstream during the videoframe → mediaframe rename). `Info` is
+  // likewise re-exported as `ColorInfo` so the generic `Info` name stays out
+  // of colconv's root while `ColorSpec::from_info` can name it.
+  color::{
+    ChromaLocation, DcpTargetGamut, DynamicRange, Info as ColorInfo, Matrix as ColorMatrix,
+    Primaries, Transfer,
+  },
   frame,
   pixel_format::PixelFormat,
   source,
