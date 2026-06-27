@@ -6,9 +6,6 @@
 //! implement. Each kernel processes 16 pixels per iteration with a
 //! scalar tail.
 
-#[cfg_attr(miri, allow(unused_imports))]
-use core::arch::x86_64::*;
-
 use super::*;
 
 /// SSE4.1 G/B/R planar → packed `R, G, B`.

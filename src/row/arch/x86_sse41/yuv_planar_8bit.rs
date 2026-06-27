@@ -1,6 +1,3 @@
-#[cfg_attr(miri, allow(unused_imports))]
-use core::arch::x86_64::*;
-
 use super::*;
 
 /// SSE4.1 YUV 4:2:0 → packed RGB. Semantics match

@@ -1,6 +1,3 @@
-#[cfg_attr(miri, allow(unused_imports))]
-use core::arch::x86_64::*;
-
 use super::*;
 
 /// 64-byte byte-shuffle mask for `_mm512_shuffle_epi8`: per 128-bit

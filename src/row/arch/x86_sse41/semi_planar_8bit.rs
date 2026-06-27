@@ -1,6 +1,3 @@
-#[cfg_attr(miri, allow(unused_imports))]
-use core::arch::x86_64::*;
-
 use super::*;
 
 /// 2. `width & 1 == 0` (4:2:0 requires even width).

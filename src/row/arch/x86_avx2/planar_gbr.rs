@@ -7,9 +7,6 @@
 //! helpers twice per iteration and process 32 pixels per outer-loop
 //! step. Same scalar tail as the SSE4.1 kernel.
 
-#[cfg_attr(miri, allow(unused_imports))]
-use core::arch::x86_64::*;
-
 use super::*;
 
 /// AVX2 G/B/R planar → packed `R, G, B`. Processes 32 pixels per

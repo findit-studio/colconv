@@ -41,9 +41,6 @@
 //! pattern: build the count vector once via `_mm_cvtsi32_si128` and
 //! pass it to the runtime-count `_mm_srl_epi16`.
 
-#[cfg_attr(miri, allow(unused_imports))]
-use core::arch::x86_64::*;
-
 use super::*;
 use crate::{ColorMatrix, row::scalar};
 

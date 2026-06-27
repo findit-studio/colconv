@@ -72,9 +72,6 @@
 //! `scalar::ayuv64_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC>` (or u16
 //! variant).
 
-#[cfg_attr(miri, allow(unused_imports))]
-use core::arch::x86_64::*;
-
 use super::{endian, *};
 use crate::{ColorMatrix, row::scalar};
 

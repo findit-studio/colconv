@@ -56,9 +56,6 @@
 // dead_code until then.
 #![allow(dead_code)]
 
-#[cfg_attr(miri, allow(unused_imports))]
-use core::arch::x86_64::*;
-
 use super::*;
 // Rgb48 / Bgr48 helpers — stride-3, 8-pixel deinterleave (SSE4.1 width under
 // AVX2 target_feature)

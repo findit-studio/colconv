@@ -1,6 +1,3 @@
-#[cfg_attr(miri, allow(unused_imports))]
-use core::arch::x86_64::*;
-
 use super::*;
 
 /// AVX2 YUV 4:2:0 10‑bit → packed **8‑bit** RGB.
