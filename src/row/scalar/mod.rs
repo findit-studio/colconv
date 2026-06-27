@@ -593,14 +593,20 @@ impl Coefficients {
   pub(super) const fn for_matrix(m: ColorMatrix) -> Self {
     match m {
       // BT.601: r_v=1.402, g_u=-0.344136, g_v=-0.714136, b_u=1.772.
-      ColorMatrix::Bt601 | ColorMatrix::Fcc => Self {
-        r_u: 0,
-        r_v: 45941,
-        g_u: -11277,
-        g_v: -23401,
-        b_u: 58065,
-        b_v: 0,
-      },
+      // SMPTE 170M (BT.601 525-line) and BT.470 System BG (BT.601
+      // 625-line) carry the identical Kr=0.299/Kb=0.114 coefficients, so
+      // they share this arm exactly; FCC (Kr=0.30/Kb=0.11) is a close
+      // numerical approximation grouped here historically.
+      ColorMatrix::Bt601 | ColorMatrix::Fcc | ColorMatrix::Smpte170M | ColorMatrix::Bt470Bg => {
+        Self {
+          r_u: 0,
+          r_v: 45941,
+          g_u: -11277,
+          g_v: -23401,
+          b_u: 58065,
+          b_v: 0,
+        }
+      }
       // BT.709: r_v=1.5748, g_u=-0.1873, g_v=-0.4681, b_u=1.8556.
       ColorMatrix::Bt709 => Self {
         r_u: 0,

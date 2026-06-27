@@ -1240,3 +1240,72 @@ fn uyyvyy411_chroma_shared_across_4_pixels_decodes_via_y_only_variation() {
     );
   }
 }
+
+// ---- BT.601-equivalent matrices (issue #305) -------------------------
+
+// SMPTE 170M (BT.601 525-line) and BT.470 System BG (BT.601 625-line)
+// carry the *identical* Kr=0.299/Kb=0.114 coefficients as BT.601, so
+// their YUV→RGB and RGB→luma constants must equal BT.601's — not fall
+// through to the BT.709 fallback arm.
+
+#[cfg(any(
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
+fn coeffs_tuple(m: ColorMatrix) -> (i32, i32, i32, i32, i32, i32) {
+  // `Coefficients` is internal and intentionally not `PartialEq`; compare
+  // through its public accessors instead.
+  let c = Coefficients::for_matrix(m);
+  (c.r_u(), c.r_v(), c.g_u(), c.g_v(), c.b_u(), c.b_v())
+}
+
+#[cfg(any(
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
+#[test]
+fn smpte170m_bt470bg_use_bt601_yuv_coefficients() {
+  let bt601 = coeffs_tuple(ColorMatrix::Bt601);
+  assert_eq!(coeffs_tuple(ColorMatrix::Smpte170M), bt601);
+  assert_eq!(coeffs_tuple(ColorMatrix::Bt470Bg), bt601);
+  // Regression guard: must no longer match the BT.709 fallback.
+  assert_ne!(coeffs_tuple(ColorMatrix::Bt709), bt601);
+}
+
+#[test]
+fn smpte170m_bt470bg_use_bt601_luma_coefficients() {
+  let bt601 = luma_coefficients_q15(ColorMatrix::Bt601);
+  assert_eq!(luma_coefficients_q15(ColorMatrix::Smpte170M), bt601);
+  assert_eq!(luma_coefficients_q15(ColorMatrix::Bt470Bg), bt601);
+  // Regression guard: must no longer match the BT.709 fallback.
+  assert_ne!(luma_coefficients_q15(ColorMatrix::Bt709), bt601);
+}
+
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn yuv420_smpte170m_decodes_identically_to_bt601() {
+  // Chroma-bearing input (V offset from neutral) so the matrix actually
+  // affects the result. Smpte170M must reproduce the BT.601 decode and
+  // diverge from the (previously wrongly applied) BT.709 fallback.
+  let y = [128u8; 4];
+  let u = [128u8; 2];
+  let v = [200u8; 2];
+  let mut rgb_601 = [0u8; 12];
+  let mut rgb_170m = [0u8; 12];
+  let mut rgb_709 = [0u8; 12];
+  yuv_420_to_rgb_row(&y, &u, &v, &mut rgb_601, 4, ColorMatrix::Bt601, true);
+  yuv_420_to_rgb_row(&y, &u, &v, &mut rgb_170m, 4, ColorMatrix::Smpte170M, true);
+  yuv_420_to_rgb_row(&y, &u, &v, &mut rgb_709, 4, ColorMatrix::Bt709, true);
+  assert_eq!(rgb_170m, rgb_601, "Smpte170M must match BT.601");
+  assert_ne!(rgb_170m, rgb_709, "Smpte170M must differ from BT.709");
+}
