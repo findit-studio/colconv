@@ -635,9 +635,34 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P410<BE>, R> {
     }
 
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
+    // HSV-without-RGB-or-RGBA goes through the direct `p410_to_hsv_row`
+    // kernel (no source-width RGB scratch) — the 4:4:4 full-width-UV twin
+    // of the P010 path. When RGB or RGBA is also attached the RGB kernel
+    // runs anyway, so HSV derives off that buffer for free and
+    // `need_rgb_kernel` keeps it alive.
+    let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = rgb.is_some() || want_hsv;
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      p410_to_hsv_row_endian(
+        row.y(),
+        row.uv_full(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
@@ -1042,9 +1067,34 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P412<BE>, R> {
     }
 
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
+    // HSV-without-RGB-or-RGBA goes through the direct `p412_to_hsv_row`
+    // kernel (no source-width RGB scratch) — the 4:4:4 full-width-UV twin
+    // of the P012 path. When RGB or RGBA is also attached the RGB kernel
+    // runs anyway, so HSV derives off that buffer for free and
+    // `need_rgb_kernel` keeps it alive.
+    let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = rgb.is_some() || want_hsv;
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      p412_to_hsv_row_endian(
+        row.y(),
+        row.uv_full(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
@@ -1454,9 +1504,34 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P416<BE>, R> {
     }
 
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
+    // HSV-without-RGB-or-RGBA goes through the direct `p416_to_hsv_row`
+    // kernel (no source-width RGB scratch) — the 4:4:4 full-width-UV twin
+    // of the P016 path. When RGB or RGBA is also attached the RGB kernel
+    // runs anyway, so HSV derives off that buffer for free and
+    // `need_rgb_kernel` keeps it alive.
+    let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = rgb.is_some() || want_hsv;
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      p416_to_hsv_row_endian(
+        row.y(),
+        row.uv_full(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();

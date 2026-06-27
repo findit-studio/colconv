@@ -1154,3 +1154,290 @@ pub fn p416_to_rgba_u16_row(
     y, uv_full, rgba_out, width, matrix, full_range, use_simd, false,
   );
 }
+
+// ---- Pn semi-planar 4:4:4 (P410 / P412 / P416) → HSV (direct) -----------
+
+/// P410 (semi-planar 4:4:4, 10-bit high-packed) → planar HSV bytes
+/// (OpenCV `cv2.COLOR_RGB2HSV` encoding: `H ∈ [0, 179]`,
+/// `S, V ∈ [0, 255]`), without materializing a source-width RGB row.
+/// Byte-identical to `rgb_to_hsv_row(p410_to_rgb_row_endian(...))` within
+/// the selected tier — the SIMD path stages a fixed 64-pixel 8-bit RGB
+/// chunk internally. See `scalar::p_n_444_to_hsv_row::<10, false>` for the
+/// reference. `use_simd = false` forces the scalar reference path.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn p410_to_hsv_row_endian(
+  y: &[u16],
+  uv_full: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+  big_endian: bool,
+) {
+  let uv_min = uv_full_row_elems(width);
+  assert!(y.len() >= width, "y row too short");
+  assert!(uv_full.len() >= uv_min, "uv_full row too short");
+  assert!(h_out.len() >= width, "h_out row too short");
+  assert!(s_out.len() >= width, "s_out row too short");
+  assert!(v_out.len() >= width, "v_out row too short");
+
+  macro_rules! dispatch_be {
+    ($call_le:expr, $call_be:expr) => {
+      if big_endian { $call_be } else { $call_le }
+    };
+  }
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified.
+          dispatch_be!(
+            unsafe { arch::neon::p_n_444_to_hsv_row::<10, false>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::neon::p_n_444_to_hsv_row::<10, true>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX‑512BW verified.
+          dispatch_be!(
+            unsafe { arch::x86_avx512::p_n_444_to_hsv_row::<10, false>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::x86_avx512::p_n_444_to_hsv_row::<10, true>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified.
+          dispatch_be!(
+            unsafe { arch::x86_avx2::p_n_444_to_hsv_row::<10, false>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::x86_avx2::p_n_444_to_hsv_row::<10, true>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified.
+          dispatch_be!(
+            unsafe { arch::x86_sse41::p_n_444_to_hsv_row::<10, false>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::x86_sse41::p_n_444_to_hsv_row::<10, true>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 compile‑time verified.
+          dispatch_be!(
+            unsafe { arch::wasm_simd128::p_n_444_to_hsv_row::<10, false>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::wasm_simd128::p_n_444_to_hsv_row::<10, true>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+
+  dispatch_be!(
+    scalar::p_n_444_to_hsv_row::<10, false>(
+      y, uv_full, h_out, s_out, v_out, width, matrix, full_range
+    ),
+    scalar::p_n_444_to_hsv_row::<10, true>(
+      y, uv_full, h_out, s_out, v_out, width, matrix, full_range
+    )
+  );
+}
+
+/// P412 (semi-planar 4:4:4, 12-bit high-packed) → planar HSV bytes
+/// (OpenCV encoding). Byte-identical to
+/// `rgb_to_hsv_row(p412_to_rgb_row_endian(...))` within the selected tier;
+/// the SIMD path stages a fixed 64-pixel 8-bit RGB chunk internally. See
+/// `scalar::p_n_444_to_hsv_row::<12, false>` for the reference.
+/// `use_simd = false` forces the scalar reference path.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn p412_to_hsv_row_endian(
+  y: &[u16],
+  uv_full: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+  big_endian: bool,
+) {
+  let uv_min = uv_full_row_elems(width);
+  assert!(y.len() >= width, "y row too short");
+  assert!(uv_full.len() >= uv_min, "uv_full row too short");
+  assert!(h_out.len() >= width, "h_out row too short");
+  assert!(s_out.len() >= width, "s_out row too short");
+  assert!(v_out.len() >= width, "v_out row too short");
+
+  macro_rules! dispatch_be {
+    ($call_le:expr, $call_be:expr) => {
+      if big_endian { $call_be } else { $call_le }
+    };
+  }
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified.
+          dispatch_be!(
+            unsafe { arch::neon::p_n_444_to_hsv_row::<12, false>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::neon::p_n_444_to_hsv_row::<12, true>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX‑512BW verified.
+          dispatch_be!(
+            unsafe { arch::x86_avx512::p_n_444_to_hsv_row::<12, false>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::x86_avx512::p_n_444_to_hsv_row::<12, true>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified.
+          dispatch_be!(
+            unsafe { arch::x86_avx2::p_n_444_to_hsv_row::<12, false>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::x86_avx2::p_n_444_to_hsv_row::<12, true>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified.
+          dispatch_be!(
+            unsafe { arch::x86_sse41::p_n_444_to_hsv_row::<12, false>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::x86_sse41::p_n_444_to_hsv_row::<12, true>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 compile‑time verified.
+          dispatch_be!(
+            unsafe { arch::wasm_simd128::p_n_444_to_hsv_row::<12, false>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::wasm_simd128::p_n_444_to_hsv_row::<12, true>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+
+  dispatch_be!(
+    scalar::p_n_444_to_hsv_row::<12, false>(
+      y, uv_full, h_out, s_out, v_out, width, matrix, full_range
+    ),
+    scalar::p_n_444_to_hsv_row::<12, true>(
+      y, uv_full, h_out, s_out, v_out, width, matrix, full_range
+    )
+  );
+}
+
+/// P416 (semi-planar 4:4:4, 16-bit) → planar HSV bytes (OpenCV encoding).
+/// Byte-identical to `rgb_to_hsv_row(p416_to_rgb_row_endian(...))` within
+/// the selected tier; the SIMD path stages a fixed 64-pixel 8-bit RGB
+/// chunk internally. See `scalar::p_n_444_16_to_hsv_row::<false>` for the
+/// reference. `use_simd = false` forces the scalar reference path.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn p416_to_hsv_row_endian(
+  y: &[u16],
+  uv_full: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+  big_endian: bool,
+) {
+  let uv_min = uv_full_row_elems(width);
+  assert!(y.len() >= width, "y row too short");
+  assert!(uv_full.len() >= uv_min, "uv_full row too short");
+  assert!(h_out.len() >= width, "h_out row too short");
+  assert!(s_out.len() >= width, "s_out row too short");
+  assert!(v_out.len() >= width, "v_out row too short");
+
+  macro_rules! dispatch_be {
+    ($call_le:expr, $call_be:expr) => {
+      if big_endian { $call_be } else { $call_le }
+    };
+  }
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified.
+          dispatch_be!(
+            unsafe { arch::neon::p_n_444_16_to_hsv_row::<false>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::neon::p_n_444_16_to_hsv_row::<true>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX‑512BW verified.
+          dispatch_be!(
+            unsafe { arch::x86_avx512::p_n_444_16_to_hsv_row::<false>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::x86_avx512::p_n_444_16_to_hsv_row::<true>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified.
+          dispatch_be!(
+            unsafe { arch::x86_avx2::p_n_444_16_to_hsv_row::<false>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::x86_avx2::p_n_444_16_to_hsv_row::<true>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified.
+          dispatch_be!(
+            unsafe { arch::x86_sse41::p_n_444_16_to_hsv_row::<false>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::x86_sse41::p_n_444_16_to_hsv_row::<true>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 compile‑time verified.
+          dispatch_be!(
+            unsafe { arch::wasm_simd128::p_n_444_16_to_hsv_row::<false>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::wasm_simd128::p_n_444_16_to_hsv_row::<true>(y, uv_full, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+
+  dispatch_be!(
+    scalar::p_n_444_16_to_hsv_row::<false>(
+      y, uv_full, h_out, s_out, v_out, width, matrix, full_range
+    ),
+    scalar::p_n_444_16_to_hsv_row::<true>(
+      y, uv_full, h_out, s_out, v_out, width, matrix, full_range
+    )
+  );
+}
