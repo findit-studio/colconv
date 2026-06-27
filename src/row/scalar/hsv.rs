@@ -85,8 +85,12 @@ pub(crate) fn rgb_to_hsv_row(
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) const fn luma_coefficients_q15(matrix: ColorMatrix) -> (i32, i32, i32) {
   match matrix {
-    // BT.601: Kr=0.299, Kg=0.587, Kb=0.114.
-    ColorMatrix::Bt601 | ColorMatrix::Fcc => (9798, 19235, 3735),
+    // BT.601: Kr=0.299, Kg=0.587, Kb=0.114. SMPTE 170M (525-line) and
+    // BT.470 System BG (625-line) carry the identical coefficients, so
+    // they share this arm; FCC (Kr=0.30/Kb=0.11) is a close approximation.
+    ColorMatrix::Bt601 | ColorMatrix::Fcc | ColorMatrix::Smpte170M | ColorMatrix::Bt470Bg => {
+      (9798, 19235, 3735)
+    }
     // BT.709: Kr=0.2126, Kg=0.7152, Kb=0.0722.
     ColorMatrix::Bt709 => (6966, 23436, 2366),
     // BT.2020-NCL: Kr=0.2627, Kg=0.6780, Kb=0.0593.
