@@ -54,6 +54,59 @@ pub(crate) fn v30x_to_rgb_or_rgba_row<const ALPHA: bool>(
   }
 }
 
+// ---- V30X → HSV (direct: no RGB scratch) -------------------------------
+
+/// Scalar V30X → planar HSV bytes (OpenCV `cv2.COLOR_RGB2HSV` encoding:
+/// `H ∈ [0, 179]`, `S, V ∈ [0, 255]`). 4:4:4 (no chroma subsampling): one
+/// U/Y/V triple per word. Shares [`v30x_to_rgb_or_rgba_row`]'s EXACT
+/// **8-bit-output** Q15 decode (`range_params_n::<10, 8>` + `extract_v30x`),
+/// then feeds the clamped `(r, g, b)` straight into [`rgb_to_hsv_pixel`] —
+/// byte-identical to `rgb_to_hsv_row(v30x_to_rgb_or_rgba_row::<false>(...))`,
+/// with no RGB allocation. V30X is host-native u32 (no `BE` generic).
+///
+/// # Panics (debug builds)
+///
+/// - `packed.len() >= width`.
+/// - each of `h_out` / `s_out` / `v_out` `>= width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn v30x_to_hsv_row(
+  packed: &[u32],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(packed.len() >= width, "packed row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  let coeffs = Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = range_params_n::<10, 8>(full_range);
+  let bias = chroma_bias::<10>();
+
+  for (x, &word) in packed[..width].iter().enumerate() {
+    let (u, y, v) = extract_v30x(word);
+    let u_d = q15_scale(u - bias, c_scale);
+    let v_d = q15_scale(v - bias, c_scale);
+    let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
+    let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
+    let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
+
+    let y_s = q15_scale(y - y_off, y_scale);
+    let (hh, ss, vv) = rgb_to_hsv_pixel(
+      clamp_u8(y_s + r_chroma) as i32,
+      clamp_u8(y_s + g_chroma) as i32,
+      clamp_u8(y_s + b_chroma) as i32,
+    );
+    h_out[x] = hh;
+    s_out[x] = ss;
+    v_out[x] = vv;
+  }
+}
+
 // ---- u16 RGB / RGBA native-depth output --------------------------------
 
 #[cfg_attr(not(tarpaulin), inline(always))]

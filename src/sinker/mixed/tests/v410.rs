@@ -436,3 +436,120 @@ fn v410_le_be_roundtrip_byte_identical() {
     "V410 LE/BE outputs diverge — `<const BE>` propagation broken"
   );
 }
+
+// ---- #263 direct YUV→HSV ----------------------------------------------
+
+/// Pseudo-random V410 words: 10-bit U / Y / V packed at bits [9:0] /
+/// [19:10] / [29:20] (top 2 bits padding, left zero).
+#[cfg(all(test, feature = "std"))]
+fn pseudo_random_v410(n: usize, seed: u32) -> Vec<u32> {
+  let mut buf = std::vec![0u32; n];
+  let mut state = seed;
+  for word in &mut buf {
+    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+    let u = (state >> 2) & 0x3FF;
+    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+    let y = (state >> 2) & 0x3FF;
+    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+    let v = (state >> 2) & 0x3FF;
+    *word = (v << 20) | (y << 10) | u;
+  }
+  buf
+}
+
+/// Row-kernel parity: the direct `v410_to_hsv_row` dispatcher is
+/// byte-identical to `rgb_to_hsv_row(v410_to_rgb_row(...))` within each tier
+/// — scalar (`use_simd = false`) AND host SIMD (`use_simd = true`) — across
+/// matrices / range / widths / endianness. Both sides read the same packed
+/// buffer through the same `be_input` decode, so this proves the fused HSV
+/// kernel reproduces the via-RGB pipeline exactly (and, via the RGB tier's
+/// own SIMD≡scalar parity, that the SIMD HSV kernel matches scalar).
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn v410_hsv_row_matches_rgb_then_hsv() {
+  use crate::row::{rgb_to_hsv_row, v410_to_hsv_row, v410_to_rgb_row};
+  for &w in &[1usize, 2, 4, 7, 8, 15, 16, 17, 31, 64, 65] {
+    let buf = pseudo_random_v410(w, 0x1234_5678);
+    for &matrix in &[
+      ColorMatrix::Bt601,
+      ColorMatrix::Bt709,
+      ColorMatrix::Bt2020Ncl,
+    ] {
+      for &full in &[true, false] {
+        for &use_simd in &[false, true] {
+          for &be in &[false, true] {
+            let mut rgb = std::vec![0u8; w * 3];
+            v410_to_rgb_row(&buf, &mut rgb, w, matrix, full, use_simd, be);
+            let mut rh = std::vec![0u8; w];
+            let mut rs = std::vec![0u8; w];
+            let mut rv = std::vec![0u8; w];
+            rgb_to_hsv_row(&rgb, &mut rh, &mut rs, &mut rv, w, use_simd);
+
+            let mut h = std::vec![0u8; w];
+            let mut s = std::vec![0u8; w];
+            let mut v = std::vec![0u8; w];
+            v410_to_hsv_row(&buf, &mut h, &mut s, &mut v, w, matrix, full, use_simd, be);
+            assert_eq!(
+              (h, s, v),
+              (rh, rs, rv),
+              "v410 HSV≠RGB→HSV (w={w} {matrix:?} full={full} simd={use_simd} be={be})"
+            );
+          }
+        }
+      }
+    }
+  }
+}
+
+/// Structural: an HSV-only V410 sink (no `with_rgb` / `with_rgba`) routes
+/// through the direct kernel and must NOT grow the source-width RGB scratch
+/// (`rgb_scratch.len() == 0`); its HSV equals the explicit
+/// `v410_to_rgb_row` → `rgb_to_hsv_row` reference (row 0).
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn v410_hsv_only_is_rgb_free_and_matches_reference() {
+  use crate::row::{rgb_to_hsv_row, v410_to_rgb_row};
+  let (w, h) = (16usize, 8usize);
+  let buf = pseudo_random_v410(w * h, 0xC0FF_EE11);
+  let src = V410Frame::new(&buf, w as u32, h as u32, w as u32);
+  let mut hh = std::vec![0u8; w * h];
+  let mut ss = std::vec![0u8; w * h];
+  let mut vv = std::vec![0u8; w * h];
+  let scratch_len = {
+    let mut sink = MixedSinker::<V410>::new(w, h)
+      .with_hsv(&mut hh, &mut ss, &mut vv)
+      .unwrap();
+    v410_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+    sink.rgb_scratch.len()
+  };
+  assert_eq!(
+    scratch_len, 0,
+    "V410 HSV-only must not grow the RGB scratch"
+  );
+
+  let mut rgb0 = std::vec![0u8; w * 3];
+  v410_to_rgb_row(
+    &buf[..w],
+    &mut rgb0,
+    w,
+    ColorMatrix::Bt709,
+    true,
+    true,
+    false,
+  );
+  let mut rh = std::vec![0u8; w];
+  let mut rs = std::vec![0u8; w];
+  let mut rv = std::vec![0u8; w];
+  rgb_to_hsv_row(&rgb0, &mut rh, &mut rs, &mut rv, w, true);
+  assert_eq!(&hh[..w], &rh[..], "row 0 H");
+  assert_eq!(&ss[..w], &rs[..], "row 0 S");
+  assert_eq!(&vv[..w], &rv[..], "row 0 V");
+}

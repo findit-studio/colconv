@@ -389,3 +389,109 @@ fn v30x_rgba_u16_buffer_too_short_returns_err() {
     MixedSinkerError::InsufficientRgbaU16Buffer(InsufficientBuffer::new(192, 168))
   );
 }
+
+// ---- #263 direct YUV→HSV ----------------------------------------------
+
+/// Pseudo-random V30X words: 10-bit U / Y / V packed at bits [11:2] /
+/// [21:12] / [31:22] (low 2 bits padding, left zero).
+#[cfg(all(test, feature = "std"))]
+fn pseudo_random_v30x(n: usize, seed: u32) -> Vec<u32> {
+  let mut buf = std::vec![0u32; n];
+  let mut state = seed;
+  for word in &mut buf {
+    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+    let u = (state >> 2) & 0x3FF;
+    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+    let y = (state >> 2) & 0x3FF;
+    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+    let v = (state >> 2) & 0x3FF;
+    *word = (v << 22) | (y << 12) | (u << 2);
+  }
+  buf
+}
+
+/// Row-kernel parity: the direct `v30x_to_hsv_row` dispatcher is
+/// byte-identical to `rgb_to_hsv_row(v30x_to_rgb_row(...))` within each tier
+/// — scalar (`use_simd = false`) AND host SIMD (`use_simd = true`) — across
+/// matrices / range / widths. Proves the fused HSV kernel reproduces the
+/// via-RGB pipeline exactly (and, via the RGB tier's own SIMD≡scalar parity,
+/// that the SIMD HSV kernel matches scalar). V30X is host-native (no BE).
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn v30x_hsv_row_matches_rgb_then_hsv() {
+  use crate::row::{rgb_to_hsv_row, v30x_to_hsv_row, v30x_to_rgb_row};
+  for &w in &[1usize, 2, 4, 7, 8, 15, 16, 17, 31, 64, 65] {
+    let buf = pseudo_random_v30x(w, 0x2468_ACE0);
+    for &matrix in &[
+      ColorMatrix::Bt601,
+      ColorMatrix::Bt709,
+      ColorMatrix::Bt2020Ncl,
+    ] {
+      for &full in &[true, false] {
+        for &use_simd in &[false, true] {
+          let mut rgb = std::vec![0u8; w * 3];
+          v30x_to_rgb_row(&buf, &mut rgb, w, matrix, full, use_simd);
+          let mut rh = std::vec![0u8; w];
+          let mut rs = std::vec![0u8; w];
+          let mut rv = std::vec![0u8; w];
+          rgb_to_hsv_row(&rgb, &mut rh, &mut rs, &mut rv, w, use_simd);
+
+          let mut h = std::vec![0u8; w];
+          let mut s = std::vec![0u8; w];
+          let mut v = std::vec![0u8; w];
+          v30x_to_hsv_row(&buf, &mut h, &mut s, &mut v, w, matrix, full, use_simd);
+          assert_eq!(
+            (h, s, v),
+            (rh, rs, rv),
+            "v30x HSV≠RGB→HSV (w={w} {matrix:?} full={full} simd={use_simd})"
+          );
+        }
+      }
+    }
+  }
+}
+
+/// Structural: an HSV-only V30X sink (no `with_rgb` / `with_rgba`) routes
+/// through the direct kernel and must NOT grow the source-width RGB scratch
+/// (`rgb_scratch.len() == 0`); its HSV equals the explicit
+/// `v30x_to_rgb_row` → `rgb_to_hsv_row` reference (row 0).
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn v30x_hsv_only_is_rgb_free_and_matches_reference() {
+  use crate::row::{rgb_to_hsv_row, v30x_to_rgb_row};
+  let (w, h) = (16usize, 8usize);
+  let buf = pseudo_random_v30x(w * h, 0x1357_9BDF);
+  let src = V30XFrame::new(&buf, w as u32, h as u32, w as u32);
+  let mut hh = std::vec![0u8; w * h];
+  let mut ss = std::vec![0u8; w * h];
+  let mut vv = std::vec![0u8; w * h];
+  let scratch_len = {
+    let mut sink = MixedSinker::<V30X>::new(w, h)
+      .with_hsv(&mut hh, &mut ss, &mut vv)
+      .unwrap();
+    v30x_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+    sink.rgb_scratch.len()
+  };
+  assert_eq!(
+    scratch_len, 0,
+    "V30X HSV-only must not grow the RGB scratch"
+  );
+
+  let mut rgb0 = std::vec![0u8; w * 3];
+  v30x_to_rgb_row(&buf[..w], &mut rgb0, w, ColorMatrix::Bt709, true, true);
+  let mut rh = std::vec![0u8; w];
+  let mut rs = std::vec![0u8; w];
+  let mut rv = std::vec![0u8; w];
+  rgb_to_hsv_row(&rgb0, &mut rh, &mut rs, &mut rv, w, true);
+  assert_eq!(&hh[..w], &rh[..], "row 0 H");
+  assert_eq!(&ss[..w], &rs[..], "row 0 S");
+  assert_eq!(&vv[..w], &rv[..], "row 0 V");
+}

@@ -21,9 +21,11 @@
 //!   low-bit-packed in `u16` (`[0, 1023]`). Each 10-bit Y is read
 //!   directly from bits `[19:10]` of the V410 word (no shift needed
 //!   beyond the bit-field extraction), yielding values in `[0, 0x3FF]`.
-//! - `with_hsv` — stages an internal RGB scratch (or the user's RGB
-//!   buffer if attached) and runs the existing `rgb_to_hsv_row`
-//!   kernel on the staged u8 RGB.
+//! - `with_hsv` — when HSV is the only u8 colour output (no `with_rgb`
+//!   / `with_rgba`), the direct `v410_to_hsv_row` kernel computes HSV
+//!   straight from the packed YUV with no source-width RGB scratch
+//!   (#263). When RGB or RGBA is also attached, HSV derives from the
+//!   already-staged u8 RGB row via `rgb_to_hsv_row` (the cheap path).
 //!
 //! When both u8 RGB and u8 RGBA outputs are requested, the RGBA plane
 //! is derived from the just-computed u8 RGB row via
@@ -54,8 +56,8 @@ use crate::resample::{AveragingDomain, InsertionContext, InsertionPoint, select_
 use crate::{
   PixelSink,
   row::{
-    expand_rgb_to_rgba_row, expand_rgb_u16_to_rgba_u16_row, rgb_to_hsv_row, v410_to_luma_row,
-    v410_to_luma_u16_row, v410_to_rgb_row, v410_to_rgb_u16_row, v410_to_rgba_row,
+    expand_rgb_to_rgba_row, expand_rgb_u16_to_rgba_u16_row, rgb_to_hsv_row, v410_to_hsv_row,
+    v410_to_luma_row, v410_to_luma_u16_row, v410_to_rgb_row, v410_to_rgb_u16_row, v410_to_rgba_row,
     v410_to_rgba_u16_row,
   },
   source::{V410, V410Row, V410Sink},
@@ -512,10 +514,34 @@ impl<const BE: bool, R> PixelSink for MixedSinker<'_, V410<BE>, R> {
     }
 
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
+    // HSV-without-RGB-or-RGBA goes through the direct `v410_to_hsv_row`
+    // kernel (no source-width RGB scratch). When RGB or RGBA is *also*
+    // attached the RGB kernel runs anyway, so HSV derives off that buffer
+    // for free (the cheap path) and `need_u8_rgb_kernel` keeps it alive.
+    // (Resample row-stage HSV stays correct via the convert-once path in
+    // the plan branch above.)
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_u8_rgb_kernel = want_rgb || want_hsv;
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_u8_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      v410_to_hsv_row(
+        packed,
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+      return Ok(());
+    }
 
     // Standalone u8 RGBA fast path — no RGB / HSV requested. Run the
     // dedicated RGBA kernel directly into the output buffer; avoids
