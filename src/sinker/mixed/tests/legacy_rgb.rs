@@ -1023,3 +1023,195 @@ fn bgr444_rgba_buffer_too_short_returns_error() {
     "Expected InsufficientRgbaBuffer"
   );
 }
+
+// =========================================================================
+// Legacy bit-packed RGB/BGR (8bpp 3:3:2 + 1:2:1; 4bpp 1:2:1) — end-to-end
+// walker → MixedSinker known-value coverage (scalar-only direct path).
+// =========================================================================
+
+/// Drives every output channel of a byte-per-pixel legacy packed-RGB source
+/// (`width` bytes/row) and asserts the deterministic RGB / RGBA / u16 outputs
+/// plus the white/black luma + HSV-V endpoints. `expect_rgb` is the
+/// `width * 3` packed-RGB reference; `expect_rgb_u16` is the native `u16`
+/// reference (its alpha-extended form is checked too).
+macro_rules! assert_byte_format {
+  ($Frame:ident, $Marker:ident, $walker:ident, $bytes:expr, $expect_rgb:expr, $expect_rgb_u16:expr) => {{
+    let bytes: std::vec::Vec<u8> = $bytes;
+    let w = bytes.len();
+    let frame = $Frame::try_new(&bytes, w as u32, 1, w as u32).unwrap();
+
+    let mut rgb = std::vec![0u8; w * 3];
+    let mut rgba = std::vec![0u8; w * 4];
+    let mut rgb_u16 = std::vec![0u16; w * 3];
+    let mut rgba_u16 = std::vec![0u16; w * 4];
+    let mut luma = std::vec![0u8; w];
+    let mut luma_u16 = std::vec![0u16; w];
+    let mut hh = std::vec![0u8; w];
+    let mut ss = std::vec![0u8; w];
+    let mut vv = std::vec![0u8; w];
+
+    let mut sink = MixedSinker::<$Marker>::new(w, 1)
+      .with_rgb(&mut rgb)
+      .unwrap()
+      .with_rgba(&mut rgba)
+      .unwrap()
+      .with_rgb_u16(&mut rgb_u16)
+      .unwrap()
+      .with_rgba_u16(&mut rgba_u16)
+      .unwrap()
+      .with_luma(&mut luma)
+      .unwrap()
+      .with_luma_u16(&mut luma_u16)
+      .unwrap()
+      .with_hsv(&mut hh, &mut ss, &mut vv)
+      .unwrap();
+    $walker(&frame, true, ColorMatrix::Bt709, &mut sink).unwrap();
+
+    let exp_rgb: std::vec::Vec<u8> = $expect_rgb;
+    let exp_rgb_u16: std::vec::Vec<u16> = $expect_rgb_u16;
+    assert_eq!(rgb, exp_rgb, "rgb output mismatch");
+    assert_eq!(rgb_u16, exp_rgb_u16, "rgb_u16 output mismatch");
+    for x in 0..w {
+      assert_eq!(rgba[x * 4], exp_rgb[x * 3], "rgba R[{x}]");
+      assert_eq!(rgba[x * 4 + 1], exp_rgb[x * 3 + 1], "rgba G[{x}]");
+      assert_eq!(rgba[x * 4 + 2], exp_rgb[x * 3 + 2], "rgba B[{x}]");
+      assert_eq!(rgba[x * 4 + 3], 0xFF, "rgba alpha[{x}]");
+      assert_eq!(rgba_u16[x * 4], exp_rgb_u16[x * 3], "rgba_u16 R[{x}]");
+      assert_eq!(rgba_u16[x * 4 + 1], exp_rgb_u16[x * 3 + 1], "rgba_u16 G[{x}]");
+      assert_eq!(rgba_u16[x * 4 + 2], exp_rgb_u16[x * 3 + 2], "rgba_u16 B[{x}]");
+      assert_eq!(rgba_u16[x * 4 + 3], 0xFFFF, "rgba_u16 alpha[{x}]");
+      // luma is the zero-extended u8 value.
+      assert_eq!(luma_u16[x], u16::from(luma[x]), "luma_u16[{x}]");
+    }
+    (rgb, luma, vv, ss)
+  }};
+}
+
+#[test]
+fn rgb8_walker_known_values() {
+  // px0 0xFF white; px1 0x00 black; px2 0xE0 red (R=7); px3 0x03 blue (B=3).
+  let (_rgb, luma, vv, ss) = assert_byte_format!(
+    Rgb8Frame,
+    Rgb8,
+    rgb8_to,
+    std::vec![0xFF, 0x00, 0xE0, 0x03],
+    std::vec![255, 255, 255, 0, 0, 0, 255, 0, 0, 0, 0, 255],
+    std::vec![7, 7, 3, 0, 0, 0, 7, 0, 0, 0, 0, 3]
+  );
+  assert_eq!(luma[0], 255, "white luma");
+  assert_eq!(luma[1], 0, "black luma");
+  assert_eq!(vv[0], 255, "white HSV value");
+  assert_eq!(ss[0], 0, "white HSV saturation");
+  assert_eq!(vv[1], 0, "black HSV value");
+}
+
+#[test]
+fn bgr8_walker_channel_order() {
+  // px0 0x07 R=7 → red; px1 0xC0 B=3 → blue; px2 0x38 G=7 → green; px3 0xFF white.
+  assert_byte_format!(
+    Bgr8Frame,
+    Bgr8,
+    bgr8_to,
+    std::vec![0x07, 0xC0, 0x38, 0xFF],
+    std::vec![255, 0, 0, 0, 0, 255, 0, 255, 0, 255, 255, 255],
+    std::vec![7, 0, 0, 0, 0, 3, 0, 7, 0, 7, 7, 3]
+  );
+}
+
+#[test]
+fn rgb4_byte_walker_known_values_high_nibble_ignored() {
+  // px0 0x0F white(1,3,1); px1 0x00 black; px2 0xF8 R=1 (high nibble padding
+  // must be ignored) → red; px3 0x01 B=1 → blue.
+  assert_byte_format!(
+    Rgb4ByteFrame,
+    Rgb4Byte,
+    rgb4_byte_to,
+    std::vec![0x0F, 0x00, 0xF8, 0x01],
+    std::vec![255, 255, 255, 0, 0, 0, 255, 0, 0, 0, 0, 255],
+    std::vec![1, 3, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+  );
+}
+
+#[test]
+fn bgr4_byte_walker_channel_order() {
+  // px0 0x01 R=1 → red; px1 0x08 B=1 → blue; px2 0x06 G=3 → green; px3 0x0F white.
+  assert_byte_format!(
+    Bgr4ByteFrame,
+    Bgr4Byte,
+    bgr4_byte_to,
+    std::vec![0x01, 0x08, 0x06, 0x0F],
+    std::vec![255, 0, 0, 0, 0, 255, 0, 255, 0, 255, 255, 255],
+    std::vec![1, 0, 0, 0, 0, 1, 0, 3, 0, 1, 3, 1]
+  );
+}
+
+#[test]
+fn rgb4_walker_two_pixels_per_byte() {
+  // byte0 0xF0: hi=0xF white, lo=0x0 black; byte1 0x81: hi=0x8 R=1 red,
+  // lo=0x1 B=1 blue. width = 4, two pixels per byte.
+  let bytes = std::vec![0xF0u8, 0x81u8];
+  let frame = Rgb4Frame::try_new(&bytes, 4, 1, 2).unwrap();
+  let mut rgb = std::vec![0u8; 12];
+  let mut rgb_u16 = std::vec![0u16; 12];
+  let mut sink = MixedSinker::<Rgb4>::new(4, 1)
+    .with_rgb(&mut rgb)
+    .unwrap()
+    .with_rgb_u16(&mut rgb_u16)
+    .unwrap();
+  rgb4_to(&frame, true, ColorMatrix::Bt709, &mut sink).unwrap();
+  assert_eq!(rgb, std::vec![255, 255, 255, 0, 0, 0, 255, 0, 0, 0, 0, 255]);
+  assert_eq!(rgb_u16, std::vec![1, 3, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+}
+
+#[test]
+fn bgr4_walker_two_pixels_per_byte_channel_order() {
+  // byte0 0xF0: hi=0xF white, lo=0x0 black; byte1 0x18: hi=0x1 R=1 red,
+  // lo=0x8 B=1 blue.
+  let bytes = std::vec![0xF0u8, 0x18u8];
+  let frame = Bgr4Frame::try_new(&bytes, 4, 1, 2).unwrap();
+  let mut rgba = std::vec![0u8; 16];
+  let mut sink = MixedSinker::<Bgr4>::new(4, 1).with_rgba(&mut rgba).unwrap();
+  bgr4_to(&frame, true, ColorMatrix::Bt709, &mut sink).unwrap();
+  let expect = std::vec![
+    255, 255, 255, 255, 0, 0, 0, 255, 255, 0, 0, 255, 0, 0, 255, 255,
+  ];
+  assert_eq!(rgba, expect);
+}
+
+#[test]
+fn rgb8_rgba_only_fast_path() {
+  // Standalone RGBA (no rgb/luma/hsv) exercises the no-staging branch.
+  let bytes = std::vec![0xE0u8, 0x03u8];
+  let frame = Rgb8Frame::try_new(&bytes, 2, 1, 2).unwrap();
+  let mut rgba = std::vec![0u8; 8];
+  let mut sink = MixedSinker::<Rgb8>::new(2, 1).with_rgba(&mut rgba).unwrap();
+  rgb8_to(&frame, true, ColorMatrix::Bt709, &mut sink).unwrap();
+  assert_eq!(rgba, std::vec![255, 0, 0, 0xFF, 0, 0, 255, 0xFF]);
+}
+
+#[test]
+fn rgb8_rgba_buffer_too_short_returns_error() {
+  let mut too_short = std::vec![0u8; 3];
+  let result = MixedSinker::<Rgb8>::new(4, 1).with_rgba(&mut too_short);
+  assert!(
+    matches!(result, Err(MixedSinkerError::InsufficientRgbaBuffer(_))),
+    "Expected InsufficientRgbaBuffer"
+  );
+}
+
+#[test]
+fn rgb4_row_shape_mismatch_returns_error() {
+  // Manually drive `process` with a wrong-length row: width 4 expects
+  // width.div_ceil(2) = 2 bytes; feed 3.
+  use crate::{PixelSink, source::Rgb4Row};
+  let mut rgb = std::vec![0u8; 12];
+  let mut sink = MixedSinker::<Rgb4>::new(4, 1).with_rgb(&mut rgb).unwrap();
+  PixelSink::begin_frame(&mut sink, 4, 1).unwrap();
+  let bad = [0u8; 3];
+  let row = Rgb4Row::new(&bad, 0, ColorMatrix::Bt709, true);
+  let result = PixelSink::process(&mut sink, row);
+  assert!(
+    matches!(result, Err(MixedSinkerError::RowShapeMismatch(_))),
+    "Expected RowShapeMismatch, got {result:?}"
+  );
+}

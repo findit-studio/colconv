@@ -1060,6 +1060,301 @@ pub fn bgr444_to_rgba_u16_row(src: &[u8], rgba_out: &mut [u16], width: usize, us
   scalar::legacy_rgb::bgr444_to_rgba_u16_row(src, rgba_out, width);
 }
 
+// =========================================================================
+// Legacy bit-packed RGB/BGR (8bpp 3:3:2 + 1:2:1; 4bpp 1:2:1 two-per-byte)
+// (AV_PIX_FMT_RGB8 / BGR8 / RGB4_BYTE / BGR4_BYTE / RGB4 / BGR4)
+//
+// Input planes are `&[u8]`: 1 byte/pixel for `Rgb8` / `Bgr8` / `Rgb4Byte` /
+// `Bgr4Byte` (`src_min = width`); `width.div_ceil(2)` bytes for the 4-bpp
+// `Rgb4` / `Bgr4` (two pixels per byte). Output-side minimums reuse
+// [`rgb_row_bytes`] / [`rgba_row_bytes`] / [`rgb_row_elems`] /
+// [`rgba_row_elems`] (32-bit overflow guard).
+//
+// Each entry routes to the best runtime-detected backend
+// (NEON / AVX-512 / AVX2 / SSE4.1 / wasm-simd128) with a scalar fallback,
+// exactly like the 16-bit packed entries above. The arch kernels share the
+// dispatcher's function name, so the routing references
+// `arch::<backend>::legacy_rgb::<name>` directly.
+// =========================================================================
+
+/// Emits one runtime-dispatched kernel for a legacy bit-packed RGB/BGR format.
+/// `$src_kind` is `byte` (1 byte/pixel) or `nibble` (`width.div_ceil(2)`
+/// bytes, two pixels per byte); `u8` / `u16` selects the output element type.
+macro_rules! packed_rgb_lowbit_dispatch {
+  ($name:ident, u8, $out_guard:path, $scalar:path, $src_kind:tt, $doc:expr) => {
+    #[doc = $doc]
+    ///
+    /// `use_simd = false` forces scalar (useful for tests and benchmarks).
+    #[cfg_attr(not(tarpaulin), inline(always))]
+    pub fn $name(src: &[u8], out: &mut [u8], width: usize, use_simd: bool) {
+      let out_min = $out_guard(width);
+      let src_min = packed_rgb_lowbit_dispatch!(@src $src_kind, width);
+      assert!(src.len() >= src_min, "src row too short");
+      assert!(out.len() >= out_min, "output row too short");
+      packed_rgb_lowbit_dispatch!(@route $name, src, out, width, use_simd);
+      scalar::legacy_rgb::$name(src, out, width);
+    }
+  };
+  ($name:ident, u16, $out_guard:path, $scalar:path, $src_kind:tt, $doc:expr) => {
+    #[doc = $doc]
+    ///
+    /// `use_simd = false` forces scalar (useful for tests and benchmarks).
+    #[cfg_attr(not(tarpaulin), inline(always))]
+    pub fn $name(src: &[u8], out: &mut [u16], width: usize, use_simd: bool) {
+      let out_min = $out_guard(width);
+      let src_min = packed_rgb_lowbit_dispatch!(@src $src_kind, width);
+      assert!(src.len() >= src_min, "src row too short");
+      assert!(out.len() >= out_min, "output row too short");
+      packed_rgb_lowbit_dispatch!(@route $name, src, out, width, use_simd);
+      scalar::legacy_rgb::$name(src, out, width);
+    }
+  };
+  (@src byte, $w:expr) => {
+    $w
+  };
+  (@src nibble, $w:expr) => {
+    ($w).div_ceil(2)
+  };
+  // Runtime SIMD routing shared by both element types — each branch returns on
+  // a hit; control falls through to the scalar tail otherwise.
+  (@route $name:ident, $src:ident, $out:ident, $width:ident, $use_simd:ident) => {
+    #[cfg(target_arch = "aarch64")]
+    if $use_simd && neon_available() {
+      // SAFETY: NEON verified available.
+      unsafe {
+        return arch::neon::legacy_rgb::$name($src, $out, $width);
+      }
+    }
+    #[cfg(target_arch = "x86_64")]
+    if $use_simd && avx512_available() {
+      // SAFETY: AVX-512BW verified available (implies F).
+      unsafe {
+        return arch::x86_avx512::legacy_rgb::$name($src, $out, $width);
+      }
+    }
+    #[cfg(target_arch = "x86_64")]
+    if $use_simd && avx2_available() {
+      // SAFETY: AVX2 verified available.
+      unsafe {
+        return arch::x86_avx2::legacy_rgb::$name($src, $out, $width);
+      }
+    }
+    #[cfg(target_arch = "x86_64")]
+    if $use_simd && sse41_available() {
+      // SAFETY: SSE4.1 verified available.
+      unsafe {
+        return arch::x86_sse41::legacy_rgb::$name($src, $out, $width);
+      }
+    }
+    #[cfg(target_arch = "wasm32")]
+    if $use_simd && simd128_available() {
+      // SAFETY: simd128 compile-time enabled.
+      unsafe {
+        return arch::wasm_simd128::legacy_rgb::$name($src, $out, $width);
+      }
+    }
+    let _ = $use_simd;
+  };
+}
+
+packed_rgb_lowbit_dispatch!(
+  rgb8_to_rgb_row,
+  u8,
+  rgb_row_bytes,
+  scalar::legacy_rgb::rgb8_to_rgb_row,
+  byte,
+  "Dispatches RGB8 (3:3:2) → packed `R, G, B` bytes (bit-replicated channels)."
+);
+packed_rgb_lowbit_dispatch!(
+  rgb8_to_rgba_row,
+  u8,
+  rgba_row_bytes,
+  scalar::legacy_rgb::rgb8_to_rgba_row,
+  byte,
+  "Dispatches RGB8 (3:3:2) → packed `R, G, B, A` bytes (α = `0xFF`)."
+);
+packed_rgb_lowbit_dispatch!(
+  rgb8_to_rgb_u16_row,
+  u16,
+  rgb_row_elems,
+  scalar::legacy_rgb::rgb8_to_rgb_u16_row,
+  byte,
+  "Dispatches RGB8 → packed `R, G, B` u16 (native 3/3/2-bit, no expansion)."
+);
+packed_rgb_lowbit_dispatch!(
+  rgb8_to_rgba_u16_row,
+  u16,
+  rgba_row_elems,
+  scalar::legacy_rgb::rgb8_to_rgba_u16_row,
+  byte,
+  "Dispatches RGB8 → packed `R, G, B, A` u16 (native, α = `0xFFFF`)."
+);
+
+packed_rgb_lowbit_dispatch!(
+  bgr8_to_rgb_row,
+  u8,
+  rgb_row_bytes,
+  scalar::legacy_rgb::bgr8_to_rgb_row,
+  byte,
+  "Dispatches BGR8 (3:3:2) → packed `R, G, B` bytes (output R-first)."
+);
+packed_rgb_lowbit_dispatch!(
+  bgr8_to_rgba_row,
+  u8,
+  rgba_row_bytes,
+  scalar::legacy_rgb::bgr8_to_rgba_row,
+  byte,
+  "Dispatches BGR8 (3:3:2) → packed `R, G, B, A` bytes (α = `0xFF`)."
+);
+packed_rgb_lowbit_dispatch!(
+  bgr8_to_rgb_u16_row,
+  u16,
+  rgb_row_elems,
+  scalar::legacy_rgb::bgr8_to_rgb_u16_row,
+  byte,
+  "Dispatches BGR8 → packed `R, G, B` u16 (native 3/3/2-bit, R-first)."
+);
+packed_rgb_lowbit_dispatch!(
+  bgr8_to_rgba_u16_row,
+  u16,
+  rgba_row_elems,
+  scalar::legacy_rgb::bgr8_to_rgba_u16_row,
+  byte,
+  "Dispatches BGR8 → packed `R, G, B, A` u16 (native, α = `0xFFFF`)."
+);
+
+packed_rgb_lowbit_dispatch!(
+  rgb4_byte_to_rgb_row,
+  u8,
+  rgb_row_bytes,
+  scalar::legacy_rgb::rgb4_byte_to_rgb_row,
+  byte,
+  "Dispatches RGB4_BYTE (1:2:1, low nibble) → packed `R, G, B` bytes."
+);
+packed_rgb_lowbit_dispatch!(
+  rgb4_byte_to_rgba_row,
+  u8,
+  rgba_row_bytes,
+  scalar::legacy_rgb::rgb4_byte_to_rgba_row,
+  byte,
+  "Dispatches RGB4_BYTE → packed `R, G, B, A` bytes (α = `0xFF`)."
+);
+packed_rgb_lowbit_dispatch!(
+  rgb4_byte_to_rgb_u16_row,
+  u16,
+  rgb_row_elems,
+  scalar::legacy_rgb::rgb4_byte_to_rgb_u16_row,
+  byte,
+  "Dispatches RGB4_BYTE → packed `R, G, B` u16 (native 1/2/1-bit)."
+);
+packed_rgb_lowbit_dispatch!(
+  rgb4_byte_to_rgba_u16_row,
+  u16,
+  rgba_row_elems,
+  scalar::legacy_rgb::rgb4_byte_to_rgba_u16_row,
+  byte,
+  "Dispatches RGB4_BYTE → packed `R, G, B, A` u16 (native, α = `0xFFFF`)."
+);
+
+packed_rgb_lowbit_dispatch!(
+  bgr4_byte_to_rgb_row,
+  u8,
+  rgb_row_bytes,
+  scalar::legacy_rgb::bgr4_byte_to_rgb_row,
+  byte,
+  "Dispatches BGR4_BYTE (1:2:1, low nibble) → packed `R, G, B` bytes (R-first)."
+);
+packed_rgb_lowbit_dispatch!(
+  bgr4_byte_to_rgba_row,
+  u8,
+  rgba_row_bytes,
+  scalar::legacy_rgb::bgr4_byte_to_rgba_row,
+  byte,
+  "Dispatches BGR4_BYTE → packed `R, G, B, A` bytes (α = `0xFF`)."
+);
+packed_rgb_lowbit_dispatch!(
+  bgr4_byte_to_rgb_u16_row,
+  u16,
+  rgb_row_elems,
+  scalar::legacy_rgb::bgr4_byte_to_rgb_u16_row,
+  byte,
+  "Dispatches BGR4_BYTE → packed `R, G, B` u16 (native 1/2/1-bit, R-first)."
+);
+packed_rgb_lowbit_dispatch!(
+  bgr4_byte_to_rgba_u16_row,
+  u16,
+  rgba_row_elems,
+  scalar::legacy_rgb::bgr4_byte_to_rgba_u16_row,
+  byte,
+  "Dispatches BGR4_BYTE → packed `R, G, B, A` u16 (native, α = `0xFFFF`)."
+);
+
+packed_rgb_lowbit_dispatch!(
+  rgb4_to_rgb_row,
+  u8,
+  rgb_row_bytes,
+  scalar::legacy_rgb::rgb4_to_rgb_row,
+  nibble,
+  "Dispatches RGB4 (4 bpp, two pixels/byte) → packed `R, G, B` bytes."
+);
+packed_rgb_lowbit_dispatch!(
+  rgb4_to_rgba_row,
+  u8,
+  rgba_row_bytes,
+  scalar::legacy_rgb::rgb4_to_rgba_row,
+  nibble,
+  "Dispatches RGB4 → packed `R, G, B, A` bytes (α = `0xFF`)."
+);
+packed_rgb_lowbit_dispatch!(
+  rgb4_to_rgb_u16_row,
+  u16,
+  rgb_row_elems,
+  scalar::legacy_rgb::rgb4_to_rgb_u16_row,
+  nibble,
+  "Dispatches RGB4 → packed `R, G, B` u16 (native 1/2/1-bit)."
+);
+packed_rgb_lowbit_dispatch!(
+  rgb4_to_rgba_u16_row,
+  u16,
+  rgba_row_elems,
+  scalar::legacy_rgb::rgb4_to_rgba_u16_row,
+  nibble,
+  "Dispatches RGB4 → packed `R, G, B, A` u16 (native, α = `0xFFFF`)."
+);
+
+packed_rgb_lowbit_dispatch!(
+  bgr4_to_rgb_row,
+  u8,
+  rgb_row_bytes,
+  scalar::legacy_rgb::bgr4_to_rgb_row,
+  nibble,
+  "Dispatches BGR4 (4 bpp, two pixels/byte) → packed `R, G, B` bytes (R-first)."
+);
+packed_rgb_lowbit_dispatch!(
+  bgr4_to_rgba_row,
+  u8,
+  rgba_row_bytes,
+  scalar::legacy_rgb::bgr4_to_rgba_row,
+  nibble,
+  "Dispatches BGR4 → packed `R, G, B, A` bytes (α = `0xFF`)."
+);
+packed_rgb_lowbit_dispatch!(
+  bgr4_to_rgb_u16_row,
+  u16,
+  rgb_row_elems,
+  scalar::legacy_rgb::bgr4_to_rgb_u16_row,
+  nibble,
+  "Dispatches BGR4 → packed `R, G, B` u16 (native 1/2/1-bit, R-first)."
+);
+packed_rgb_lowbit_dispatch!(
+  bgr4_to_rgba_u16_row,
+  u16,
+  rgba_row_elems,
+  scalar::legacy_rgb::bgr4_to_rgba_u16_row,
+  nibble,
+  "Dispatches BGR4 → packed `R, G, B, A` u16 (native, α = `0xFFFF`)."
+);
+
 // Overflow-guard tests — 32-bit target only.
 #[cfg(all(test, feature = "std"))]
 mod tests {
@@ -1143,5 +1438,139 @@ mod tests {
     let src: [u8; 0] = [];
     let mut rgb: [u16; 0] = [];
     bgr444_to_rgb_u16_row(&src, &mut rgb, OVERFLOW_WIDTH_X3, false);
+  }
+}
+
+// SIMD-vs-scalar parity for the legacy bit-packed (8bpp + 4bpp) kernels.
+#[cfg(all(test, feature = "std"))]
+mod lowbit_simd_parity {
+  use super::*;
+
+  /// Deterministic pseudo-random byte plane of `len` bytes.
+  fn rand_bytes(len: usize, seed: u32) -> std::vec::Vec<u8> {
+    let mut state = seed;
+    (0..len)
+      .map(|_| {
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (state >> 16) as u8
+      })
+      .collect()
+  }
+
+  /// For each width in `0..=40` plus a wide row, the SIMD (`use_simd = true`)
+  /// and scalar (`use_simd = false`) outputs of every dispatcher must be
+  /// byte-identical — exercising the vector body and the scalar tail. `$src_per`
+  /// is the source bytes per pixel-equivalent (`1` byte-formats, or the
+  /// nibble closure for the 4-bpp formats).
+  macro_rules! parity {
+    ($to_rgb:ident, $to_rgba:ident, $to_rgb_u16:ident, $to_rgba_u16:ident, $src_bytes:expr) => {{
+      for width in (0..=40usize).chain([127, 256, 257]) {
+        let src_bytes: usize = $src_bytes(width);
+        let src = rand_bytes(src_bytes.max(1), 0x51A7_0001 ^ (width as u32));
+
+        let mut a = std::vec![0u8; width * 3];
+        let mut b = std::vec![0u8; width * 3];
+        $to_rgb(&src, &mut a, width, true);
+        $to_rgb(&src, &mut b, width, false);
+        assert_eq!(a, b, "{} simd/scalar diverge @w={width}", stringify!($to_rgb));
+
+        let mut a = std::vec![0u8; width * 4];
+        let mut b = std::vec![0u8; width * 4];
+        $to_rgba(&src, &mut a, width, true);
+        $to_rgba(&src, &mut b, width, false);
+        assert_eq!(a, b, "{} simd/scalar diverge @w={width}", stringify!($to_rgba));
+
+        let mut a = std::vec![0u16; width * 3];
+        let mut b = std::vec![0u16; width * 3];
+        $to_rgb_u16(&src, &mut a, width, true);
+        $to_rgb_u16(&src, &mut b, width, false);
+        assert_eq!(a, b, "{} simd/scalar diverge @w={width}", stringify!($to_rgb_u16));
+
+        let mut a = std::vec![0u16; width * 4];
+        let mut b = std::vec![0u16; width * 4];
+        $to_rgba_u16(&src, &mut a, width, true);
+        $to_rgba_u16(&src, &mut b, width, false);
+        assert_eq!(a, b, "{} simd/scalar diverge @w={width}", stringify!($to_rgba_u16));
+      }
+    }};
+  }
+
+  fn byte_bytes(w: usize) -> usize {
+    w
+  }
+  fn nibble_bytes(w: usize) -> usize {
+    w.div_ceil(2)
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn rgb8_simd_matches_scalar() {
+    parity!(
+      rgb8_to_rgb_row,
+      rgb8_to_rgba_row,
+      rgb8_to_rgb_u16_row,
+      rgb8_to_rgba_u16_row,
+      byte_bytes
+    );
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn bgr8_simd_matches_scalar() {
+    parity!(
+      bgr8_to_rgb_row,
+      bgr8_to_rgba_row,
+      bgr8_to_rgb_u16_row,
+      bgr8_to_rgba_u16_row,
+      byte_bytes
+    );
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn rgb4_byte_simd_matches_scalar() {
+    parity!(
+      rgb4_byte_to_rgb_row,
+      rgb4_byte_to_rgba_row,
+      rgb4_byte_to_rgb_u16_row,
+      rgb4_byte_to_rgba_u16_row,
+      byte_bytes
+    );
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn bgr4_byte_simd_matches_scalar() {
+    parity!(
+      bgr4_byte_to_rgb_row,
+      bgr4_byte_to_rgba_row,
+      bgr4_byte_to_rgb_u16_row,
+      bgr4_byte_to_rgba_u16_row,
+      byte_bytes
+    );
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn rgb4_simd_matches_scalar() {
+    parity!(
+      rgb4_to_rgb_row,
+      rgb4_to_rgba_row,
+      rgb4_to_rgb_u16_row,
+      rgb4_to_rgba_u16_row,
+      nibble_bytes
+    );
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn bgr4_simd_matches_scalar() {
+    parity!(
+      bgr4_to_rgb_row,
+      bgr4_to_rgba_row,
+      bgr4_to_rgb_u16_row,
+      bgr4_to_rgba_u16_row,
+      nibble_bytes
+    );
   }
 }

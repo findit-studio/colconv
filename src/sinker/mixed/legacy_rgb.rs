@@ -32,17 +32,26 @@ use crate::{
   PixelSink,
   resample::ResamplePlan,
   row::{
-    bgr444_to_rgb_row, bgr444_to_rgb_u16_row, bgr444_to_rgba_row, bgr444_to_rgba_u16_row,
-    bgr555_to_rgb_row, bgr555_to_rgb_u16_row, bgr555_to_rgba_row, bgr555_to_rgba_u16_row,
-    bgr565_to_rgb_row, bgr565_to_rgb_u16_row, bgr565_to_rgba_row, bgr565_to_rgba_u16_row,
-    rgb_to_hsv_row, rgb_to_luma_row, rgb_to_luma_u16_row, rgb444_to_rgb_row, rgb444_to_rgb_u16_row,
-    rgb444_to_rgba_row, rgb444_to_rgba_u16_row, rgb555_to_rgb_row, rgb555_to_rgb_u16_row,
-    rgb555_to_rgba_row, rgb555_to_rgba_u16_row, rgb565_to_rgb_row, rgb565_to_rgb_u16_row,
-    rgb565_to_rgba_row, rgb565_to_rgba_u16_row,
+    bgr4_byte_to_rgb_row, bgr4_byte_to_rgb_u16_row, bgr4_byte_to_rgba_row,
+    bgr4_byte_to_rgba_u16_row, bgr4_to_rgb_row, bgr4_to_rgb_u16_row, bgr4_to_rgba_row,
+    bgr4_to_rgba_u16_row, bgr8_to_rgb_row, bgr8_to_rgb_u16_row, bgr8_to_rgba_row,
+    bgr8_to_rgba_u16_row, bgr444_to_rgb_row, bgr444_to_rgb_u16_row, bgr444_to_rgba_row,
+    bgr444_to_rgba_u16_row, bgr555_to_rgb_row, bgr555_to_rgb_u16_row, bgr555_to_rgba_row,
+    bgr555_to_rgba_u16_row, bgr565_to_rgb_row, bgr565_to_rgb_u16_row, bgr565_to_rgba_row,
+    bgr565_to_rgba_u16_row, rgb_to_hsv_row, rgb_to_luma_row, rgb_to_luma_u16_row,
+    rgb4_byte_to_rgb_row, rgb4_byte_to_rgb_u16_row, rgb4_byte_to_rgba_row,
+    rgb4_byte_to_rgba_u16_row, rgb4_to_rgb_row, rgb4_to_rgb_u16_row, rgb4_to_rgba_row,
+    rgb4_to_rgba_u16_row, rgb8_to_rgb_row, rgb8_to_rgb_u16_row, rgb8_to_rgba_row,
+    rgb8_to_rgba_u16_row, rgb444_to_rgb_row, rgb444_to_rgb_u16_row, rgb444_to_rgba_row,
+    rgb444_to_rgba_u16_row, rgb555_to_rgb_row, rgb555_to_rgb_u16_row, rgb555_to_rgba_row,
+    rgb555_to_rgba_u16_row, rgb565_to_rgb_row, rgb565_to_rgb_u16_row, rgb565_to_rgba_row,
+    rgb565_to_rgba_u16_row,
   },
   source::{
-    Bgr444, Bgr444Row, Bgr444Sink, Bgr555, Bgr555Row, Bgr555Sink, Bgr565, Bgr565Row, Bgr565Sink,
-    HsvFrameMut, Rgb444, Rgb444Row, Rgb444Sink, Rgb555, Rgb555Row, Rgb555Sink, Rgb565, Rgb565Row,
+    Bgr4, Bgr4Byte, Bgr4ByteRow, Bgr4ByteSink, Bgr4Row, Bgr4Sink, Bgr8, Bgr8Row, Bgr8Sink, Bgr444,
+    Bgr444Row, Bgr444Sink, Bgr555, Bgr555Row, Bgr555Sink, Bgr565, Bgr565Row, Bgr565Sink,
+    HsvFrameMut, Rgb4, Rgb4Byte, Rgb4ByteRow, Rgb4ByteSink, Rgb4Row, Rgb4Sink, Rgb8, Rgb8Row,
+    Rgb8Sink, Rgb444, Rgb444Row, Rgb444Sink, Rgb555, Rgb555Row, Rgb555Sink, Rgb565, Rgb565Row,
     Rgb565Sink,
   },
 };
@@ -738,4 +747,626 @@ impl_legacy_rgb_sinker! {
   repack: |r: u8, g: u8, b: u8| -> u16 {
     ((b as u16) << 8) | ((g as u16) << 4) | (r as u16)
   },
+}
+
+// =========================================================================
+// Legacy bit-packed RGB/BGR sinkers (8bpp 3:3:2 + 1:2:1; 4bpp 1:2:1)
+// (Rgb8 / Bgr8 / Rgb4Byte / Bgr4Byte — 1 byte/pixel;
+//  Rgb4 / Bgr4 — 4 bits/pixel, two pixels per byte)
+//
+// These mirror the 16-bit packed sinkers above, including the native-depth
+// area fused-resample tier (#164): a non-identity plan unpacks the packed
+// source row to its native R/G/B channels, bins them at native depth through
+// the shared u8 `packed_rgb_resample_stream`, and — per finalized output row —
+// re-packs each binned pixel back into the source's byte (or 4-bit nibble)
+// layout and runs the exact direct `$to_*` kernels, so every output is
+// byte-identical to a direct conversion of the area-downscaled source frame.
+// The output set is rgb / rgba / rgb_u16 / rgba_u16 / luma / luma_u16 / hsv,
+// with native-precision u16 channels (R3=G3=7,B2=3 for `*8`; R1=B1=1,G2=3 for
+// the 4-bit `*4` / `*4Byte`).
+// =========================================================================
+
+/// Grows `scratch` to a `row_bytes`-byte re-packed source row and returns the
+/// slice, following the planner's recoverable-allocation contract (the exact
+/// reserve makes the resize incapable of reallocating; refusal surfaces as
+/// `AllocationFailed`). The per-output-row re-pack target for the 8-/4-bpp
+/// legacy packed-RGB resample tail (`out_w` bytes for the byte formats,
+/// `out_w.div_ceil(2)` for the 4-bpp two-pixels-per-byte formats).
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn legacy_rgb_byte_packed_scratch<'s>(
+  scratch: &'s mut std::vec::Vec<u8>,
+  row_bytes: usize,
+  plan: &ResamplePlan,
+) -> Result<&'s mut [u8], MixedSinkerError> {
+  if scratch.len() < row_bytes {
+    scratch
+      .try_reserve_exact(row_bytes - scratch.len())
+      .map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?;
+    scratch.resize(row_bytes, 0);
+  }
+  Ok(&mut scratch[..row_bytes])
+}
+
+/// Bins the prepared source-width native R/G/B `u8` row through the shared u8
+/// area stream and derives every attached output from each finalized binned
+/// row. Per finalized output row the binned native pixels are re-packed
+/// (`repack`) into the source's packed byte (`nibble_packed = false`) or 4-bit
+/// nibble (`nibble_packed = true`) layout, and the **exact** direct `to_*`
+/// kernels run over that re-packed row — the byte/nibble twin of
+/// [`legacy_rgb_resample_emit`].
+#[allow(clippy::too_many_arguments)]
+fn legacy_rgb_packed_resample_emit(
+  stream: &mut crate::resample::AreaStream<u8>,
+  plan: &ResamplePlan,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  rgb_u16: &mut Option<&mut [u16]>,
+  rgba_u16: &mut Option<&mut [u16]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  src_native: &[u8],
+  rgb_stage_scratch: &mut std::vec::Vec<u8>,
+  packed_scratch: &mut std::vec::Vec<u8>,
+  matrix: crate::ColorMatrix,
+  full_range: bool,
+  idx: usize,
+  use_simd: bool,
+  nibble_packed: bool,
+  repack: impl Fn(u8, u8, u8) -> u8,
+  to_rgb: fn(&[u8], &mut [u8], usize, bool),
+  to_rgba: fn(&[u8], &mut [u8], usize, bool),
+  to_rgb_u16: fn(&[u8], &mut [u16], usize, bool),
+  to_rgba_u16: fn(&[u8], &mut [u16], usize, bool),
+) -> Result<(), MixedSinkerError> {
+  let ow = plan.out_w();
+  let pack_row_bytes = if nibble_packed { ow.div_ceil(2) } else { ow };
+  let packed = legacy_rgb_byte_packed_scratch(packed_scratch, pack_row_bytes, plan)?;
+  let need_rgb_stage = rgb.is_none() && (luma.is_some() || luma_u16.is_some() || hsv.is_some());
+  let stage: &mut [u8] = if need_rgb_stage {
+    source_rgb_scratch(rgb_stage_scratch, ow, plan)?
+  } else {
+    &mut []
+  };
+  stream.feed_row(idx, src_native, use_simd, |oy, binned| {
+    // Re-pack the binned native R/G/B channels back into the source's packed
+    // byte (or 4-bit nibble) layout — the exact wire the direct kernels
+    // consume.
+    let prow = &mut packed[..pack_row_bytes];
+    if nibble_packed {
+      // Two pixels per byte; the even pixel is the high nibble. Clearing the
+      // row first leaves an odd width's final low nibble zero.
+      prow.fill(0);
+      for x in 0..ow {
+        let v = repack(binned[x * 3], binned[x * 3 + 1], binned[x * 3 + 2]);
+        if x & 1 == 0 {
+          prow[x >> 1] = v << 4;
+        } else {
+          prow[x >> 1] |= v;
+        }
+      }
+    } else {
+      for x in 0..ow {
+        prow[x] = repack(binned[x * 3], binned[x * 3 + 1], binned[x * 3 + 2]);
+      }
+    }
+    // Native-depth u16 RGB / RGBA — the kernels re-extract the native bits.
+    if let Some(buf) = rgb_u16.as_deref_mut() {
+      to_rgb_u16(prow, &mut buf[oy * 3 * ow..(oy + 1) * 3 * ow], ow, use_simd);
+    }
+    if let Some(buf) = rgba_u16.as_deref_mut() {
+      to_rgba_u16(prow, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow, use_simd);
+    }
+    // u8 RGBA — bit-expanded channels + forced alpha (exactly the direct
+    // kernel), from the re-packed row.
+    if let Some(buf) = rgba.as_deref_mut() {
+      to_rgba(prow, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow, use_simd);
+    }
+    // u8 RGB stage drives rgb / luma / luma_u16 / hsv.
+    if rgb.is_some() || need_rgb_stage {
+      let rgb_row: &mut [u8] = match rgb.as_deref_mut() {
+        Some(buf) => &mut buf[oy * 3 * ow..(oy + 1) * 3 * ow],
+        None => &mut stage[..3 * ow],
+      };
+      to_rgb(prow, rgb_row, ow, use_simd);
+      if let Some(buf) = luma.as_deref_mut() {
+        rgb_to_luma_row(
+          rgb_row,
+          &mut buf[oy * ow..(oy + 1) * ow],
+          ow,
+          matrix,
+          full_range,
+          use_simd,
+        );
+      }
+      if let Some(buf) = luma_u16.as_deref_mut() {
+        rgb_to_luma_u16_row(
+          rgb_row,
+          &mut buf[oy * ow..(oy + 1) * ow],
+          ow,
+          matrix,
+          full_range,
+          use_simd,
+        );
+      }
+      if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
+        rgb_to_hsv_row(
+          rgb_row,
+          &mut h[oy * ow..(oy + 1) * ow],
+          &mut s[oy * ow..(oy + 1) * ow],
+          &mut v[oy * ow..(oy + 1) * ow],
+          ow,
+          use_simd,
+        );
+      }
+    }
+  })?;
+  Ok(())
+}
+
+/// Emits one sinker impl block for a legacy bit-packed RGB/BGR format with the
+/// native-depth area fused-resample tier. `$src_kind` is `byte` (1 byte/pixel)
+/// or `nibble` (`width.div_ceil(2)` bytes, two pixels per byte); it sizes the
+/// per-row shape check and selects the source read + re-pack layout. The
+/// `$to_*` parameters are the row dispatchers (which own the byte-/nibble-level
+/// unpack). `$unpack` extracts the **native** R/G/B channels from one packed
+/// byte/nibble (the area-binning input); `$repack` is its inverse (binned
+/// native → packed byte/nibble for the resample tail).
+macro_rules! impl_legacy_rgb_packed_sinker {
+  (
+    marker:      $marker:ident,
+    sink_trait:  $sink_trait:ident,
+    row_ty:      $row_ty:ident,
+    buf_field:   $buf_field:ident,
+    row_slice:   $row_slice:expr,
+    src_kind:    $src_kind:tt,
+    to_rgb:      $to_rgb:path,
+    to_rgba:     $to_rgba:path,
+    to_rgb_u16:  $to_rgb_u16:path,
+    to_rgba_u16: $to_rgba_u16:path,
+    unpack:      $unpack:expr,
+    repack:      $repack:expr,
+  ) => {
+    // ---- per-format accessors ----------------------------------------------
+
+    impl<'a, R> MixedSinker<'a, $marker, R> {
+      /// Attaches a packed **8-bit** RGBA output buffer. Alpha is filled with
+      /// constant `0xFF` (this source format has no alpha channel).
+      ///
+      /// Returns `Err(InsufficientRgbaBuffer)` if
+      /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
+      /// 32-bit targets when the product overflows.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
+        self.set_rgba(buf)?;
+        Ok(self)
+      }
+
+      /// In-place variant of [`with_rgba`](Self::with_rgba).
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
+        let expected = self.frame_elems(4)?;
+        if buf.len() < expected {
+          return Err(MixedSinkerError::InsufficientRgbaBuffer(
+            InsufficientBuffer::new(expected, buf.len()),
+          ));
+        }
+        self.rgba = Some(buf);
+        Ok(self)
+      }
+
+      /// Attaches a **native-depth `u16`** RGB output buffer. Each channel is
+      /// stored low-bit aligned at its native bit width — no expansion applied.
+      /// Length is measured in `u16` elements (`width x height x 3`).
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+        self.set_rgb_u16(buf)?;
+        Ok(self)
+      }
+
+      /// In-place variant of [`with_rgb_u16`](Self::with_rgb_u16).
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+        let expected = self.frame_elems(3)?;
+        if buf.len() < expected {
+          return Err(MixedSinkerError::InsufficientRgbU16Buffer(
+            InsufficientBuffer::new(expected, buf.len()),
+          ));
+        }
+        self.rgb_u16 = Some(buf);
+        Ok(self)
+      }
+
+      /// Attaches a **native-depth `u16`** RGBA output buffer. Same native
+      /// bit-width channels as `with_rgb_u16` plus α=`0xFFFF` (the source has
+      /// no alpha). Length is measured in `u16` elements (`width x height x 4`).
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+        self.set_rgba_u16(buf)?;
+        Ok(self)
+      }
+
+      /// In-place variant of [`with_rgba_u16`](Self::with_rgba_u16).
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+        let expected = self.frame_elems(4)?;
+        if buf.len() < expected {
+          return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
+            InsufficientBuffer::new(expected, buf.len()),
+          ));
+        }
+        self.rgba_u16 = Some(buf);
+        Ok(self)
+      }
+
+      /// Attaches a **`u16`** luma output buffer. Luma is derived from
+      /// expanded u8 RGB via `rgb_to_luma_u16_row` (zero-extended `u8`
+      /// result, range `[0, 255]`). No native luma precision exists for these
+      /// formats. Length in `u16` elements (`width x height`).
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+        self.set_luma_u16(buf)?;
+        Ok(self)
+      }
+
+      /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+        let expected = self.frame_pixels()?;
+        if buf.len() < expected {
+          return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+            InsufficientBuffer::new(expected, buf.len()),
+          ));
+        }
+        self.luma_u16 = Some(buf);
+        Ok(self)
+      }
+    }
+
+    // ---- Sink subtrait + PixelSink (R-generic; native-depth area resample) --
+    //
+    // R-generic (matching the 16-bit packed siblings): the sink subtrait and
+    // `PixelSink` hold for any resampler `R`, so a non-identity plan reaches
+    // the fused path below; with the default `NoopResampler` only the direct
+    // path runs.
+
+    impl<R> $sink_trait for MixedSinker<'_, $marker, R> {}
+
+    impl<R> PixelSink for MixedSinker<'_, $marker, R> {
+      type Input<'r> = $row_ty<'r>;
+      type Error = MixedSinkerError;
+
+      fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
+        check_dimensions_match(self.width, self.height, width, height)?;
+        if let Some(stream) = self.rgb_stream.as_mut() {
+          stream.reset();
+        }
+        self.resample_outputs = None;
+        Ok(())
+      }
+
+      fn process(&mut self, row: $row_ty<'_>) -> Result<(), Self::Error> {
+        let w = self.width;
+        let h = self.height;
+        let idx = row.row();
+        let use_simd = self.simd;
+
+        // 1 byte/pixel (`byte`) or `width.div_ceil(2)` bytes (`nibble`,
+        // two pixels per byte).
+        let expected = impl_legacy_rgb_packed_sinker!(@row_len $src_kind, w);
+        if row.$buf_field().len() != expected {
+          return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+            $row_slice,
+            idx,
+            expected,
+            row.$buf_field().len(),
+          )));
+        }
+        if idx >= self.height {
+          return Err(MixedSinkerError::RowIndexOutOfRange(
+            RowIndexOutOfRange::new(idx, self.height),
+          ));
+        }
+
+        // Non-identity plan: unpack the packed source row to its native R/G/B
+        // channels, bin those at native depth through the shared u8 area
+        // stream, then re-pack each binned pixel and run the exact direct
+        // `$to_*` kernels. Freeze the output set and sequence-check before
+        // staging so a no-output sink stays a no-op and an out-of-sequence row
+        // is rejected without the allocation.
+        if let Some(plan) = self.plan.as_ref() {
+          let Self {
+            rgb,
+            rgb_u16,
+            rgba,
+            rgba_u16,
+            luma,
+            luma_u16,
+            hsv,
+            rgb_scratch,
+            legacy_rgb_native_scratch,
+            legacy_rgb_packed_scratch,
+            rgb_stream,
+            resample_outputs,
+            ..
+          } = self;
+          if !packed_rgb_u16_resample_preflight(
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            rgb_u16,
+            rgba_u16,
+            luma_u16,
+            hsv,
+            rgb_stream.as_ref().map_or(0, |s| s.next_y()),
+            idx,
+          )? {
+            return Ok(());
+          }
+          let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+          let native = source_rgb_scratch(legacy_rgb_native_scratch, w, plan)?;
+          let src = row.$buf_field();
+          let unpack = $unpack;
+          for x in 0..w {
+            let px = impl_legacy_rgb_packed_sinker!(@read $src_kind, src, x);
+            let (r, g, b) = unpack(px);
+            native[x * 3] = r;
+            native[x * 3 + 1] = g;
+            native[x * 3 + 2] = b;
+          }
+          return legacy_rgb_packed_resample_emit(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            luma_u16,
+            hsv,
+            native,
+            rgb_scratch,
+            legacy_rgb_packed_scratch,
+            row.matrix(),
+            row.full_range(),
+            idx,
+            use_simd,
+            impl_legacy_rgb_packed_sinker!(@nibble $src_kind),
+            $repack,
+            $to_rgb,
+            $to_rgba,
+            $to_rgb_u16,
+            $to_rgba_u16,
+          );
+        }
+
+        let Self {
+          rgb,
+          rgb_u16,
+          rgba,
+          rgba_u16,
+          luma,
+          luma_u16,
+          hsv,
+          rgb_scratch,
+          ..
+        } = self;
+        let one_plane_start = idx * w;
+        let one_plane_end = one_plane_start + w;
+        let src = row.$buf_field();
+
+        // ---- native u16 RGB output ----------------------------------------
+        if let Some(buf) = rgb_u16.as_deref_mut() {
+          let rgb_u16_row = rgb_u16_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
+          $to_rgb_u16(src, rgb_u16_row, w, use_simd);
+        }
+
+        // ---- native u16 RGBA output (forces α=0xFFFF) ---------------------
+        if let Some(buf) = rgba_u16.as_deref_mut() {
+          let rgba_u16_row = rgba_u16_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
+          $to_rgba_u16(src, rgba_u16_row, w, use_simd);
+        }
+
+        let want_rgb = rgb.is_some();
+        let want_luma = luma.is_some();
+        let want_luma_u16 = luma_u16.is_some();
+        let want_hsv = hsv.is_some();
+        let need_u8_rgb = want_rgb || want_luma || want_luma_u16 || want_hsv;
+
+        if !need_u8_rgb {
+          // Standalone RGBA fast path — write directly; avoid scratch alloc.
+          if let Some(buf) = rgba.as_deref_mut() {
+            let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
+            $to_rgba(src, rgba_row, w, use_simd);
+          }
+          return Ok(());
+        }
+
+        // ---- u8 RGB staging (drives rgb / luma / luma_u16 / hsv) ----------
+        let rgb_row = rgb_row_buf_or_scratch(
+          rgb.as_deref_mut(),
+          rgb_scratch,
+          one_plane_start,
+          one_plane_end,
+          w,
+          h,
+        )?;
+        $to_rgb(src, rgb_row, w, use_simd);
+
+        if let Some(luma_buf) = luma.as_deref_mut() {
+          rgb_to_luma_row(
+            rgb_row,
+            &mut luma_buf[one_plane_start..one_plane_end],
+            w,
+            row.matrix(),
+            row.full_range(),
+            use_simd,
+          );
+        }
+
+        if let Some(luma_u16_buf) = luma_u16.as_deref_mut() {
+          rgb_to_luma_u16_row(
+            rgb_row,
+            &mut luma_u16_buf[one_plane_start..one_plane_end],
+            w,
+            row.matrix(),
+            row.full_range(),
+            use_simd,
+          );
+        }
+
+        if let Some(hsv_bufs) = hsv.as_mut() {
+          let (h, s, v) = hsv_bufs.hsv();
+          rgb_to_hsv_row(
+            rgb_row,
+            &mut h[one_plane_start..one_plane_end],
+            &mut s[one_plane_start..one_plane_end],
+            &mut v[one_plane_start..one_plane_end],
+            w,
+            use_simd,
+          );
+        }
+
+        // RGBA u8 fan-out via dedicated kernel — no shared RGB→RGBA expand.
+        if let Some(buf) = rgba.as_deref_mut() {
+          let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
+          $to_rgba(src, rgba_row, w, use_simd);
+        }
+
+        Ok(())
+      }
+    }
+  };
+  (@row_len byte, $w:expr) => {
+    $w
+  };
+  (@row_len nibble, $w:expr) => {
+    ($w).div_ceil(2)
+  };
+  // Read one packed pixel's byte (byte formats) or nibble (4-bpp formats).
+  (@read byte, $src:expr, $x:expr) => {
+    $src[$x]
+  };
+  (@read nibble, $src:expr, $x:expr) => {
+    if $x & 1 == 0 {
+      $src[$x >> 1] >> 4
+    } else {
+      $src[$x >> 1] & 0x0F
+    }
+  };
+  (@nibble byte) => {
+    false
+  };
+  (@nibble nibble) => {
+    true
+  };
+}
+
+// Six format instantiations.
+
+impl_legacy_rgb_packed_sinker! {
+  marker:      Rgb8,
+  sink_trait:  Rgb8Sink,
+  row_ty:      Rgb8Row,
+  buf_field:   rgb8,
+  row_slice:   RowSlice::Rgb8Packed,
+  src_kind:    byte,
+  to_rgb:      rgb8_to_rgb_row,
+  to_rgba:     rgb8_to_rgba_row,
+  to_rgb_u16:  rgb8_to_rgb_u16_row,
+  to_rgba_u16: rgb8_to_rgba_u16_row,
+  // R3 [7:5], G3 [4:2], B2 [1:0].
+  unpack: |px: u8| -> (u8, u8, u8) { ((px >> 5) & 0x07, (px >> 2) & 0x07, px & 0x03) },
+  repack: |r: u8, g: u8, b: u8| -> u8 { (r << 5) | (g << 2) | b },
+}
+
+impl_legacy_rgb_packed_sinker! {
+  marker:      Bgr8,
+  sink_trait:  Bgr8Sink,
+  row_ty:      Bgr8Row,
+  buf_field:   bgr8,
+  row_slice:   RowSlice::Bgr8Packed,
+  src_kind:    byte,
+  to_rgb:      bgr8_to_rgb_row,
+  to_rgba:     bgr8_to_rgba_row,
+  to_rgb_u16:  bgr8_to_rgb_u16_row,
+  to_rgba_u16: bgr8_to_rgba_u16_row,
+  // B2 [7:6], G3 [5:3], R3 [2:0] — output is canonical R, G, B.
+  unpack: |px: u8| -> (u8, u8, u8) { (px & 0x07, (px >> 3) & 0x07, (px >> 6) & 0x03) },
+  repack: |r: u8, g: u8, b: u8| -> u8 { (b << 6) | (g << 3) | r },
+}
+
+impl_legacy_rgb_packed_sinker! {
+  marker:      Rgb4Byte,
+  sink_trait:  Rgb4ByteSink,
+  row_ty:      Rgb4ByteRow,
+  buf_field:   rgb4_byte,
+  row_slice:   RowSlice::Rgb4BytePacked,
+  src_kind:    byte,
+  to_rgb:      rgb4_byte_to_rgb_row,
+  to_rgba:     rgb4_byte_to_rgba_row,
+  to_rgb_u16:  rgb4_byte_to_rgb_u16_row,
+  to_rgba_u16: rgb4_byte_to_rgba_u16_row,
+  // Low nibble: R1 [3], G2 [2:1], B1 [0] (high nibble unused).
+  unpack: |px: u8| -> (u8, u8, u8) { ((px >> 3) & 0x01, (px >> 1) & 0x03, px & 0x01) },
+  repack: |r: u8, g: u8, b: u8| -> u8 { (r << 3) | (g << 1) | b },
+}
+
+impl_legacy_rgb_packed_sinker! {
+  marker:      Bgr4Byte,
+  sink_trait:  Bgr4ByteSink,
+  row_ty:      Bgr4ByteRow,
+  buf_field:   bgr4_byte,
+  row_slice:   RowSlice::Bgr4BytePacked,
+  src_kind:    byte,
+  to_rgb:      bgr4_byte_to_rgb_row,
+  to_rgba:     bgr4_byte_to_rgba_row,
+  to_rgb_u16:  bgr4_byte_to_rgb_u16_row,
+  to_rgba_u16: bgr4_byte_to_rgba_u16_row,
+  // Low nibble: B1 [3], G2 [2:1], R1 [0] — output is canonical R, G, B.
+  unpack: |px: u8| -> (u8, u8, u8) { (px & 0x01, (px >> 1) & 0x03, (px >> 3) & 0x01) },
+  repack: |r: u8, g: u8, b: u8| -> u8 { (b << 3) | (g << 1) | r },
+}
+
+impl_legacy_rgb_packed_sinker! {
+  marker:      Rgb4,
+  sink_trait:  Rgb4Sink,
+  row_ty:      Rgb4Row,
+  buf_field:   rgb4,
+  row_slice:   RowSlice::Rgb4Packed,
+  src_kind:    nibble,
+  to_rgb:      rgb4_to_rgb_row,
+  to_rgba:     rgb4_to_rgba_row,
+  to_rgb_u16:  rgb4_to_rgb_u16_row,
+  to_rgba_u16: rgb4_to_rgba_u16_row,
+  // Per nibble: R1 [3], G2 [2:1], B1 [0].
+  unpack: |n: u8| -> (u8, u8, u8) { ((n >> 3) & 0x01, (n >> 1) & 0x03, n & 0x01) },
+  repack: |r: u8, g: u8, b: u8| -> u8 { (r << 3) | (g << 1) | b },
+}
+
+impl_legacy_rgb_packed_sinker! {
+  marker:      Bgr4,
+  sink_trait:  Bgr4Sink,
+  row_ty:      Bgr4Row,
+  buf_field:   bgr4,
+  row_slice:   RowSlice::Bgr4Packed,
+  src_kind:    nibble,
+  to_rgb:      bgr4_to_rgb_row,
+  to_rgba:     bgr4_to_rgba_row,
+  to_rgb_u16:  bgr4_to_rgb_u16_row,
+  to_rgba_u16: bgr4_to_rgba_u16_row,
+  // Per nibble: B1 [3], G2 [2:1], R1 [0] — output is canonical R, G, B.
+  unpack: |n: u8| -> (u8, u8, u8) { (n & 0x01, (n >> 1) & 0x03, (n >> 3) & 0x01) },
+  repack: |r: u8, g: u8, b: u8| -> u8 { (b << 3) | (g << 1) | r },
 }

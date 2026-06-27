@@ -1229,6 +1229,34 @@ pub enum RowSlice {
   /// Same shape as [`Rgb444Packed`](Self::Rgb444Packed) with R↔B swapped.
   #[display("BGR444 packed")]
   Bgr444Packed,
+  /// Packed **RGB8** row of an [`Rgb8`](crate::source::Rgb8) source.
+  /// `width` `u8` bytes — one 3:3:2 pixel per byte.
+  #[display("RGB8 packed")]
+  Rgb8Packed,
+  /// Packed **BGR8** row of a [`Bgr8`](crate::source::Bgr8) source.
+  /// Same `width` byte shape as [`Rgb8Packed`](Self::Rgb8Packed) with the
+  /// 3:3:2 channel positions in B, G, R order.
+  #[display("BGR8 packed")]
+  Bgr8Packed,
+  /// Packed **RGB4_BYTE** row of an [`Rgb4Byte`](crate::source::Rgb4Byte)
+  /// source. `width` `u8` bytes — one 1:2:1 pixel in each low nibble
+  /// (the high nibble is unused padding).
+  #[display("RGB4_BYTE packed")]
+  Rgb4BytePacked,
+  /// Packed **BGR4_BYTE** row of a [`Bgr4Byte`](crate::source::Bgr4Byte)
+  /// source. Same shape as [`Rgb4BytePacked`](Self::Rgb4BytePacked) with
+  /// R↔B swapped.
+  #[display("BGR4_BYTE packed")]
+  Bgr4BytePacked,
+  /// Packed **RGB4** row of an [`Rgb4`](crate::source::Rgb4) source.
+  /// `width.div_ceil(2)` `u8` bytes — two 1:2:1 pixels per byte (the even
+  /// pixel in the high nibble).
+  #[display("RGB4 packed")]
+  Rgb4Packed,
+  /// Packed **BGR4** row of a [`Bgr4`](crate::source::Bgr4) source.
+  /// Same shape as [`Rgb4Packed`](Self::Rgb4Packed) with R↔B swapped.
+  #[display("BGR4 packed")]
+  Bgr4Packed,
   /// Packed `R, G, B` row of an [`Rgb24`](crate::source::Rgb24) source.
   /// `3 * width` `u8` bytes.
   #[display("RGB packed")]

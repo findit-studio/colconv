@@ -1936,9 +1936,14 @@ mod x2_packed_rgb_parity {
 mod rgb_legacy_parity {
   use super::*;
   use crate::{
-    frame::Rgb565Frame,
+    frame::{
+      Bgr4ByteFrame, Bgr4Frame, Bgr8Frame, Rgb4ByteFrame, Rgb4Frame, Rgb8Frame, Rgb565Frame,
+    },
     sinker::MixedSinker,
-    source::{Rgb565, rgb565_to},
+    source::{
+      Bgr4, Bgr4Byte, Bgr8, Rgb4, Rgb4Byte, Rgb8, Rgb565, bgr4_byte_to, bgr4_to, bgr8_to,
+      rgb4_byte_to, rgb4_to, rgb8_to, rgb565_to,
+    },
   };
 
   const W: u32 = 8;
@@ -1982,6 +1987,56 @@ mod rgb_legacy_parity {
         );
       }
     }
+  }
+
+  /// Legacy bit-packed RGB/BGR (8bpp `Rgb8`/`Bgr8`/`Rgb4Byte`/`Bgr4Byte`,
+  /// 1 byte/pixel; 4bpp `Rgb4`/`Bgr4`, two pixels/byte): `Walker::walk` is
+  /// byte-identical to the direct free `{fmt}_to` call across
+  /// full/limited × Bt709/Bt601.
+  #[test]
+  fn walk_legacy_bit_packed_matches_direct() {
+    macro_rules! check {
+      ($Frame:ident, $Marker:ident, $free:path, $row_bytes:expr) => {{
+        let rb: usize = $row_bytes;
+        let buf: std::vec::Vec<u8> =
+          (0..rb * H as usize).map(|i| ((i * 19 + 7) % 251) as u8).collect();
+        for full_range in [false, true] {
+          for matrix in MATRICES {
+            let opts = YuvOptions::new()
+              .maybe_full_range(full_range)
+              .with_matrix(matrix);
+            let src = $Frame::try_new(&buf, W, H, rb as u32).unwrap();
+
+            let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+            let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+            let mut sw = MixedSinker::<$Marker>::new(W as usize, H as usize)
+              .with_rgb(&mut via_walker)
+              .unwrap();
+            <$Marker as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+            let mut sd = MixedSinker::<$Marker>::new(W as usize, H as usize)
+              .with_rgb(&mut via_direct)
+              .unwrap();
+            $free(&src, full_range, matrix, &mut sd).unwrap();
+
+            assert_eq!(
+              via_walker,
+              via_direct,
+              "{} parity (full_range={full_range}, matrix={matrix:?})",
+              stringify!($Marker)
+            );
+          }
+        }
+      }};
+    }
+
+    check!(Rgb8Frame, Rgb8, rgb8_to, W as usize);
+    check!(Bgr8Frame, Bgr8, bgr8_to, W as usize);
+    check!(Rgb4ByteFrame, Rgb4Byte, rgb4_byte_to, W as usize);
+    check!(Bgr4ByteFrame, Bgr4Byte, bgr4_byte_to, W as usize);
+    check!(Rgb4Frame, Rgb4, rgb4_to, (W as usize).div_ceil(2));
+    check!(Bgr4Frame, Bgr4, bgr4_to, (W as usize).div_ceil(2));
   }
 }
 

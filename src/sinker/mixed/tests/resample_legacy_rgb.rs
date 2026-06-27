@@ -686,3 +686,305 @@ fn counterexample_rgb444_r_low_bit_survives() {
   }
   assert_eq!(rgb_u16[0], 1, "native-depth 4-bit area mean must survive");
 }
+
+// =========================================================================
+// Legacy bit-packed (8bpp 3:3:2 + 1:2:1; 4bpp 1:2:1) fused-downscale coverage
+// (Rgb8 / Bgr8 / Rgb4Byte / Bgr4Byte — 1 byte/pixel;
+//  Rgb4 / Bgr4 — 4 bits/pixel, two pixels per byte).
+//
+// Same native-depth area-binning contract as the 16-bit family: each packed
+// pixel is unpacked to its native R/G/B channels, the 2x2 area mean is taken
+// over those native channels (round-half-up), and the binned channels are
+// re-packed into the source's byte/nibble layout — so `rgb_u16` is exactly
+// that native area mean and the rest are the direct kernels over the re-packed
+// binned frame.
+// =========================================================================
+
+#[derive(Clone, Copy)]
+struct LowbitLayout {
+  /// (shift, mask) for the R, G, B channels in the packed byte/nibble.
+  fields: [(u32, u8); 3],
+  /// 4-bpp two-pixels-per-byte (even pixel = high nibble) when set.
+  nibble: bool,
+}
+
+impl LowbitLayout {
+  const RGB8: LowbitLayout = LowbitLayout {
+    fields: [(5, 0x07), (2, 0x07), (0, 0x03)],
+    nibble: false,
+  };
+  const BGR8: LowbitLayout = LowbitLayout {
+    fields: [(0, 0x07), (3, 0x07), (6, 0x03)],
+    nibble: false,
+  };
+  const RGB4BYTE: LowbitLayout = LowbitLayout {
+    fields: [(3, 0x01), (1, 0x03), (0, 0x01)],
+    nibble: false,
+  };
+  const BGR4BYTE: LowbitLayout = LowbitLayout {
+    fields: [(0, 0x01), (1, 0x03), (3, 0x01)],
+    nibble: false,
+  };
+  const RGB4: LowbitLayout = LowbitLayout {
+    fields: [(3, 0x01), (1, 0x03), (0, 0x01)],
+    nibble: true,
+  };
+  const BGR4: LowbitLayout = LowbitLayout {
+    fields: [(0, 0x01), (1, 0x03), (3, 0x01)],
+    nibble: true,
+  };
+
+  fn unpack(&self, px: u8) -> [u8; 3] {
+    [
+      (px >> self.fields[0].0) & self.fields[0].1,
+      (px >> self.fields[1].0) & self.fields[1].1,
+      (px >> self.fields[2].0) & self.fields[2].1,
+    ]
+  }
+
+  fn pack(&self, ch: [u8; 3]) -> u8 {
+    ((ch[0] & self.fields[0].1) << self.fields[0].0)
+      | ((ch[1] & self.fields[1].1) << self.fields[1].0)
+      | ((ch[2] & self.fields[2].1) << self.fields[2].0)
+  }
+
+  /// Bytes per packed row of `width` pixels.
+  fn row_bytes(&self, width: usize) -> usize {
+    if self.nibble {
+      width.div_ceil(2)
+    } else {
+      width
+    }
+  }
+
+  /// Read the packed byte/nibble of pixel `(x, y)`.
+  fn read(&self, plane: &[u8], width: usize, x: usize, y: usize) -> u8 {
+    let stride = self.row_bytes(width);
+    if self.nibble {
+      let byte = plane[y * stride + (x >> 1)];
+      if x & 1 == 0 { byte >> 4 } else { byte & 0x0F }
+    } else {
+      plane[y * width + x]
+    }
+  }
+}
+
+/// Pseudo-random packed source plane (`row_bytes(width) * height` bytes).
+fn random_lowbit_plane(
+  layout: LowbitLayout,
+  width: usize,
+  height: usize,
+  seed: u32,
+) -> std::vec::Vec<u8> {
+  let n = layout.row_bytes(width) * height;
+  let mut state = seed;
+  (0..n)
+    .map(|_| {
+      state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+      (state >> 16) as u8
+    })
+    .collect()
+}
+
+/// Native-depth 2x2 area mean (round-half-up) re-packed into the source's
+/// byte/nibble layout — the binned source-format frame the direct path
+/// converts. Returns one packed value per output pixel.
+fn binned_lowbit_2x2(
+  layout: LowbitLayout,
+  src: &[u8],
+  src_w: usize,
+  out_w: usize,
+  out_h: usize,
+) -> std::vec::Vec<u8> {
+  let mut out = std::vec![0u8; out_w * out_h];
+  for oy in 0..out_h {
+    for ox in 0..out_w {
+      let mut acc = [0u32; 3];
+      for dy in 0..2 {
+        for dx in 0..2 {
+          let ch = layout.unpack(layout.read(src, src_w, ox * 2 + dx, oy * 2 + dy));
+          for c in 0..3 {
+            acc[c] += u32::from(ch[c]);
+          }
+        }
+      }
+      out[oy * out_w + ox] = layout.pack([
+        ((acc[0] + 2) / 4) as u8,
+        ((acc[1] + 2) / 4) as u8,
+        ((acc[2] + 2) / 4) as u8,
+      ]);
+    }
+  }
+  out
+}
+
+macro_rules! lowbit_resample_tests {
+  (
+    mod_name: $mod_name:ident,
+    marker:   $marker:ident,
+    frame:    $frame:ident,
+    walker:   $walker:ident,
+    layout:   $layout:expr,
+  ) => {
+    mod $mod_name {
+      use super::*;
+
+      const SRC: usize = 8;
+      const OUT: usize = 4;
+
+      /// `rgb_u16` is the exact native-depth 2x2 area mean of the source's
+      /// native channels (re-extracted from the re-packed binned frame).
+      #[test]
+      #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+      fn rgb_u16_is_native_area_mean() {
+        let layout = $layout;
+        let plane = random_lowbit_plane(layout, SRC, SRC, 0x1234_5678);
+        let stride = layout.row_bytes(SRC) as u32;
+        let src = $frame::try_new(&plane, SRC as u32, SRC as u32, stride).unwrap();
+
+        let mut rgb_u16 = std::vec![0u16; OUT * OUT * 3];
+        {
+          let mut sink =
+            MixedSinker::<$marker, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+              .unwrap()
+              .with_rgb_u16(&mut rgb_u16)
+              .unwrap();
+          $walker(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+        }
+
+        let binned = binned_lowbit_2x2(layout, &plane, SRC, OUT, OUT);
+        for oy in 0..OUT {
+          for ox in 0..OUT {
+            let want = layout.unpack(binned[oy * OUT + ox]);
+            for c in 0..3 {
+              assert_eq!(rgb_u16[(oy * OUT + ox) * 3 + c], u16::from(want[c]), "({ox},{oy}) c{c}");
+            }
+          }
+        }
+      }
+
+      /// Every attached output equals a direct (`new()`) conversion of the
+      /// independently-binned source-format frame.
+      #[test]
+      #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+      fn all_outputs_match_direct_of_binned_frame() {
+        let layout = $layout;
+        let plane = random_lowbit_plane(layout, SRC, SRC, 0x0BAD_F00D);
+        let stride = layout.row_bytes(SRC) as u32;
+        let src = $frame::try_new(&plane, SRC as u32, SRC as u32, stride).unwrap();
+
+        // Build the binned source-format frame as packed bytes/nibbles.
+        let binned = binned_lowbit_2x2(layout, &plane, SRC, OUT, OUT);
+        let out_stride = layout.row_bytes(OUT);
+        let mut binned_plane = std::vec![0u8; out_stride * OUT];
+        for oy in 0..OUT {
+          for ox in 0..OUT {
+            let v = binned[oy * OUT + ox];
+            if layout.nibble {
+              if ox & 1 == 0 {
+                binned_plane[oy * out_stride + (ox >> 1)] = v << 4;
+              } else {
+                binned_plane[oy * out_stride + (ox >> 1)] |= v;
+              }
+            } else {
+              binned_plane[oy * out_stride + ox] = v;
+            }
+          }
+        }
+        let binned_src = $frame::try_new(&binned_plane, OUT as u32, OUT as u32, out_stride as u32).unwrap();
+
+        // Reference: direct (non-resampled) conversion of the binned frame.
+        let (mut r_rgb, mut r_rgba) = (std::vec![0u8; OUT * OUT * 3], std::vec![0u8; OUT * OUT * 4]);
+        let (mut r_rgbu, mut r_rgbau) = (std::vec![0u16; OUT * OUT * 3], std::vec![0u16; OUT * OUT * 4]);
+        let (mut r_l, mut r_lu) = (std::vec![0u8; OUT * OUT], std::vec![0u16; OUT * OUT]);
+        let (mut r_h, mut r_s, mut r_v) = (std::vec![0u8; OUT * OUT], std::vec![0u8; OUT * OUT], std::vec![0u8; OUT * OUT]);
+        {
+          let mut sink = MixedSinker::<$marker>::new(OUT, OUT)
+            .with_rgb(&mut r_rgb).unwrap()
+            .with_rgba(&mut r_rgba).unwrap()
+            .with_rgb_u16(&mut r_rgbu).unwrap()
+            .with_rgba_u16(&mut r_rgbau).unwrap()
+            .with_luma(&mut r_l).unwrap()
+            .with_luma_u16(&mut r_lu).unwrap()
+            .with_hsv(&mut r_h, &mut r_s, &mut r_v).unwrap();
+          $walker(&binned_src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+        }
+
+        // Actual: fused area-resample of the full-res frame.
+        let (mut a_rgb, mut a_rgba) = (std::vec![0u8; OUT * OUT * 3], std::vec![0u8; OUT * OUT * 4]);
+        let (mut a_rgbu, mut a_rgbau) = (std::vec![0u16; OUT * OUT * 3], std::vec![0u16; OUT * OUT * 4]);
+        let (mut a_l, mut a_lu) = (std::vec![0u8; OUT * OUT], std::vec![0u16; OUT * OUT]);
+        let (mut a_h, mut a_s, mut a_v) = (std::vec![0u8; OUT * OUT], std::vec![0u8; OUT * OUT], std::vec![0u8; OUT * OUT]);
+        {
+          let mut sink =
+            MixedSinker::<$marker, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+              .unwrap()
+              .with_rgb(&mut a_rgb).unwrap()
+              .with_rgba(&mut a_rgba).unwrap()
+              .with_rgb_u16(&mut a_rgbu).unwrap()
+              .with_rgba_u16(&mut a_rgbau).unwrap()
+              .with_luma(&mut a_l).unwrap()
+              .with_luma_u16(&mut a_lu).unwrap()
+              .with_hsv(&mut a_h, &mut a_s, &mut a_v).unwrap();
+          $walker(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+        }
+
+        assert_eq!(a_rgb, r_rgb, "rgb");
+        assert_eq!(a_rgba, r_rgba, "rgba");
+        assert_eq!(a_rgbu, r_rgbu, "rgb_u16");
+        assert_eq!(a_rgbau, r_rgbau, "rgba_u16");
+        assert_eq!(a_l, r_l, "luma");
+        assert_eq!(a_lu, r_lu, "luma_u16");
+        assert_eq!(a_h, r_h, "hsv H");
+        assert_eq!(a_s, r_s, "hsv S");
+        assert_eq!(a_v, r_v, "hsv V");
+      }
+
+      /// An identity plan (`OUT == SRC`) reproduces the non-resampled path.
+      #[test]
+      #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+      fn identity_plan_matches_new() {
+        let layout = $layout;
+        let plane = random_lowbit_plane(layout, SRC, SRC, 0x5EED_1111);
+        let stride = layout.row_bytes(SRC) as u32;
+        let src = $frame::try_new(&plane, SRC as u32, SRC as u32, stride).unwrap();
+
+        let mut via_plan = std::vec![0u16; SRC * SRC * 3];
+        let mut via_new = std::vec![0u16; SRC * SRC * 3];
+        {
+          let mut sink =
+            MixedSinker::<$marker, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(SRC, SRC))
+              .unwrap()
+              .with_rgb_u16(&mut via_plan)
+              .unwrap();
+          $walker(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+        }
+        {
+          let mut sink = MixedSinker::<$marker>::new(SRC, SRC).with_rgb_u16(&mut via_new).unwrap();
+          $walker(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+        }
+        assert_eq!(via_plan, via_new, "identity plan diverges from new()");
+      }
+
+      /// A no-output sink with a plan is a clean no-op (no allocation, no error).
+      #[test]
+      #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+      fn no_output_is_noop() {
+        let layout = $layout;
+        let plane = random_lowbit_plane(layout, SRC, SRC, 0x9999);
+        let stride = layout.row_bytes(SRC) as u32;
+        let src = $frame::try_new(&plane, SRC as u32, SRC as u32, stride).unwrap();
+        let mut sink =
+          MixedSinker::<$marker, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT)).unwrap();
+        $walker(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+      }
+    }
+  };
+}
+
+lowbit_resample_tests! { mod_name: rgb8, marker: Rgb8, frame: Rgb8Frame, walker: rgb8_to, layout: LowbitLayout::RGB8, }
+lowbit_resample_tests! { mod_name: bgr8, marker: Bgr8, frame: Bgr8Frame, walker: bgr8_to, layout: LowbitLayout::BGR8, }
+lowbit_resample_tests! { mod_name: rgb4_byte, marker: Rgb4Byte, frame: Rgb4ByteFrame, walker: rgb4_byte_to, layout: LowbitLayout::RGB4BYTE, }
+lowbit_resample_tests! { mod_name: bgr4_byte, marker: Bgr4Byte, frame: Bgr4ByteFrame, walker: bgr4_byte_to, layout: LowbitLayout::BGR4BYTE, }
+lowbit_resample_tests! { mod_name: rgb4, marker: Rgb4, frame: Rgb4Frame, walker: rgb4_to, layout: LowbitLayout::RGB4, }
+lowbit_resample_tests! { mod_name: bgr4, marker: Bgr4, frame: Bgr4Frame, walker: bgr4_to, layout: LowbitLayout::BGR4, }

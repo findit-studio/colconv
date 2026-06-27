@@ -912,3 +912,307 @@ pub(crate) unsafe fn bgr444_to_rgba_u16_row(src: &[u8], rgba_u16_out: &mut [u16]
     }
   }
 }
+
+// =========================================================================
+// Legacy bit-packed RGB/BGR (8bpp 3:3:2 + 1:2:1; 4bpp 1:2:1 two-per-byte)
+// (Rgb8 / Bgr8 / Rgb4Byte / Bgr4Byte — 1 byte/pixel;
+//  Rgb4 / Bgr4 — 4 bits/pixel, two pixels per byte).
+//
+// Each iteration produces 8 pixels as a `v128` of native source bytes (byte
+// formats: widen 8 source bytes; nibble formats: de-interleave 4 source bytes
+// into 8 nibble lanes), then reuses the same shift+mask extraction,
+// bit-replication expansion, and `write_rgb_*` / `write_rgba_*` interleaved
+// stores as the 16-bit formats above. The `width % 8` remainder defers to
+// `scalar`.
+// =========================================================================
+
+/// Bit-replicate a v128 of 1-bit values (`0`/`1`) to 8-bit: `c * 0xFF`.
+#[inline(always)]
+unsafe fn expand1(c: v128) -> v128 {
+  u16x8_mul(c, u16x8_splat(0xFF))
+}
+
+/// Bit-replicate a v128 of 2-bit values (`0..=3`) to 8-bit: `c * 0x55`.
+#[inline(always)]
+unsafe fn expand2(c: v128) -> v128 {
+  u16x8_mul(c, u16x8_splat(0x55))
+}
+
+/// Bit-replicate a v128 of 3-bit values (`0..=7`) to 8-bit:
+/// `(c << 5) | (c << 2) | (c >> 1)`.
+#[inline(always)]
+unsafe fn expand3(c: v128) -> v128 {
+  v128_or(v128_or(u16x8_shl(c, 5), u16x8_shl(c, 2)), u16x8_shr(c, 1))
+}
+
+/// Load 8 packed 1-byte-per-pixel source bytes and widen to a `v128` of
+/// native pixel bytes (8 u16 lanes).
+///
+/// # Safety
+///
+/// `ptr` must be valid for an 8-byte read; simd128 enabled.
+#[inline(always)]
+unsafe fn load_byte_px8(ptr: *const u8) -> v128 {
+  unsafe { u16x8_extend_low_u8x16(v128_load64_zero(ptr.cast())) }
+}
+
+/// Load 4 packed 2-pixel-per-byte source bytes and de-interleave the nibbles
+/// into a `v128` of 8 native pixel nibbles (even pixel = high nibble `[7:4]`,
+/// odd pixel = low nibble `[3:0]`).
+///
+/// # Safety
+///
+/// `ptr` must be valid for a 4-byte read; simd128 enabled.
+#[inline(always)]
+unsafe fn load_nibble_px8(ptr: *const u8) -> v128 {
+  unsafe {
+    let raw = v128_load32_zero(ptr.cast());
+    // Duplicate each of the 4 low bytes: [b0, b0, b1, b1, b2, b2, b3, b3, …].
+    let dup = u8x16_shuffle::<0, 0, 1, 1, 2, 2, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0>(raw, raw);
+    let w = u16x8_extend_low_u8x16(dup);
+    let hi = u16x8_shr(w, 4);
+    let lo = v128_and(w, u16x8_splat(0x0F));
+    // u16 lanes [0xFFFF, 0, 0xFFFF, 0, …]: even lanes select the high nibble.
+    let even = u32x4_splat(0x0000_FFFF);
+    v128_bitselect(hi, lo, even)
+  }
+}
+
+/// Emits the four wasm-simd128 output kernels (rgb / rgba / rgb_u16 /
+/// rgba_u16) for one legacy bit-packed format. `$kind` is `byte` or `nibble`;
+/// each channel is `(right_shift, native_mask, expand_fn)`.
+macro_rules! wasm_lowbit_format {
+  (@load byte, $src:expr, $x:expr) => { load_byte_px8($src.as_ptr().add($x)) };
+  (@load nibble, $src:expr, $x:expr) => { load_nibble_px8($src.as_ptr().add($x / 2)) };
+  (@srcmin byte, $w:expr) => { $w };
+  (@srcmin nibble, $w:expr) => { $w.div_ceil(2) };
+  (@tail byte, $src:expr, $x:expr) => { &$src[$x..] };
+  (@tail nibble, $src:expr, $x:expr) => { &$src[$x / 2..] };
+  (
+    kind: $kind:tt,
+    rgb: $to_rgb:ident, rgba: $to_rgba:ident,
+    rgb_u16: $to_rgb_u16:ident, rgba_u16: $to_rgba_u16:ident,
+    s_rgb: $s_rgb:path, s_rgba: $s_rgba:path,
+    s_rgb_u16: $s_rgb_u16:path, s_rgba_u16: $s_rgba_u16:path,
+    r: ($rsh:literal, $rmask:expr, $rexp:ident),
+    g: ($gsh:literal, $gmask:expr, $gexp:ident),
+    b: ($bsh:literal, $bmask:expr, $bexp:ident),
+  ) => {
+    /// wasm-simd128: packed legacy RGB/BGR → `R, G, B` bytes (8 px/iter).
+    ///
+    /// # Safety
+    ///
+    /// simd128 enabled; `src` and `rgb_out` long enough for `width`.
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    pub(crate) unsafe fn $to_rgb(src: &[u8], rgb_out: &mut [u8], width: usize) {
+      debug_assert!(src.len() >= wasm_lowbit_format!(@srcmin $kind, width), "src too short");
+      debug_assert!(rgb_out.len() >= width * 3, "rgb_out too short");
+      unsafe {
+        let rmask = u16x8_splat($rmask);
+        let gmask = u16x8_splat($gmask);
+        let bmask = u16x8_splat($bmask);
+        let zero = i16x8_splat(0);
+        let mut x = 0usize;
+        while x + 8 <= width {
+          let px = wasm_lowbit_format!(@load $kind, src, x);
+          let r = v128_and(u16x8_shr(px, $rsh), rmask);
+          let g = v128_and(u16x8_shr(px, $gsh), gmask);
+          let b = v128_and(u16x8_shr(px, $bsh), bmask);
+          let r_u8 = u8x16_narrow_i16x8($rexp(r), zero);
+          let g_u8 = u8x16_narrow_i16x8($gexp(g), zero);
+          let b_u8 = u8x16_narrow_i16x8($bexp(b), zero);
+          let mut tmp = [0u8; 48];
+          write_rgb_16(r_u8, g_u8, b_u8, tmp.as_mut_ptr());
+          core::ptr::copy_nonoverlapping(tmp.as_ptr(), rgb_out.as_mut_ptr().add(x * 3), 24);
+          x += 8;
+        }
+        if x < width {
+          $s_rgb(wasm_lowbit_format!(@tail $kind, src, x), &mut rgb_out[x * 3..], width - x);
+        }
+      }
+    }
+
+    /// wasm-simd128: packed legacy RGB/BGR → `R, G, B, A` bytes (α = `0xFF`).
+    ///
+    /// # Safety
+    ///
+    /// simd128 enabled; `src` and `rgba_out` long enough for `width`.
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    pub(crate) unsafe fn $to_rgba(src: &[u8], rgba_out: &mut [u8], width: usize) {
+      debug_assert!(src.len() >= wasm_lowbit_format!(@srcmin $kind, width), "src too short");
+      debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
+      unsafe {
+        let rmask = u16x8_splat($rmask);
+        let gmask = u16x8_splat($gmask);
+        let bmask = u16x8_splat($bmask);
+        let zero = i16x8_splat(0);
+        let alpha = u8x16_splat(0xFF);
+        let mut x = 0usize;
+        while x + 8 <= width {
+          let px = wasm_lowbit_format!(@load $kind, src, x);
+          let r = v128_and(u16x8_shr(px, $rsh), rmask);
+          let g = v128_and(u16x8_shr(px, $gsh), gmask);
+          let b = v128_and(u16x8_shr(px, $bsh), bmask);
+          let r_u8 = u8x16_narrow_i16x8($rexp(r), zero);
+          let g_u8 = u8x16_narrow_i16x8($gexp(g), zero);
+          let b_u8 = u8x16_narrow_i16x8($bexp(b), zero);
+          let mut tmp = [0u8; 64];
+          write_rgba_16(r_u8, g_u8, b_u8, alpha, tmp.as_mut_ptr());
+          core::ptr::copy_nonoverlapping(tmp.as_ptr(), rgba_out.as_mut_ptr().add(x * 4), 32);
+          x += 8;
+        }
+        if x < width {
+          $s_rgba(wasm_lowbit_format!(@tail $kind, src, x), &mut rgba_out[x * 4..], width - x);
+        }
+      }
+    }
+
+    /// wasm-simd128: packed legacy RGB/BGR → native `R, G, B` u16 (8 px/iter).
+    ///
+    /// # Safety
+    ///
+    /// simd128 enabled; `src` and `rgb_u16_out` long enough for `width`.
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    pub(crate) unsafe fn $to_rgb_u16(src: &[u8], rgb_u16_out: &mut [u16], width: usize) {
+      debug_assert!(src.len() >= wasm_lowbit_format!(@srcmin $kind, width), "src too short");
+      debug_assert!(rgb_u16_out.len() >= width * 3, "rgb_u16_out too short");
+      unsafe {
+        let rmask = u16x8_splat($rmask);
+        let gmask = u16x8_splat($gmask);
+        let bmask = u16x8_splat($bmask);
+        let mut x = 0usize;
+        while x + 8 <= width {
+          let px = wasm_lowbit_format!(@load $kind, src, x);
+          let r = v128_and(u16x8_shr(px, $rsh), rmask);
+          let g = v128_and(u16x8_shr(px, $gsh), gmask);
+          let b = v128_and(u16x8_shr(px, $bsh), bmask);
+          write_rgb_u16_8(r, g, b, rgb_u16_out.as_mut_ptr().add(x * 3));
+          x += 8;
+        }
+        if x < width {
+          $s_rgb_u16(
+            wasm_lowbit_format!(@tail $kind, src, x),
+            &mut rgb_u16_out[x * 3..],
+            width - x,
+          );
+        }
+      }
+    }
+
+    /// wasm-simd128: packed legacy RGB/BGR → native `R, G, B, A` u16
+    /// (α = `0xFFFF`, 8 px/iter).
+    ///
+    /// # Safety
+    ///
+    /// simd128 enabled; `src` and `rgba_u16_out` long enough for `width`.
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    pub(crate) unsafe fn $to_rgba_u16(src: &[u8], rgba_u16_out: &mut [u16], width: usize) {
+      debug_assert!(src.len() >= wasm_lowbit_format!(@srcmin $kind, width), "src too short");
+      debug_assert!(rgba_u16_out.len() >= width * 4, "rgba_u16_out too short");
+      unsafe {
+        let rmask = u16x8_splat($rmask);
+        let gmask = u16x8_splat($gmask);
+        let bmask = u16x8_splat($bmask);
+        let alpha = u16x8_splat(0xFFFF);
+        let mut x = 0usize;
+        while x + 8 <= width {
+          let px = wasm_lowbit_format!(@load $kind, src, x);
+          let r = v128_and(u16x8_shr(px, $rsh), rmask);
+          let g = v128_and(u16x8_shr(px, $gsh), gmask);
+          let b = v128_and(u16x8_shr(px, $bsh), bmask);
+          write_rgba_u16_8(r, g, b, alpha, rgba_u16_out.as_mut_ptr().add(x * 4));
+          x += 8;
+        }
+        if x < width {
+          $s_rgba_u16(
+            wasm_lowbit_format!(@tail $kind, src, x),
+            &mut rgba_u16_out[x * 4..],
+            width - x,
+          );
+        }
+      }
+    }
+  };
+}
+
+wasm_lowbit_format! {
+  kind: byte,
+  rgb: rgb8_to_rgb_row, rgba: rgb8_to_rgba_row,
+  rgb_u16: rgb8_to_rgb_u16_row, rgba_u16: rgb8_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::rgb8_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::rgb8_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::rgb8_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::rgb8_to_rgba_u16_row,
+  r: (5, 0x07, expand3),
+  g: (2, 0x07, expand3),
+  b: (0, 0x03, expand2),
+}
+
+wasm_lowbit_format! {
+  kind: byte,
+  rgb: bgr8_to_rgb_row, rgba: bgr8_to_rgba_row,
+  rgb_u16: bgr8_to_rgb_u16_row, rgba_u16: bgr8_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::bgr8_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::bgr8_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::bgr8_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::bgr8_to_rgba_u16_row,
+  r: (0, 0x07, expand3),
+  g: (3, 0x07, expand3),
+  b: (6, 0x03, expand2),
+}
+
+wasm_lowbit_format! {
+  kind: byte,
+  rgb: rgb4_byte_to_rgb_row, rgba: rgb4_byte_to_rgba_row,
+  rgb_u16: rgb4_byte_to_rgb_u16_row, rgba_u16: rgb4_byte_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::rgb4_byte_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::rgb4_byte_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::rgb4_byte_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::rgb4_byte_to_rgba_u16_row,
+  r: (3, 0x01, expand1),
+  g: (1, 0x03, expand2),
+  b: (0, 0x01, expand1),
+}
+
+wasm_lowbit_format! {
+  kind: byte,
+  rgb: bgr4_byte_to_rgb_row, rgba: bgr4_byte_to_rgba_row,
+  rgb_u16: bgr4_byte_to_rgb_u16_row, rgba_u16: bgr4_byte_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::bgr4_byte_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::bgr4_byte_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::bgr4_byte_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::bgr4_byte_to_rgba_u16_row,
+  r: (0, 0x01, expand1),
+  g: (1, 0x03, expand2),
+  b: (3, 0x01, expand1),
+}
+
+wasm_lowbit_format! {
+  kind: nibble,
+  rgb: rgb4_to_rgb_row, rgba: rgb4_to_rgba_row,
+  rgb_u16: rgb4_to_rgb_u16_row, rgba_u16: rgb4_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::rgb4_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::rgb4_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::rgb4_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::rgb4_to_rgba_u16_row,
+  r: (3, 0x01, expand1),
+  g: (1, 0x03, expand2),
+  b: (0, 0x01, expand1),
+}
+
+wasm_lowbit_format! {
+  kind: nibble,
+  rgb: bgr4_to_rgb_row, rgba: bgr4_to_rgba_row,
+  rgb_u16: bgr4_to_rgb_u16_row, rgba_u16: bgr4_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::bgr4_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::bgr4_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::bgr4_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::bgr4_to_rgba_u16_row,
+  r: (0, 0x01, expand1),
+  g: (1, 0x03, expand2),
+  b: (3, 0x01, expand1),
+}

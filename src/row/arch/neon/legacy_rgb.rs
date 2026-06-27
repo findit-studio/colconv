@@ -960,3 +960,342 @@ pub(crate) unsafe fn bgr444_to_rgba_u16_row(src: &[u8], rgba_u16_out: &mut [u16]
     }
   }
 }
+
+// =========================================================================
+// Legacy bit-packed RGB/BGR (8bpp 3:3:2 + 1:2:1; 4bpp 1:2:1 two-per-byte)
+// (Rgb8 / Bgr8 / Rgb4Byte / Bgr4Byte — 1 byte/pixel;
+//  Rgb4 / Bgr4 — 4 bits/pixel, two pixels per byte).
+//
+// Each iteration produces 8 pixels as a `uint16x8_t` of native source bytes
+// (byte formats: widen 8 source bytes; nibble formats: de-interleave 4 source
+// bytes into 8 nibble lanes), then reuses the same shift+mask extraction,
+// bit-replication expansion, and `vst3`/`vst4` interleaved stores as the
+// 16-bit formats above. The `width % 8` remainder defers to `scalar`.
+// =========================================================================
+
+/// Bit-replicate a vector of 1-bit values (`0`/`1`) to 8-bit: `c * 0xFF`.
+#[inline(always)]
+unsafe fn expand1(c: uint16x8_t) -> uint16x8_t {
+  unsafe { vmulq_u16(c, vdupq_n_u16(0xFF)) }
+}
+
+/// Bit-replicate a vector of 2-bit values (`0..=3`) to 8-bit: `c * 0x55`.
+#[inline(always)]
+unsafe fn expand2(c: uint16x8_t) -> uint16x8_t {
+  unsafe { vmulq_u16(c, vdupq_n_u16(0x55)) }
+}
+
+/// Bit-replicate a vector of 3-bit values (`0..=7`) to 8-bit:
+/// `(c << 5) | (c << 2) | (c >> 1)`.
+#[inline(always)]
+unsafe fn expand3(c: uint16x8_t) -> uint16x8_t {
+  unsafe {
+    vorrq_u16(
+      vorrq_u16(vshlq_n_u16::<5>(c), vshlq_n_u16::<2>(c)),
+      vshrq_n_u16::<1>(c),
+    )
+  }
+}
+
+/// Load 8 packed 1-byte-per-pixel source bytes and widen to a `uint16x8_t`
+/// of native pixel bytes.
+///
+/// # Safety
+///
+/// `ptr` must be valid for an 8-byte read; NEON must be available.
+#[inline(always)]
+unsafe fn load_byte_px8(ptr: *const u8) -> uint16x8_t {
+  unsafe { vmovl_u8(vld1_u8(ptr)) }
+}
+
+/// Load 4 packed 2-pixel-per-byte source bytes and de-interleave the nibbles
+/// into a `uint16x8_t` of 8 native pixel nibbles (`[hi0, lo0, hi1, lo1, …]` —
+/// the even pixel is the high nibble `[7:4]`, the odd pixel the low nibble).
+///
+/// # Safety
+///
+/// `ptr` must be valid for a 4-byte read; NEON must be available.
+#[inline(always)]
+unsafe fn load_nibble_px8(ptr: *const u8) -> uint16x8_t {
+  unsafe {
+    // Assemble the 4 source bytes byte-order-explicitly so lane 0 is `b0` on
+    // both endians (`vcreate_u8` fills lanes from the value's least-significant
+    // byte up). A host-endian `read_unaligned::<u32>` would reverse the bytes
+    // on big-endian AArch64, mirroring the `load_u16x8_le` normalization above.
+    let bytes: [u8; 4] = core::ptr::read_unaligned(ptr.cast::<[u8; 4]>());
+    let raw = u32::from_le_bytes(bytes);
+    let v4 = vcreate_u8(u64::from(raw));
+    // Duplicate each of the 4 low bytes: [b0, b0, b1, b1, b2, b2, b3, b3].
+    let dup = vzip1_u8(v4, v4);
+    let hi = vshr_n_u8::<4>(dup);
+    let lo = vand_u8(dup, vdup_n_u8(0x0F));
+    // Even lanes take the high nibble, odd lanes the low nibble.
+    let even = vcreate_u8(0x00FF_00FF_00FF_00FF);
+    vmovl_u8(vbsl_u8(even, hi, lo))
+  }
+}
+
+/// Emits the four NEON output kernels (rgb / rgba / rgb_u16 / rgba_u16) for
+/// one legacy bit-packed format. `$kind` is `byte` or `nibble`; each channel
+/// is `(right_shift, native_mask, expand_fn)`.
+macro_rules! neon_lowbit_format {
+  (@rs 0, $v:expr) => { $v };
+  (@rs $s:literal, $v:expr) => { vshrq_n_u16::<$s>($v) };
+  (@load byte, $src:expr, $x:expr) => { load_byte_px8($src.as_ptr().add($x)) };
+  (@load nibble, $src:expr, $x:expr) => { load_nibble_px8($src.as_ptr().add($x / 2)) };
+  (@srcmin byte, $w:expr) => { $w };
+  (@srcmin nibble, $w:expr) => { $w.div_ceil(2) };
+  (@tail byte, $src:expr, $x:expr) => { &$src[$x..] };
+  (@tail nibble, $src:expr, $x:expr) => { &$src[$x / 2..] };
+  (
+    kind: $kind:tt,
+    rgb: $to_rgb:ident, rgba: $to_rgba:ident,
+    rgb_u16: $to_rgb_u16:ident, rgba_u16: $to_rgba_u16:ident,
+    s_rgb: $s_rgb:path, s_rgba: $s_rgba:path,
+    s_rgb_u16: $s_rgb_u16:path, s_rgba_u16: $s_rgba_u16:path,
+    r: ($rsh:tt, $rmask:expr, $rexp:ident),
+    g: ($gsh:tt, $gmask:expr, $gexp:ident),
+    b: ($bsh:tt, $bmask:expr, $bexp:ident),
+  ) => {
+    /// NEON: packed legacy RGB/BGR → `R, G, B` bytes (8 px/iter).
+    ///
+    /// # Safety
+    ///
+    /// NEON available; `src` and `rgb_out` long enough for `width`.
+    #[inline]
+    #[target_feature(enable = "neon")]
+    pub(crate) unsafe fn $to_rgb(src: &[u8], rgb_out: &mut [u8], width: usize) {
+      debug_assert!(src.len() >= neon_lowbit_format!(@srcmin $kind, width), "src too short");
+      debug_assert!(rgb_out.len() >= width * 3, "rgb_out too short");
+      unsafe {
+        let rmask = vdupq_n_u16($rmask);
+        let gmask = vdupq_n_u16($gmask);
+        let bmask = vdupq_n_u16($bmask);
+        let mut x = 0usize;
+        while x + 8 <= width {
+          let px = neon_lowbit_format!(@load $kind, src, x);
+          let r = vandq_u16(neon_lowbit_format!(@rs $rsh, px), rmask);
+          let g = vandq_u16(neon_lowbit_format!(@rs $gsh, px), gmask);
+          let b = vandq_u16(neon_lowbit_format!(@rs $bsh, px), bmask);
+          let r_u8 = vqmovn_u16_compat($rexp(r));
+          let g_u8 = vqmovn_u16_compat($gexp(g));
+          let b_u8 = vqmovn_u16_compat($bexp(b));
+          vst3_u8(rgb_out.as_mut_ptr().add(x * 3), uint8x8x3_t(r_u8, g_u8, b_u8));
+          x += 8;
+        }
+        if x < width {
+          $s_rgb(neon_lowbit_format!(@tail $kind, src, x), &mut rgb_out[x * 3..], width - x);
+        }
+      }
+    }
+
+    /// NEON: packed legacy RGB/BGR → `R, G, B, A` bytes (α = `0xFF`, 8 px/iter).
+    ///
+    /// # Safety
+    ///
+    /// NEON available; `src` and `rgba_out` long enough for `width`.
+    #[inline]
+    #[target_feature(enable = "neon")]
+    pub(crate) unsafe fn $to_rgba(src: &[u8], rgba_out: &mut [u8], width: usize) {
+      debug_assert!(src.len() >= neon_lowbit_format!(@srcmin $kind, width), "src too short");
+      debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
+      unsafe {
+        let rmask = vdupq_n_u16($rmask);
+        let gmask = vdupq_n_u16($gmask);
+        let bmask = vdupq_n_u16($bmask);
+        let alpha = vdup_n_u8(0xFF);
+        let mut x = 0usize;
+        while x + 8 <= width {
+          let px = neon_lowbit_format!(@load $kind, src, x);
+          let r = vandq_u16(neon_lowbit_format!(@rs $rsh, px), rmask);
+          let g = vandq_u16(neon_lowbit_format!(@rs $gsh, px), gmask);
+          let b = vandq_u16(neon_lowbit_format!(@rs $bsh, px), bmask);
+          let r_u8 = vqmovn_u16_compat($rexp(r));
+          let g_u8 = vqmovn_u16_compat($gexp(g));
+          let b_u8 = vqmovn_u16_compat($bexp(b));
+          vst4_u8(
+            rgba_out.as_mut_ptr().add(x * 4),
+            uint8x8x4_t(r_u8, g_u8, b_u8, alpha),
+          );
+          x += 8;
+        }
+        if x < width {
+          $s_rgba(neon_lowbit_format!(@tail $kind, src, x), &mut rgba_out[x * 4..], width - x);
+        }
+      }
+    }
+
+    /// NEON: packed legacy RGB/BGR → native `R, G, B` u16 (8 px/iter).
+    ///
+    /// # Safety
+    ///
+    /// NEON available; `src` and `rgb_u16_out` long enough for `width`.
+    #[inline]
+    #[target_feature(enable = "neon")]
+    pub(crate) unsafe fn $to_rgb_u16(src: &[u8], rgb_u16_out: &mut [u16], width: usize) {
+      debug_assert!(src.len() >= neon_lowbit_format!(@srcmin $kind, width), "src too short");
+      debug_assert!(rgb_u16_out.len() >= width * 3, "rgb_u16_out too short");
+      unsafe {
+        let rmask = vdupq_n_u16($rmask);
+        let gmask = vdupq_n_u16($gmask);
+        let bmask = vdupq_n_u16($bmask);
+        let mut x = 0usize;
+        while x + 8 <= width {
+          let px = neon_lowbit_format!(@load $kind, src, x);
+          let r = vandq_u16(neon_lowbit_format!(@rs $rsh, px), rmask);
+          let g = vandq_u16(neon_lowbit_format!(@rs $gsh, px), gmask);
+          let b = vandq_u16(neon_lowbit_format!(@rs $bsh, px), bmask);
+          vst3q_u16(rgb_u16_out.as_mut_ptr().add(x * 3), uint16x8x3_t(r, g, b));
+          x += 8;
+        }
+        if x < width {
+          $s_rgb_u16(
+            neon_lowbit_format!(@tail $kind, src, x),
+            &mut rgb_u16_out[x * 3..],
+            width - x,
+          );
+        }
+      }
+    }
+
+    /// NEON: packed legacy RGB/BGR → native `R, G, B, A` u16 (α = `0xFFFF`).
+    ///
+    /// # Safety
+    ///
+    /// NEON available; `src` and `rgba_u16_out` long enough for `width`.
+    #[inline]
+    #[target_feature(enable = "neon")]
+    pub(crate) unsafe fn $to_rgba_u16(src: &[u8], rgba_u16_out: &mut [u16], width: usize) {
+      debug_assert!(src.len() >= neon_lowbit_format!(@srcmin $kind, width), "src too short");
+      debug_assert!(rgba_u16_out.len() >= width * 4, "rgba_u16_out too short");
+      unsafe {
+        let rmask = vdupq_n_u16($rmask);
+        let gmask = vdupq_n_u16($gmask);
+        let bmask = vdupq_n_u16($bmask);
+        let alpha = vdupq_n_u16(0xFFFF);
+        let mut x = 0usize;
+        while x + 8 <= width {
+          let px = neon_lowbit_format!(@load $kind, src, x);
+          let r = vandq_u16(neon_lowbit_format!(@rs $rsh, px), rmask);
+          let g = vandq_u16(neon_lowbit_format!(@rs $gsh, px), gmask);
+          let b = vandq_u16(neon_lowbit_format!(@rs $bsh, px), bmask);
+          vst4q_u16(
+            rgba_u16_out.as_mut_ptr().add(x * 4),
+            uint16x8x4_t(r, g, b, alpha),
+          );
+          x += 8;
+        }
+        if x < width {
+          $s_rgba_u16(
+            neon_lowbit_format!(@tail $kind, src, x),
+            &mut rgba_u16_out[x * 4..],
+            width - x,
+          );
+        }
+      }
+    }
+  };
+}
+
+neon_lowbit_format! {
+  kind: byte,
+  rgb: rgb8_to_rgb_row, rgba: rgb8_to_rgba_row,
+  rgb_u16: rgb8_to_rgb_u16_row, rgba_u16: rgb8_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::rgb8_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::rgb8_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::rgb8_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::rgb8_to_rgba_u16_row,
+  r: (5, 0x07, expand3),
+  g: (2, 0x07, expand3),
+  b: (0, 0x03, expand2),
+}
+
+neon_lowbit_format! {
+  kind: byte,
+  rgb: bgr8_to_rgb_row, rgba: bgr8_to_rgba_row,
+  rgb_u16: bgr8_to_rgb_u16_row, rgba_u16: bgr8_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::bgr8_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::bgr8_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::bgr8_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::bgr8_to_rgba_u16_row,
+  r: (0, 0x07, expand3),
+  g: (3, 0x07, expand3),
+  b: (6, 0x03, expand2),
+}
+
+neon_lowbit_format! {
+  kind: byte,
+  rgb: rgb4_byte_to_rgb_row, rgba: rgb4_byte_to_rgba_row,
+  rgb_u16: rgb4_byte_to_rgb_u16_row, rgba_u16: rgb4_byte_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::rgb4_byte_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::rgb4_byte_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::rgb4_byte_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::rgb4_byte_to_rgba_u16_row,
+  r: (3, 0x01, expand1),
+  g: (1, 0x03, expand2),
+  b: (0, 0x01, expand1),
+}
+
+neon_lowbit_format! {
+  kind: byte,
+  rgb: bgr4_byte_to_rgb_row, rgba: bgr4_byte_to_rgba_row,
+  rgb_u16: bgr4_byte_to_rgb_u16_row, rgba_u16: bgr4_byte_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::bgr4_byte_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::bgr4_byte_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::bgr4_byte_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::bgr4_byte_to_rgba_u16_row,
+  r: (0, 0x01, expand1),
+  g: (1, 0x03, expand2),
+  b: (3, 0x01, expand1),
+}
+
+neon_lowbit_format! {
+  kind: nibble,
+  rgb: rgb4_to_rgb_row, rgba: rgb4_to_rgba_row,
+  rgb_u16: rgb4_to_rgb_u16_row, rgba_u16: rgb4_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::rgb4_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::rgb4_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::rgb4_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::rgb4_to_rgba_u16_row,
+  r: (3, 0x01, expand1),
+  g: (1, 0x03, expand2),
+  b: (0, 0x01, expand1),
+}
+
+neon_lowbit_format! {
+  kind: nibble,
+  rgb: bgr4_to_rgb_row, rgba: bgr4_to_rgba_row,
+  rgb_u16: bgr4_to_rgb_u16_row, rgba_u16: bgr4_to_rgba_u16_row,
+  s_rgb: scalar::legacy_rgb::bgr4_to_rgb_row,
+  s_rgba: scalar::legacy_rgb::bgr4_to_rgba_row,
+  s_rgb_u16: scalar::legacy_rgb::bgr4_to_rgb_u16_row,
+  s_rgba_u16: scalar::legacy_rgb::bgr4_to_rgba_u16_row,
+  r: (0, 0x01, expand1),
+  g: (1, 0x03, expand2),
+  b: (3, 0x01, expand1),
+}
+
+#[cfg(all(test, feature = "std"))]
+mod endian_safety_tests {
+  use super::*;
+
+  /// The 4-bpp nibble loader must de-interleave in **source byte order**
+  /// `[b0, b1, b2, b3]` regardless of host endianness, yielding lanes
+  /// `[hi0, lo0, hi1, lo1, …]`. A host-endian `read_unaligned::<u32>` would
+  /// reverse the bytes on big-endian AArch64; the `from_le_bytes` normalization
+  /// keeps the order stable. This passes on the little-endian host and would
+  /// fail on a big-endian build under the pre-fix host-endian read.
+  #[test]
+  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+  fn load_nibble_px8_follows_source_byte_order() {
+    let bytes = [0x12u8, 0x34, 0x56, 0x78];
+    let mut lanes = [0u16; 8];
+    // SAFETY: NEON is baseline on aarch64; `bytes` is 4 readable bytes.
+    unsafe {
+      let v = load_nibble_px8(bytes.as_ptr());
+      vst1q_u16(lanes.as_mut_ptr(), v);
+    }
+    // hi/lo nibbles of b0=0x12, b1=0x34, b2=0x56, b3=0x78 in byte order.
+    assert_eq!(lanes, [1, 2, 3, 4, 5, 6, 7, 8]);
+  }
+}
