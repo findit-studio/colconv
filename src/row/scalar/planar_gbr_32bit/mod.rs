@@ -142,6 +142,60 @@ pub(crate) fn gbra32_to_rgba_u16_row<const BE: bool>(
   }
 }
 
+/// G/B/R/A planar `u32` → packed host-native `u32` `R, G, B` (drop alpha, NO
+/// narrow): reorder to R, G, B and swap each surviving channel to host order.
+/// The source-width staging row fed to the native-`u32` packed-RGB resample
+/// tier so binning runs at full `u32` precision (0-ULP, issue #289).
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn gbr32_to_rgb_u32_row<const BE: bool>(
+  g: &[u32],
+  b: &[u32],
+  r: &[u32],
+  rgb_u32_out: &mut [u32],
+  width: usize,
+) {
+  debug_assert!(g.len() >= width, "g row too short");
+  debug_assert!(b.len() >= width, "b row too short");
+  debug_assert!(r.len() >= width, "r row too short");
+  debug_assert!(rgb_u32_out.len() >= width * 3, "rgb_u32_out row too short");
+  for x in 0..width {
+    let dst = x * 3;
+    rgb_u32_out[dst] = load_u32::<BE>(r[x]);
+    rgb_u32_out[dst + 1] = load_u32::<BE>(g[x]);
+    rgb_u32_out[dst + 2] = load_u32::<BE>(b[x]);
+  }
+}
+
+/// G/B/R/A planar `u32` → packed host-native `u32` `R, G, B, A` (real α, NO
+/// narrow): reorder color to R, G, B and swap every channel to host order. The
+/// canonical host-native RGBA staging row fed to the native-`u32` alpha-aware
+/// packed-RGBA resample tier (0-ULP, issue #289).
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn gbra32_to_rgba_u32_row<const BE: bool>(
+  g: &[u32],
+  b: &[u32],
+  r: &[u32],
+  a: &[u32],
+  rgba_u32_out: &mut [u32],
+  width: usize,
+) {
+  debug_assert!(g.len() >= width, "g row too short");
+  debug_assert!(b.len() >= width, "b row too short");
+  debug_assert!(r.len() >= width, "r row too short");
+  debug_assert!(a.len() >= width, "a row too short");
+  debug_assert!(
+    rgba_u32_out.len() >= width * 4,
+    "rgba_u32_out row too short"
+  );
+  for x in 0..width {
+    let dst = x * 4;
+    rgba_u32_out[dst] = load_u32::<BE>(r[x]);
+    rgba_u32_out[dst + 1] = load_u32::<BE>(g[x]);
+    rgba_u32_out[dst + 2] = load_u32::<BE>(b[x]);
+    rgba_u32_out[dst + 3] = load_u32::<BE>(a[x]);
+  }
+}
+
 /// Derives luma (Y') from three planar G/B/R `u32` rows at native u16
 /// precision: each channel is narrowed `>> 16` to u16, then combined via Q15
 /// coefficients with i64 intermediates. This is the `Gbrap16`

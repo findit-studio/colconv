@@ -1,14 +1,15 @@
-//! Fused-downscale coverage for the 32-bit packed RGB family (`Rgb96`): the
-//! wire u32 row converts to source-width host u16 RGB (the `>> 16` narrow),
-//! binning runs at native 16-bit depth, the native-depth `rgb_u16` /
-//! `rgba_u16` outputs are exact area means of the narrowed source, and the
-//! u8 / `luma_u16` outputs derive from a single further `>> 8` narrow — the
-//! same source-of-truth ordering the direct path uses (net `>> 24` for u8).
+//! Fused-downscale coverage for the 32-bit packed RGB family (`Rgb96` /
+//! `Rgba128`): the wire u32 row converts to a source-width host **`u32`** RGB(A)
+//! row (the `BE` swap only — NO narrow), binning runs at full `u32` precision,
+//! and every output narrows only after the bin — so `rgb_u16` / `rgba_u16` are
+//! the exact `u32`-domain area / filter result narrowed `>> 16`, and the
+//! u8 / `luma_u16` outputs a single further `>> 8` (net `>> 24` for u8). Binning
+//! at `u32` and narrowing only after is **0-ULP** for both ranges (issue #289).
 
 use crate::{
   ColorMatrix,
-  resample::AreaResampler,
-  sinker::MixedSinker,
+  resample::{AreaResampler, FilteredResampler, Resampler, Triangle},
+  sinker::{AlphaMode, MixedSinker, MixedSinkerError},
   source::{Rgb48, Rgb96, Rgba128, rgb48_to, rgb96_to, rgba128_to},
 };
 use mediaframe::frame::{Rgb48Frame, Rgb96Frame, Rgba128Frame};
@@ -32,8 +33,92 @@ fn as_le_u16(host: &[u16]) -> Vec<u16> {
     .collect()
 }
 
-/// Per-channel full-range u32 ramps; the low 16 bits vary too so the `>> 16`
-/// staging is genuinely lossy (matching the format contract).
+/// Exact `u32`-domain `2x2` block mean (round-half-up over `u128`) of channel
+/// `c`, narrowed `>> 16` only AFTER binning — the 0-ULP oracle the area output
+/// must equal. `channels` is 3 (RGB) or 4 (RGBA).
+fn area_u32_narrowed(
+  staged: &[u32],
+  ox: usize,
+  oy: usize,
+  c: usize,
+  src_w: usize,
+  channels: usize,
+) -> u16 {
+  let mut acc = 0u64;
+  for dy in 0..2 {
+    for dx in 0..2 {
+      acc += staged[((oy * 2 + dy) * src_w + ox * 2 + dx) * channels + c] as u64;
+    }
+  }
+  (((acc + 2) / 4) >> 16) as u16
+}
+
+/// INDEPENDENT separable-`f64` filter oracle — does NOT call the production
+/// `FilterStream<u32>`. It reads only the plan's `FilterAxis` windows
+/// (`span(j)` → `(start, coeffs)`) and reimplements the engine's exact two-pass
+/// execution from scratch, so it can disprove a bug in the `u32` coefficient
+/// **selection** (full-precision vs q8), intermediate rounding, final
+/// clamp/narrow, or pass order:
+///
+/// - **H-pass** (per source row, per output col, per channel): `acc = Σ_k
+///   f64(coeff_h[k]) · src[start_h+k]` in `f64`, then the intermediate is
+///   `floor(acc + 0.5)` — round-half-up, **no clamp** (the `u32` `I`-mode rule).
+/// - **V-pass** (per output row): `acc = Σ_k f64(coeff_v[k]) · h_inter[start_v+k]`,
+///   then `floor(acc + 0.5).clamp(0, u32::MAX)`.
+/// - **narrow**: `>> 16`.
+///
+/// The H-then-V order, the `f64::from(f32) · (u32 as f64)` widening, and the
+/// `floor(x + 0.5)` rounding match the engine's scalar `u32` path bit-for-bit
+/// (the `u32` tier is scalar-only, so there is no SIMD divergence), giving
+/// 0-ULP while staying independent of the resampler under test.
+fn separable_triangle_u32_narrowed(
+  staged: &[u32],
+  channels: usize,
+  sw: usize,
+  sh: usize,
+  ow: usize,
+  oh: usize,
+) -> Vec<u16> {
+  let plan = FilteredResampler::new(ow, oh, Triangle)
+    .plan(sw, sh)
+    .expect("valid filter plan")
+    .expect("non-identity");
+  let fh = plan.filter_h().expect("h windows");
+  let fv = plan.filter_v().expect("v windows");
+  // H-pass → quantized (round-half-up, NO clamp) f64 intermediate, sh × ow.
+  let mut h_inter = vec![0.0f64; sh * ow * channels];
+  for sy in 0..sh {
+    for ox in 0..ow {
+      let (start, coeffs) = fh.span(ox);
+      for ch in 0..channels {
+        let mut acc = 0.0f64;
+        for (k, &w) in coeffs.iter().enumerate() {
+          acc += f64::from(w) * staged[(sy * sw + start + k) * channels + ch] as f64;
+        }
+        h_inter[(sy * ow + ox) * channels + ch] = (acc + 0.5).floor();
+      }
+    }
+  }
+  // V-pass → round-half-up + clamp to u32, then narrow >> 16.
+  let mut out = vec![0u16; oh * ow * channels];
+  for oy in 0..oh {
+    let (start, coeffs) = fv.span(oy);
+    for ox in 0..ow {
+      for ch in 0..channels {
+        let mut acc = 0.0f64;
+        for (k, &w) in coeffs.iter().enumerate() {
+          acc += f64::from(w) * h_inter[((start + k) * ow + ox) * channels + ch];
+        }
+        let v = (acc + 0.5).floor().clamp(0.0, u32::MAX as f64) as u32;
+        out[(oy * ow + ox) * channels + ch] = (v >> 16) as u16;
+      }
+    }
+  }
+  out
+}
+
+/// Per-channel full-range u32 ramps; the low 16 bits vary too so binning at
+/// `u32` differs from the `>> 16` narrow-first mean (the 0-ULP fix is visible).
 fn packed_frame_u32() -> Vec<u32> {
   let mut buf = vec![0u32; SRC * SRC * 3];
   for (i, px) in buf.chunks_exact_mut(3).enumerate() {
@@ -44,26 +129,9 @@ fn packed_frame_u32() -> Vec<u32> {
   buf
 }
 
-/// The host-native u16 RGB the sinker stages: each u32 narrowed `>> 16`.
-fn staged_u16(host: &[u32]) -> Vec<u16> {
-  host.iter().map(|&v| (v >> 16) as u16).collect()
-}
-
-/// Exact 2x2 block mean with round-half-up over the staged u16 values.
-fn expected_block_mean_u16(staged: &[u16], ox: usize, oy: usize, c: usize) -> u16 {
-  let mut acc = 0u64;
-  for dy in 0..2 {
-    for dx in 0..2 {
-      acc += staged[((oy * 2 + dy) * SRC + ox * 2 + dx) * 3 + c] as u64;
-    }
-  }
-  ((acc + 2) / 4) as u16
-}
-
 #[test]
-fn rgb96_downscale_rgb_u16_is_exact_area_mean() {
+fn rgb96_downscale_rgb_u16_is_exact_u32_area_mean() {
   let host = packed_frame_u32();
-  let staged = staged_u16(&host);
   let wire = as_le_u32(&host);
   let src = Rgb96Frame::new(&wire, SRC as u32, SRC as u32, (SRC * 3) as u32);
 
@@ -81,8 +149,8 @@ fn rgb96_downscale_rgb_u16_is_exact_area_mean() {
       for c in 0..3 {
         assert_eq!(
           rgb_u16[(oy * OUT + ox) * 3 + c],
-          expected_block_mean_u16(&staged, ox, oy, c),
-          "({ox},{oy}) c{c}"
+          area_u32_narrowed(&host, ox, oy, c, SRC, 3),
+          "({ox},{oy}) c{c} — exact u32 mean narrowed >> 16"
         );
       }
     }
@@ -93,8 +161,9 @@ fn rgb96_downscale_rgb_u16_is_exact_area_mean() {
 fn rgb96_derived_outputs_come_from_binned_rgb() {
   // Every attached output — native-depth u16 and narrowed u8 — must equal what
   // a direct full-res Rgb48 sink produces over the (exact) binned u16 RGB: once
-  // staged to u16, Rgb96 shares the identical binning + derivation engine, so
-  // the binned u16 is the single source of truth for the narrowed outputs.
+  // the binned `u32` is narrowed `>> 16` to u16, Rgb96 shares the identical
+  // derivation engine, so the binned u16 is the single source of truth for the
+  // narrowed outputs.
   let host = packed_frame_u32();
   let wire = as_le_u32(&host);
   let src = Rgb96Frame::new(&wire, SRC as u32, SRC as u32, (SRC * 3) as u32);
@@ -205,26 +274,9 @@ fn packed_rgba_frame_u32() -> Vec<u32> {
   buf
 }
 
-/// The host-native u16 RGBA the sinker stages: each u32 narrowed `>> 16`.
-fn staged_rgba_u16(host: &[u32]) -> Vec<u16> {
-  host.iter().map(|&v| (v >> 16) as u16).collect()
-}
-
-/// Exact 2x2 block mean over the staged u16 RGBA (4 channels per pixel).
-fn expected_block_mean_rgba_u16(staged: &[u16], ox: usize, oy: usize, c: usize) -> u16 {
-  let mut acc = 0u64;
-  for dy in 0..2 {
-    for dx in 0..2 {
-      acc += staged[((oy * 2 + dy) * SRC + ox * 2 + dx) * 4 + c] as u64;
-    }
-  }
-  ((acc + 2) / 4) as u16
-}
-
 #[test]
-fn rgba128_downscale_rgba_u16_is_exact_area_mean_incl_alpha() {
+fn rgba128_downscale_rgba_u16_is_exact_u32_area_mean_incl_alpha() {
   let host = packed_rgba_frame_u32();
-  let staged = staged_rgba_u16(&host);
   let src = Rgba128Frame::new(&host, SRC as u32, SRC as u32, (SRC * 4) as u32);
 
   let mut rgba_u16 = vec![0u16; OUT * OUT * 4];
@@ -241,8 +293,8 @@ fn rgba128_downscale_rgba_u16_is_exact_area_mean_incl_alpha() {
       for c in 0..4 {
         assert_eq!(
           rgba_u16[(oy * OUT + ox) * 4 + c],
-          expected_block_mean_rgba_u16(&staged, ox, oy, c),
-          "({ox},{oy}) c{c} (alpha is c3)"
+          area_u32_narrowed(&host, ox, oy, c, SRC, 4),
+          "({ox},{oy}) c{c} (alpha is c3) — exact u32 mean narrowed >> 16"
         );
       }
     }
@@ -273,14 +325,15 @@ fn rgba128_identity_plan_matches_new_sink() {
   assert_eq!(direct, via_area);
 }
 
-// ---- full_range = false resample behavior pins (issue #289) -----------------
-// These PIN the current narrow-first (u32 `>> 16` before binning) resample
-// output — within 1 LSB of an exact u32-domain mean, NOT parity vs a direct
-// u32-domain oracle. A single host-native fixture is re-encoded LE / BE so both
-// endian arms decode the same logical values and must produce the identical
-// pinned output (area: mean-of-narrowed; filter: a captured golden).
+// ---- 0-ULP parity-vs-u32-domain resample pins (issue #289, closed) ----------
+// Binning at native `u32` and narrowing `>> 16` only AFTER the bin is 0-ULP for
+// BOTH ranges (`rgb_u16` / `rgba_u16` are pure colour — range-independent — so a
+// single oracle serves FR true and false). A single host-native fixture is
+// re-encoded LE / BE so both endian arms decode the same logical values and
+// must produce the identical 0-ULP output (area: exact u32 mean narrowed;
+// filter: an INDEPENDENT separable-f64 Triangle oracle narrowed — see
+// `separable_triangle_u32_narrowed`).
 
-use crate::resample::{FilteredResampler, Triangle};
 use mediaframe::frame::{Rgb96BeFrame, Rgba128BeFrame};
 
 const FRP: usize = 4; // source side
@@ -293,7 +346,7 @@ fn as_be_u32(host: &[u32]) -> Vec<u32> {
     .collect()
 }
 
-/// Nonzero low-16-bit u32 RGB ramp so the `>> 16` staging narrow is lossy.
+/// Nonzero low-16-bit u32 RGB ramp so the post-bin `>> 16` narrow is lossy.
 fn frp_rgb96() -> Vec<u32> {
   (0..FRP * FRP * 3)
     .map(|i| (i as u32).wrapping_mul(0x0123_4567).wrapping_add(0xABCD))
@@ -306,25 +359,14 @@ fn frp_rgba128() -> Vec<u32> {
     .collect()
 }
 
-fn frp_block_mean(staged: &[u16], ox: usize, oy: usize, c: usize, ch: usize) -> u16 {
-  let mut acc = 0u64;
-  for dy in 0..2 {
-    for dx in 0..2 {
-      acc += staged[((oy * 2 + dy) * FRP + ox * 2 + dx) * ch + c] as u64;
-    }
-  }
-  ((acc + 2) / 4) as u16
-}
-
 #[test]
-fn rgb96_fr_false_area_rgb_u16_pins_mean_of_narrowed() {
+fn rgb96_fr_false_area_rgb_u16_is_u32_domain_mean() {
   let intended = frp_rgb96();
-  let staged: Vec<u16> = intended.iter().map(|&v| (v >> 16) as u16).collect();
   let mut expected = vec![0u16; FRO * FRO * 3];
   for oy in 0..FRO {
     for ox in 0..FRO {
       for c in 0..3 {
-        expected[(oy * FRO + ox) * 3 + c] = frp_block_mean(&staged, ox, oy, c, 3);
+        expected[(oy * FRO + ox) * 3 + c] = area_u32_narrowed(&intended, ox, oy, c, FRP, 3);
       }
     }
   }
@@ -355,19 +397,18 @@ fn rgb96_fr_false_area_rgb_u16_pins_mean_of_narrowed() {
     .unwrap();
     crate::source::rgb96_to_endian::<_, true>(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
   }
-  assert_eq!(out_le, expected, "Rgb96 FR=false area rgb_u16 LE");
-  assert_eq!(out_be, expected, "Rgb96 FR=false area rgb_u16 BE");
+  assert_eq!(out_le, expected, "Rgb96 FR=false area rgb_u16 LE (0-ULP)");
+  assert_eq!(out_be, expected, "Rgb96 FR=false area rgb_u16 BE (0-ULP)");
 }
 
 #[test]
-fn rgba128_fr_false_area_rgba_u16_pins_mean_of_narrowed() {
+fn rgba128_fr_false_area_rgba_u16_is_u32_domain_mean() {
   let intended = frp_rgba128();
-  let staged: Vec<u16> = intended.iter().map(|&v| (v >> 16) as u16).collect();
   let mut expected = vec![0u16; FRO * FRO * 4];
   for oy in 0..FRO {
     for ox in 0..FRO {
       for c in 0..4 {
-        expected[(oy * FRO + ox) * 4 + c] = frp_block_mean(&staged, ox, oy, c, 4);
+        expected[(oy * FRO + ox) * 4 + c] = area_u32_narrowed(&intended, ox, oy, c, FRP, 4);
       }
     }
   }
@@ -397,87 +438,572 @@ fn rgba128_fr_false_area_rgba_u16_pins_mean_of_narrowed() {
     crate::source::rgba128_to_endian::<_, true>(&src, false, ColorMatrix::Bt709, &mut sink)
       .unwrap();
   }
-  assert_eq!(out_le, expected, "Rgba128 FR=false area rgba_u16 LE");
-  assert_eq!(out_be, expected, "Rgba128 FR=false area rgba_u16 BE");
+  assert_eq!(
+    out_le, expected,
+    "Rgba128 FR=false area rgba_u16 LE (0-ULP)"
+  );
+  assert_eq!(
+    out_be, expected,
+    "Rgba128 FR=false area rgba_u16 BE (0-ULP)"
+  );
 }
 
 #[test]
-fn rgb96_fr_false_filter_rgb_u16_pins_current_output() {
-  // Golden captured from the current narrow-first Triangle filter — pins the
-  // ≤1-LSB behavior, not a u32-domain oracle (issue #289).
-  let golden: [u16; FRO * FRO * 3] = [
-    3121, 3412, 3703, 4494, 4785, 5077, 8613, 8905, 9196, 9987, 10278, 10569,
-  ];
+fn rgb96_fr_false_filter_all_outputs_is_u32_domain() {
   let intended = frp_rgb96();
-  let le = as_le_u32(&intended);
-  let mut out_le = vec![0u16; FRO * FRO * 3];
-  {
-    let src = Rgb96Frame::new(&le, FRP as u32, FRP as u32, (FRP * 3) as u32);
-    let mut sink = MixedSinker::<Rgb96, FilteredResampler<Triangle>>::with_resampler(
-      FRP,
-      FRP,
-      FilteredResampler::new(FRO, FRO, Triangle),
-    )
-    .unwrap()
-    .with_rgb_u16(&mut out_le)
-    .unwrap();
-    rgb96_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+  // Independent oracle for the binned RGB; narrowed derives from a direct Rgb48.
+  let oracle_rgb = separable_triangle_u32_narrowed(&intended, 3, FRP, FRP, FRO, FRO);
+  let (ref_rgb, ref_luma, ref_lu16, ref_h, ref_s, ref_v) =
+    rgb48_derive_ref(&oracle_rgb, FRO, false);
+
+  for be in [false, true] {
+    let mut rgb_u16 = vec![0u16; FRO * FRO * 3];
+    let mut rgb = vec![0u8; FRO * FRO * 3];
+    let mut luma = vec![0u8; FRO * FRO];
+    let mut luma_u16 = vec![0u16; FRO * FRO];
+    let mut h = vec![0u8; FRO * FRO];
+    let mut s_ = vec![0u8; FRO * FRO];
+    let mut v_ = vec![0u8; FRO * FRO];
+    if be {
+      let wire = as_be_u32(&intended);
+      let src = Rgb96BeFrame::new(&wire, FRP as u32, FRP as u32, (FRP * 3) as u32);
+      let mut sink = MixedSinker::<Rgb96<true>, FilteredResampler<Triangle>>::with_resampler(
+        FRP,
+        FRP,
+        FilteredResampler::new(FRO, FRO, Triangle),
+      )
+      .unwrap()
+      .with_rgb_u16(&mut rgb_u16)
+      .unwrap()
+      .with_rgb(&mut rgb)
+      .unwrap()
+      .with_luma(&mut luma)
+      .unwrap()
+      .with_luma_u16(&mut luma_u16)
+      .unwrap()
+      .with_hsv(&mut h, &mut s_, &mut v_)
+      .unwrap();
+      crate::source::rgb96_to_endian::<_, true>(&src, false, ColorMatrix::Bt709, &mut sink)
+        .unwrap();
+    } else {
+      let wire = as_le_u32(&intended);
+      let src = Rgb96Frame::new(&wire, FRP as u32, FRP as u32, (FRP * 3) as u32);
+      let mut sink = MixedSinker::<Rgb96, FilteredResampler<Triangle>>::with_resampler(
+        FRP,
+        FRP,
+        FilteredResampler::new(FRO, FRO, Triangle),
+      )
+      .unwrap()
+      .with_rgb_u16(&mut rgb_u16)
+      .unwrap()
+      .with_rgb(&mut rgb)
+      .unwrap()
+      .with_luma(&mut luma)
+      .unwrap()
+      .with_luma_u16(&mut luma_u16)
+      .unwrap()
+      .with_hsv(&mut h, &mut s_, &mut v_)
+      .unwrap();
+      rgb96_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+    }
+    let tag = if be { "BE" } else { "LE" };
+    assert_eq!(rgb_u16, oracle_rgb, "Rgb96 filter rgb_u16 {tag} (0-ULP)");
+    assert_eq!(rgb, ref_rgb, "Rgb96 filter rgb {tag}");
+    assert_eq!(luma, ref_luma, "Rgb96 filter luma {tag}");
+    assert_eq!(luma_u16, ref_lu16, "Rgb96 filter luma_u16 {tag}");
+    assert_eq!(h, ref_h, "Rgb96 filter hsv-h {tag}");
+    assert_eq!(s_, ref_s, "Rgb96 filter hsv-s {tag}");
+    assert_eq!(v_, ref_v, "Rgb96 filter hsv-v {tag}");
   }
-  let be = as_be_u32(&intended);
-  let mut out_be = vec![0u16; FRO * FRO * 3];
-  {
-    let src = Rgb96BeFrame::new(&be, FRP as u32, FRP as u32, (FRP * 3) as u32);
-    let mut sink = MixedSinker::<Rgb96<true>, FilteredResampler<Triangle>>::with_resampler(
-      FRP,
-      FRP,
-      FilteredResampler::new(FRO, FRO, Triangle),
-    )
-    .unwrap()
-    .with_rgb_u16(&mut out_be)
-    .unwrap();
-    crate::source::rgb96_to_endian::<_, true>(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
-  }
-  assert_eq!(out_le, golden, "Rgb96 FR=false filter rgb_u16 LE");
-  assert_eq!(out_be, golden, "Rgb96 FR=false filter rgb_u16 BE");
 }
 
 #[test]
-fn rgba128_fr_false_filter_rgba_u16_pins_current_output() {
-  // Golden captured from the current narrow-first Triangle filter (issue #289).
-  let golden: [u16; FRO * FRO * 4] = [
-    4161, 4453, 4744, 5035, 5992, 6284, 6575, 6866, 11484, 11776, 12067, 12358, 13315, 13607,
-    13898, 14189,
-  ];
+fn rgba128_fr_false_filter_straight_4ch_all_outputs() {
+  // Straight-4ch filter route (rgba attached): independent oracle for the binned
+  // RGBA; EVERY output (rgb, rgba, rgb_u16, rgba_u16, luma, luma_u16, hsv).
   let intended = frp_rgba128();
-  let le = as_le_u32(&intended);
-  let mut out_le = vec![0u16; FRO * FRO * 4];
-  {
-    let src = Rgba128Frame::new(&le, FRP as u32, FRP as u32, (FRP * 4) as u32);
-    let mut sink = MixedSinker::<Rgba128, FilteredResampler<Triangle>>::with_resampler(
-      FRP,
-      FRP,
-      FilteredResampler::new(FRO, FRO, Triangle),
-    )
-    .unwrap()
-    .with_rgba_u16(&mut out_le)
-    .unwrap();
-    rgba128_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
-  }
-  let be = as_be_u32(&intended);
-  let mut out_be = vec![0u16; FRO * FRO * 4];
-  {
-    let src = Rgba128BeFrame::new(&be, FRP as u32, FRP as u32, (FRP * 4) as u32);
-    let mut sink = MixedSinker::<Rgba128<true>, FilteredResampler<Triangle>>::with_resampler(
-      FRP,
-      FRP,
-      FilteredResampler::new(FRO, FRO, Triangle),
-    )
-    .unwrap()
-    .with_rgba_u16(&mut out_be)
-    .unwrap();
-    crate::source::rgba128_to_endian::<_, true>(&src, false, ColorMatrix::Bt709, &mut sink)
+  let oracle_rgba = separable_triangle_u32_narrowed(&intended, 4, FRP, FRP, FRO, FRO);
+  let oracle_rgb = drop_alpha_u16(&oracle_rgba);
+  let oracle_rgba_u8 = narrow_u16(&oracle_rgba);
+  let (ref_rgb, ref_luma, ref_lu16, ref_h, ref_s, ref_v) =
+    rgb48_derive_ref(&oracle_rgb, FRO, false);
+
+  for be in [false, true] {
+    let mut rgb = vec![0u8; FRO * FRO * 3];
+    let mut rgba = vec![0u8; FRO * FRO * 4];
+    let mut rgb_u16 = vec![0u16; FRO * FRO * 3];
+    let mut rgba_u16 = vec![0u16; FRO * FRO * 4];
+    let mut luma = vec![0u8; FRO * FRO];
+    let mut luma_u16 = vec![0u16; FRO * FRO];
+    let mut h = vec![0u8; FRO * FRO];
+    let mut s_ = vec![0u8; FRO * FRO];
+    let mut v_ = vec![0u8; FRO * FRO];
+    if be {
+      let wire = as_be_u32(&intended);
+      let src = Rgba128BeFrame::new(&wire, FRP as u32, FRP as u32, (FRP * 4) as u32);
+      let mut sink = MixedSinker::<Rgba128<true>, FilteredResampler<Triangle>>::with_resampler(
+        FRP,
+        FRP,
+        FilteredResampler::new(FRO, FRO, Triangle),
+      )
+      .unwrap()
+      .with_rgb(&mut rgb)
+      .unwrap()
+      .with_rgba(&mut rgba)
+      .unwrap()
+      .with_rgb_u16(&mut rgb_u16)
+      .unwrap()
+      .with_rgba_u16(&mut rgba_u16)
+      .unwrap()
+      .with_luma(&mut luma)
+      .unwrap()
+      .with_luma_u16(&mut luma_u16)
+      .unwrap()
+      .with_hsv(&mut h, &mut s_, &mut v_)
       .unwrap();
+      crate::source::rgba128_to_endian::<_, true>(&src, false, ColorMatrix::Bt709, &mut sink)
+        .unwrap();
+    } else {
+      let wire = as_le_u32(&intended);
+      let src = Rgba128Frame::new(&wire, FRP as u32, FRP as u32, (FRP * 4) as u32);
+      let mut sink = MixedSinker::<Rgba128, FilteredResampler<Triangle>>::with_resampler(
+        FRP,
+        FRP,
+        FilteredResampler::new(FRO, FRO, Triangle),
+      )
+      .unwrap()
+      .with_rgb(&mut rgb)
+      .unwrap()
+      .with_rgba(&mut rgba)
+      .unwrap()
+      .with_rgb_u16(&mut rgb_u16)
+      .unwrap()
+      .with_rgba_u16(&mut rgba_u16)
+      .unwrap()
+      .with_luma(&mut luma)
+      .unwrap()
+      .with_luma_u16(&mut luma_u16)
+      .unwrap()
+      .with_hsv(&mut h, &mut s_, &mut v_)
+      .unwrap();
+      rgba128_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+    }
+    let tag = if be { "BE" } else { "LE" };
+    assert_eq!(
+      rgba_u16, oracle_rgba,
+      "Rgba128 4ch filter rgba_u16 {tag} (0-ULP)"
+    );
+    assert_eq!(rgb_u16, oracle_rgb, "Rgba128 4ch filter rgb_u16 {tag}");
+    assert_eq!(rgba, oracle_rgba_u8, "Rgba128 4ch filter rgba (u8) {tag}");
+    assert_eq!(rgb, ref_rgb, "Rgba128 4ch filter rgb (u8) {tag}");
+    assert_eq!(luma, ref_luma, "Rgba128 4ch filter luma {tag}");
+    assert_eq!(luma_u16, ref_lu16, "Rgba128 4ch filter luma_u16 {tag}");
+    assert_eq!(h, ref_h, "Rgba128 4ch filter hsv-h {tag}");
+    assert_eq!(s_, ref_s, "Rgba128 4ch filter hsv-s {tag}");
+    assert_eq!(v_, ref_v, "Rgba128 4ch filter hsv-v {tag}");
   }
-  assert_eq!(out_le, golden, "Rgba128 FR=false filter rgba_u16 LE");
-  assert_eq!(out_be, golden, "Rgba128 FR=false filter rgba_u16 BE");
+}
+
+// ---- Premultiplied-alpha area resample (0-ULP, u64-intermediate) -------------
+// Under `AlphaMode::Premultiplied` the engine premultiplies the source at `u32`
+// (`round(c·α / u32::MAX)`, `u64` intermediates), area-bins at `u32`, then
+// un-premultiplies the binned row (`round(pm·MAX / α)`, 0 when binned α = 0)
+// before the `>> 16` narrow + derive. The flipped #289 pins exercise the
+// STRAIGHT paths only; this oracle independently reproduces that exact `u64`
+// premult / unpremult chain and asserts equality (0-ULP), covering varying
+// alpha, the alpha = 0 transparent edge, and LE + BE.
+
+const PMAX: u64 = u32::MAX as u64;
+
+/// Premultiplied-area `u32` oracle for the canonical `R, G, B, A` `u32` source
+/// `src` (`src_w x src_w`): premultiply each pixel at `u32`, area-bin each 2x2
+/// block (round-half-up over `u128`), zero-α-safe un-premultiply, then narrow
+/// `>> 16` — the exact `u64`-intermediate chain the engine runs. Returns the
+/// `out_w x out_w` straight `R, G, B, A` `u16`.
+fn premult_area_rgba_u16(src: &[u32], src_w: usize, out_w: usize) -> Vec<u16> {
+  let n = src_w * src_w;
+  let mut pm = vec![0u64; n * 4];
+  for i in 0..n {
+    let a = src[i * 4 + 3] as u64;
+    for c in 0..3 {
+      pm[i * 4 + c] = (src[i * 4 + c] as u64 * a + PMAX / 2) / PMAX;
+    }
+    pm[i * 4 + 3] = a;
+  }
+  let mut out = vec![0u16; out_w * out_w * 4];
+  for oy in 0..out_w {
+    for ox in 0..out_w {
+      let mut binned = [0u64; 4];
+      for (c, b) in binned.iter_mut().enumerate() {
+        let mut acc = 0u64;
+        for dy in 0..2 {
+          for dx in 0..2 {
+            acc += pm[((oy * 2 + dy) * src_w + ox * 2 + dx) * 4 + c];
+          }
+        }
+        *b = (acc + 2) / 4;
+      }
+      let a = binned[3];
+      for c in 0..3 {
+        // The exact `checked_div` expression the engine's un-premultiply uses
+        // (`None` ⇔ α == 0 ⇒ a transparent binned pixel exposes no colour).
+        let straight = (binned[c] * PMAX + a / 2)
+          .checked_div(a)
+          .map_or(0, |q| q.min(PMAX));
+        out[(oy * out_w + ox) * 4 + c] = (straight >> 16) as u16;
+      }
+      out[(oy * out_w + ox) * 4 + 3] = (a >> 16) as u16;
+    }
+  }
+  out
+}
+
+/// Drop alpha from a packed `R, G, B, A` `u16` row to `R, G, B`.
+fn drop_alpha_u16(rgba: &[u16]) -> Vec<u16> {
+  rgba
+    .chunks_exact(4)
+    .flat_map(|px| [px[0], px[1], px[2]])
+    .collect()
+}
+
+/// Narrow every `u16` `>> 8`.
+fn narrow_u16(v: &[u16]) -> Vec<u8> {
+  v.iter().map(|&x| (x >> 8) as u8).collect()
+}
+
+/// Canonical `R, G, B, A` `u32` ramp with one fully-transparent (α = 0) 2x2
+/// output block (top-left), so the un-premultiply's `α == 0` branch is hit.
+fn premult_rgba128_fixture() -> Vec<u32> {
+  let mut v = frp_rgba128();
+  for &(sx, sy) in &[(0usize, 0usize), (1, 0), (0, 1), (1, 1)] {
+    v[(sy * FRP + sx) * 4 + 3] = 0;
+  }
+  v
+}
+
+#[test]
+fn rgba128_premult_area_matches_u32_premult_oracle() {
+  let host = premult_rgba128_fixture();
+  let oracle = premult_area_rgba_u16(&host, FRP, FRO);
+  let straight_rgb = drop_alpha_u16(&oracle);
+
+  // Direct full-res Rgb48 sink over the straight (un-premultiplied) binned RGB —
+  // the reference for the narrowed u8 rgb / luma / hsv derives.
+  let rgb_wire = as_le_u16(&straight_rgb);
+  let mut ref_rgb = vec![0u8; FRO * FRO * 3];
+  let mut ref_luma = vec![0u8; FRO * FRO];
+  let mut ref_h = vec![0u8; FRO * FRO];
+  let mut ref_s = vec![0u8; FRO * FRO];
+  let mut ref_v = vec![0u8; FRO * FRO];
+  {
+    let binned = Rgb48Frame::new(&rgb_wire, FRO as u32, FRO as u32, (FRO * 3) as u32);
+    let mut sink = MixedSinker::<Rgb48>::new(FRO, FRO)
+      .with_rgb(&mut ref_rgb)
+      .unwrap()
+      .with_luma(&mut ref_luma)
+      .unwrap()
+      .with_hsv(&mut ref_h, &mut ref_s, &mut ref_v)
+      .unwrap();
+    rgb48_to(&binned, true, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+
+  for be in [false, true] {
+    let mut rgba_u16 = vec![0u16; FRO * FRO * 4];
+    let mut rgb_u16 = vec![0u16; FRO * FRO * 3];
+    let mut rgba = vec![0u8; FRO * FRO * 4];
+    let mut rgb = vec![0u8; FRO * FRO * 3];
+    let mut luma = vec![0u8; FRO * FRO];
+    let mut h = vec![0u8; FRO * FRO];
+    let mut s_ = vec![0u8; FRO * FRO];
+    let mut v_ = vec![0u8; FRO * FRO];
+    if be {
+      let wire = as_be_u32(&host);
+      let src = Rgba128BeFrame::new(&wire, FRP as u32, FRP as u32, (FRP * 4) as u32);
+      let mut sink = MixedSinker::<Rgba128<true>, AreaResampler>::with_resampler(
+        FRP,
+        FRP,
+        AreaResampler::to(FRO, FRO),
+      )
+      .unwrap()
+      .with_alpha_mode(AlphaMode::Premultiplied)
+      .with_rgba_u16(&mut rgba_u16)
+      .unwrap()
+      .with_rgb_u16(&mut rgb_u16)
+      .unwrap()
+      .with_rgba(&mut rgba)
+      .unwrap()
+      .with_rgb(&mut rgb)
+      .unwrap()
+      .with_luma(&mut luma)
+      .unwrap()
+      .with_hsv(&mut h, &mut s_, &mut v_)
+      .unwrap();
+      crate::source::rgba128_to_endian::<_, true>(&src, true, ColorMatrix::Bt709, &mut sink)
+        .unwrap();
+    } else {
+      let wire = as_le_u32(&host);
+      let src = Rgba128Frame::new(&wire, FRP as u32, FRP as u32, (FRP * 4) as u32);
+      let mut sink = MixedSinker::<Rgba128, AreaResampler>::with_resampler(
+        FRP,
+        FRP,
+        AreaResampler::to(FRO, FRO),
+      )
+      .unwrap()
+      .with_alpha_mode(AlphaMode::Premultiplied)
+      .with_rgba_u16(&mut rgba_u16)
+      .unwrap()
+      .with_rgb_u16(&mut rgb_u16)
+      .unwrap()
+      .with_rgba(&mut rgba)
+      .unwrap()
+      .with_rgb(&mut rgb)
+      .unwrap()
+      .with_luma(&mut luma)
+      .unwrap()
+      .with_hsv(&mut h, &mut s_, &mut v_)
+      .unwrap();
+      rgba128_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+    }
+    let tag = if be { "BE" } else { "LE" };
+    // Core premult/unpremult chain.
+    assert_eq!(rgba_u16, oracle, "Rgba128 premult rgba_u16 {tag}");
+    assert_eq!(rgb_u16, straight_rgb, "Rgba128 premult rgb_u16 {tag}");
+    assert_eq!(rgba, narrow_u16(&oracle), "Rgba128 premult rgba (u8) {tag}");
+    // Transparent edge: the α = 0 block exposes no colour (no bleed).
+    assert_eq!(
+      &rgba_u16[..4],
+      &[0, 0, 0, 0],
+      "Rgba128 transparent bled {tag}"
+    );
+    // Narrowed derives from the un-premultiplied straight colour.
+    assert_eq!(rgb, ref_rgb, "Rgba128 premult rgb (u8) {tag}");
+    assert_eq!(luma, ref_luma, "Rgba128 premult luma {tag}");
+    assert_eq!(h, ref_h, "Rgba128 premult hsv-h {tag}");
+    assert_eq!(s_, ref_s, "Rgba128 premult hsv-s {tag}");
+    assert_eq!(v_, ref_v, "Rgba128 premult hsv-v {tag}");
+  }
+}
+
+// ---- Straight-alpha DROP-alpha 3-channel route (Rgba128, area + filter) ------
+// When straight alpha and the caller drops α (only `rgb` / `rgb_u16` / `luma` /
+// `hsv` attached, no `rgba(_u16)`), Rgba128 takes the SEPARATE 3-channel route
+// (`rgba128_to_rgb_u32_row` drop-α staging → `packed_rgb_u32_resample_emit`),
+// distinct from the 4-channel and premult pins above. Pin `rgb_u16` against the
+// 3-channel u32-domain oracle (staging + bin + narrow), and the narrowed
+// derives against a direct full-res `Rgb48` sink over that binned RGB.
+
+/// Direct full-res `Rgb48` sink over a binned `R, G, B` u16 row → the narrowed
+/// `(rgb_u8, luma, luma_u16, h, s, v)` derives. `Rgb48`'s `luma_u16` is the
+/// 8-bit-precision (narrowed) flavour, matching the `NATIVE_LUMA16 = false`
+/// packed-RGB route (see `rgb96_derived_outputs_come_from_binned_rgb`).
+/// `(rgb_u8, luma_u8, luma_u16, h, s, v)` narrowed derives.
+type Rgb48Derives = (Vec<u8>, Vec<u8>, Vec<u16>, Vec<u8>, Vec<u8>, Vec<u8>);
+
+fn rgb48_derive_ref(rgb_u16: &[u16], n: usize, full_range: bool) -> Rgb48Derives {
+  let wire = as_le_u16(rgb_u16);
+  let src = Rgb48Frame::new(&wire, n as u32, n as u32, (n * 3) as u32);
+  let mut rgb = vec![0u8; n * n * 3];
+  let mut luma = vec![0u8; n * n];
+  let mut luma_u16 = vec![0u16; n * n];
+  let mut h = vec![0u8; n * n];
+  let mut s = vec![0u8; n * n];
+  let mut v = vec![0u8; n * n];
+  {
+    let mut sink = MixedSinker::<Rgb48>::new(n, n)
+      .with_rgb(&mut rgb)
+      .unwrap()
+      .with_luma(&mut luma)
+      .unwrap()
+      .with_luma_u16(&mut luma_u16)
+      .unwrap()
+      .with_hsv(&mut h, &mut s, &mut v)
+      .unwrap();
+    rgb48_to(&src, full_range, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+  (rgb, luma, luma_u16, h, s, v)
+}
+
+/// Drop α from a canonical `R, G, B, A` u32 row → packed `R, G, B` u32 — the
+/// engine's `rgba128_to_rgb_u32_row` staging (no narrow), the oracle input.
+fn rgba128_drop_rgb_u32(host: &[u32]) -> Vec<u32> {
+  host
+    .chunks_exact(4)
+    .flat_map(|px| [px[0], px[1], px[2]])
+    .collect()
+}
+
+#[test]
+fn rgba128_drop_alpha_area_route_is_u32_domain() {
+  let host = frp_rgba128();
+  let rgb_src = rgba128_drop_rgb_u32(&host);
+  let mut oracle_rgb_u16 = vec![0u16; FRO * FRO * 3];
+  for oy in 0..FRO {
+    for ox in 0..FRO {
+      for c in 0..3 {
+        oracle_rgb_u16[(oy * FRO + ox) * 3 + c] = area_u32_narrowed(&rgb_src, ox, oy, c, FRP, 3);
+      }
+    }
+  }
+  let (ref_rgb, ref_luma, ref_lu16, ref_h, ref_s, ref_v) =
+    rgb48_derive_ref(&oracle_rgb_u16, FRO, true);
+
+  for be in [false, true] {
+    let mut rgb_u16 = vec![0u16; FRO * FRO * 3];
+    let mut rgb = vec![0u8; FRO * FRO * 3];
+    let mut luma = vec![0u8; FRO * FRO];
+    let mut luma_u16 = vec![0u16; FRO * FRO];
+    let mut h = vec![0u8; FRO * FRO];
+    let mut s_ = vec![0u8; FRO * FRO];
+    let mut v_ = vec![0u8; FRO * FRO];
+    if be {
+      let wire = as_be_u32(&host);
+      let src = Rgba128BeFrame::new(&wire, FRP as u32, FRP as u32, (FRP * 4) as u32);
+      let mut sink = MixedSinker::<Rgba128<true>, AreaResampler>::with_resampler(
+        FRP,
+        FRP,
+        AreaResampler::to(FRO, FRO),
+      )
+      .unwrap()
+      .with_rgb_u16(&mut rgb_u16)
+      .unwrap()
+      .with_rgb(&mut rgb)
+      .unwrap()
+      .with_luma(&mut luma)
+      .unwrap()
+      .with_luma_u16(&mut luma_u16)
+      .unwrap()
+      .with_hsv(&mut h, &mut s_, &mut v_)
+      .unwrap();
+      crate::source::rgba128_to_endian::<_, true>(&src, true, ColorMatrix::Bt709, &mut sink)
+        .unwrap();
+    } else {
+      let wire = as_le_u32(&host);
+      let src = Rgba128Frame::new(&wire, FRP as u32, FRP as u32, (FRP * 4) as u32);
+      let mut sink = MixedSinker::<Rgba128, AreaResampler>::with_resampler(
+        FRP,
+        FRP,
+        AreaResampler::to(FRO, FRO),
+      )
+      .unwrap()
+      .with_rgb_u16(&mut rgb_u16)
+      .unwrap()
+      .with_rgb(&mut rgb)
+      .unwrap()
+      .with_luma(&mut luma)
+      .unwrap()
+      .with_luma_u16(&mut luma_u16)
+      .unwrap()
+      .with_hsv(&mut h, &mut s_, &mut v_)
+      .unwrap();
+      rgba128_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+    }
+    let tag = if be { "BE" } else { "LE" };
+    assert_eq!(rgb_u16, oracle_rgb_u16, "Rgba128 drop-α area rgb_u16 {tag}");
+    assert_eq!(rgb, ref_rgb, "Rgba128 drop-α area rgb {tag}");
+    assert_eq!(luma, ref_luma, "Rgba128 drop-α area luma {tag}");
+    assert_eq!(luma_u16, ref_lu16, "Rgba128 drop-α area luma_u16 {tag}");
+    assert_eq!(h, ref_h, "Rgba128 drop-α area hsv-h {tag}");
+    assert_eq!(s_, ref_s, "Rgba128 drop-α area hsv-s {tag}");
+    assert_eq!(v_, ref_v, "Rgba128 drop-α area hsv-v {tag}");
+  }
+}
+
+#[test]
+fn rgba128_drop_alpha_filter_route_is_u32_domain() {
+  let host = frp_rgba128();
+  let rgb_src = rgba128_drop_rgb_u32(&host);
+  let oracle_rgb_u16 = separable_triangle_u32_narrowed(&rgb_src, 3, FRP, FRP, FRO, FRO);
+  let (ref_rgb, ref_luma, ref_lu16, ref_h, ref_s, ref_v) =
+    rgb48_derive_ref(&oracle_rgb_u16, FRO, true);
+
+  for be in [false, true] {
+    let mut rgb_u16 = vec![0u16; FRO * FRO * 3];
+    let mut rgb = vec![0u8; FRO * FRO * 3];
+    let mut luma = vec![0u8; FRO * FRO];
+    let mut luma_u16 = vec![0u16; FRO * FRO];
+    let mut h = vec![0u8; FRO * FRO];
+    let mut s_ = vec![0u8; FRO * FRO];
+    let mut v_ = vec![0u8; FRO * FRO];
+    if be {
+      let wire = as_be_u32(&host);
+      let src = Rgba128BeFrame::new(&wire, FRP as u32, FRP as u32, (FRP * 4) as u32);
+      let mut sink = MixedSinker::<Rgba128<true>, FilteredResampler<Triangle>>::with_resampler(
+        FRP,
+        FRP,
+        FilteredResampler::new(FRO, FRO, Triangle),
+      )
+      .unwrap()
+      .with_rgb_u16(&mut rgb_u16)
+      .unwrap()
+      .with_rgb(&mut rgb)
+      .unwrap()
+      .with_luma(&mut luma)
+      .unwrap()
+      .with_luma_u16(&mut luma_u16)
+      .unwrap()
+      .with_hsv(&mut h, &mut s_, &mut v_)
+      .unwrap();
+      crate::source::rgba128_to_endian::<_, true>(&src, true, ColorMatrix::Bt709, &mut sink)
+        .unwrap();
+    } else {
+      let wire = as_le_u32(&host);
+      let src = Rgba128Frame::new(&wire, FRP as u32, FRP as u32, (FRP * 4) as u32);
+      let mut sink = MixedSinker::<Rgba128, FilteredResampler<Triangle>>::with_resampler(
+        FRP,
+        FRP,
+        FilteredResampler::new(FRO, FRO, Triangle),
+      )
+      .unwrap()
+      .with_rgb_u16(&mut rgb_u16)
+      .unwrap()
+      .with_rgb(&mut rgb)
+      .unwrap()
+      .with_luma(&mut luma)
+      .unwrap()
+      .with_luma_u16(&mut luma_u16)
+      .unwrap()
+      .with_hsv(&mut h, &mut s_, &mut v_)
+      .unwrap();
+      rgba128_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+    }
+    let tag = if be { "BE" } else { "LE" };
+    assert_eq!(
+      rgb_u16, oracle_rgb_u16,
+      "Rgba128 drop-α filter rgb_u16 {tag}"
+    );
+    assert_eq!(rgb, ref_rgb, "Rgba128 drop-α filter rgb {tag}");
+    assert_eq!(luma, ref_luma, "Rgba128 drop-α filter luma {tag}");
+    assert_eq!(luma_u16, ref_lu16, "Rgba128 drop-α filter luma_u16 {tag}");
+    assert_eq!(h, ref_h, "Rgba128 drop-α filter hsv-h {tag}");
+    assert_eq!(s_, ref_s, "Rgba128 drop-α filter hsv-s {tag}");
+    assert_eq!(v_, ref_v, "Rgba128 drop-α filter hsv-v {tag}");
+  }
+}
+
+#[test]
+fn rgba128_premult_filter_rejects() {
+  // Premultiplied alpha has no filter analogue: the Filter arm routes to the
+  // area tail, which rejects with the typed `UnsupportedFilter` (no silent
+  // corruption). The one remaining distinct Rgba128 branch.
+  let host = frp_rgba128();
+  let wire = as_le_u32(&host);
+  let src = Rgba128Frame::new(&wire, FRP as u32, FRP as u32, (FRP * 4) as u32);
+  let mut rgba_u16 = vec![0u16; FRO * FRO * 4];
+  let mut sink = MixedSinker::<Rgba128, FilteredResampler<Triangle>>::with_resampler(
+    FRP,
+    FRP,
+    FilteredResampler::new(FRO, FRO, Triangle),
+  )
+  .unwrap()
+  .with_alpha_mode(AlphaMode::Premultiplied)
+  .with_rgba_u16(&mut rgba_u16)
+  .unwrap();
+  let err = rgba128_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap_err();
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(crate::resample::ResampleError::UnsupportedFilter(_))
+    ),
+    "Rgba128 premult+filter must reject: {err:?}"
+  );
 }
