@@ -674,7 +674,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_row<const BITS: u32, const BE: bool>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_row::<BITS, false, false, BE>(
+    yuv_444p_n_to_rgb_or_rgba_row::<BITS, false, false, BE, false>(
       y, u, v, rgb_out, width, matrix, full_range, None,
     );
   }
@@ -704,7 +704,51 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_row<const BITS: u32, const BE: bool>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, false, BE>(
+    yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, false, BE, false>(
+      y, u, v, rgba_out, width, matrix, full_range, None,
+    );
+  }
+}
+
+/// NEON MSB-aligned YUV 4:4:4 planar → packed **8-bit RGB**. The
+/// recovery-shift twin of [`yuv_444p_n_to_rgb_row`] for the `Yuv444pNMsb`
+/// family (`MSB = true`). # Safety: same as [`yuv_444p_n_to_rgb_row`].
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_444p_n_msb_to_rgb_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p_n_to_rgb_or_rgba_row::<BITS, false, false, BE, true>(
+      y, u, v, rgb_out, width, matrix, full_range, None,
+    );
+  }
+}
+
+/// NEON MSB-aligned YUV 4:4:4 planar → packed **8-bit RGBA** (opaque
+/// `0xFF`). The recovery-shift twin of [`yuv_444p_n_to_rgba_row`].
+/// # Safety: same as [`yuv_444p_n_to_rgba_row`].
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_444p_n_msb_to_rgba_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, false, BE, true>(
       y, u, v, rgba_out, width, matrix, full_range, None,
     );
   }
@@ -737,7 +781,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_with_alpha_src_row<const BITS: u32, cons
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, true, BE>(
+    yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, true, BE, false>(
       y,
       u,
       v,
@@ -750,13 +794,43 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_with_alpha_src_row<const BITS: u32, cons
   }
 }
 
+/// Recovers eight `BITS`-bit logical samples from one endian-normalized wire
+/// `u16x8` for the high-bit planar YUV 4:4:4 family.
+///
+/// `MSB = false` (low-bit-packed `Yuv444pN`) AND-masks the active low `BITS`
+/// (`mask_v = bits_mask::<BITS>()`); `MSB = true` (MSB-aligned `Yuv444pNMsb`,
+/// FFmpeg `shift = 16 - BITS`) performs the logical right-shift `>> (16 - BITS)`
+/// — `vshrq_n_u16` requires a literal const shift, so the dynamic
+/// `vshlq_u16(raw, -(16 - BITS))` (a negative count vector = logical right
+/// shift) is used, exactly as the alpha de-pack path does. Both `BITS` and
+/// `MSB` are const, so the branch folds at monomorphisation. `mask_v` is
+/// threaded in (rather than recomputed) so it stays "used" in every
+/// monomorphisation, including the `MSB = true` arm.
+///
+/// # Safety
+///
+/// **NEON must be available** (caller's obligation).
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn extract_hb_u16x8<const BITS: u32, const MSB: bool>(
+  raw: uint16x8_t,
+  mask_v: uint16x8_t,
+) -> uint16x8_t {
+  if MSB {
+    vshlq_u16(raw, vdupq_n_s16(-((16 - BITS) as i16)))
+  } else {
+    vandq_u16(raw, mask_v)
+  }
+}
+
 /// Shared NEON high-bit-depth YUV 4:4:4 kernel for
 /// [`yuv_444p_n_to_rgb_row`] (`ALPHA = false, ALPHA_SRC = false`,
 /// `vst3q_u8`), [`yuv_444p_n_to_rgba_row`] (`ALPHA = true,
 /// ALPHA_SRC = false`, `vst4q_u8` with constant `0xFF` alpha vector)
 /// and [`yuv_444p_n_to_rgba_with_alpha_src_row`] (`ALPHA = true,
 /// ALPHA_SRC = true`, `vst4q_u8` with the alpha lane loaded and
-/// depth-converted from `a_src`).
+/// depth-converted from `a_src`). `MSB` selects the sample recovery
+/// (mask vs `>> (16 - BITS)`) — see [`extract_hb_u16x8`].
 ///
 /// # Safety
 ///
@@ -774,6 +848,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_row<
   const ALPHA: bool,
   const ALPHA_SRC: bool,
   const BE: bool,
+  const MSB: bool,
 >(
   y: &[u16],
   u: &[u16],
@@ -788,6 +863,8 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_row<
   // Source alpha requires RGBA output — there is no 3 bpp store with
   // alpha to put it in.
   const { assert!(!ALPHA_SRC || ALPHA) };
+  // The MSB-aligned variant carries no alpha plane.
+  const { assert!(!MSB || !ALPHA_SRC) };
   let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width);
   debug_assert!(u.len() >= width);
@@ -820,27 +897,29 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_row<
     let mut x = 0usize;
     while x + 16 <= width {
       // 16 Y + 16 U + 16 V per iter, loaded as two u16x8 halves each.
-      let y_vec_lo = vandq_u16(
+      // `extract_hb_u16x8::<BITS, MSB>` recovers each sample (low-bit mask, or
+      // the `>> (16 - BITS)` recovery shift for the MSB-aligned source).
+      let y_vec_lo = extract_hb_u16x8::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(y.as_ptr().add(x) as *const u8),
         mask_v,
       );
-      let y_vec_hi = vandq_u16(
+      let y_vec_hi = extract_hb_u16x8::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(y.as_ptr().add(x + 8) as *const u8),
         mask_v,
       );
-      let u_lo_u16 = vandq_u16(
+      let u_lo_u16 = extract_hb_u16x8::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(u.as_ptr().add(x) as *const u8),
         mask_v,
       );
-      let u_hi_u16 = vandq_u16(
+      let u_hi_u16 = extract_hb_u16x8::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(u.as_ptr().add(x + 8) as *const u8),
         mask_v,
       );
-      let v_lo_u16 = vandq_u16(
+      let v_lo_u16 = extract_hb_u16x8::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(v.as_ptr().add(x) as *const u8),
         mask_v,
       );
-      let v_hi_u16 = vandq_u16(
+      let v_hi_u16 = extract_hb_u16x8::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(v.as_ptr().add(x + 8) as *const u8),
         mask_v,
       );
@@ -943,13 +1022,25 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_row<
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
       if ALPHA_SRC {
+        // ALPHA_SRC implies the low-bit YUVA family (the MSB variant has no
+        // alpha plane), so the scalar tail is always the low-bit kernel here.
         // SAFETY (const-checked): ALPHA_SRC = true implies Some(_).
         let tail_a = &a_src.as_ref().unwrap_unchecked()[x..width];
         scalar::yuv_444p_n_to_rgba_with_alpha_src_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_a, tail_out, tail_w, matrix, full_range,
         );
       } else if ALPHA {
-        scalar::yuv_444p_n_to_rgba_row::<BITS, BE>(
+        if MSB {
+          scalar::yuv_444p_n_msb_to_rgba_row::<BITS, BE>(
+            tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+          );
+        } else {
+          scalar::yuv_444p_n_to_rgba_row::<BITS, BE>(
+            tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+          );
+        }
+      } else if MSB {
+        scalar::yuv_444p_n_msb_to_rgb_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       } else {
@@ -983,8 +1074,52 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_u16_row<const BITS: u32, const BE: bool>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, false, false, BE>(
+    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, false, false, BE, false>(
       y, u, v, rgb_out, width, matrix, full_range, None,
+    );
+  }
+}
+
+/// NEON MSB-aligned YUV 4:4:4 planar → native-depth **`u16`** RGB. The
+/// recovery-shift twin of [`yuv_444p_n_to_rgb_u16_row`] (`MSB = true`).
+/// # Safety: same as [`yuv_444p_n_to_rgb_u16_row`].
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_444p_n_msb_to_rgb_u16_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, false, false, BE, true>(
+      y, u, v, rgb_out, width, matrix, full_range, None,
+    );
+  }
+}
+
+/// NEON MSB-aligned YUV 4:4:4 planar → native-depth **`u16`** RGBA (opaque
+/// `(1 << BITS) - 1`). The recovery-shift twin of
+/// [`yuv_444p_n_to_rgba_u16_row`]. # Safety: same as that kernel.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_444p_n_msb_to_rgba_u16_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, false, BE, true>(
+      y, u, v, rgba_out, width, matrix, full_range, None,
     );
   }
 }
@@ -1013,7 +1148,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_u16_row<const BITS: u32, const BE: bool>
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, false, BE>(
+    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, false, BE, false>(
       y, u, v, rgba_out, width, matrix, full_range, None,
     );
   }
@@ -1047,7 +1182,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32, 
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, true, BE>(
+    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, true, BE, false>(
       y,
       u,
       v,
@@ -1086,6 +1221,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_u16_row<
   const ALPHA: bool,
   const ALPHA_SRC: bool,
   const BE: bool,
+  const MSB: bool,
 >(
   y: &[u16],
   u: &[u16],
@@ -1103,6 +1239,8 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_u16_row<
   // Source alpha requires RGBA output — there is no 3 bpp store with
   // alpha to put it in.
   const { assert!(!ALPHA_SRC || ALPHA) };
+  // The MSB-aligned variant carries no alpha plane.
+  const { assert!(!MSB || !ALPHA_SRC) };
   let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width);
   debug_assert!(u.len() >= width);
@@ -1137,27 +1275,27 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_u16_row<
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let y_vec_lo = vandq_u16(
+      let y_vec_lo = extract_hb_u16x8::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(y.as_ptr().add(x) as *const u8),
         mask_v,
       );
-      let y_vec_hi = vandq_u16(
+      let y_vec_hi = extract_hb_u16x8::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(y.as_ptr().add(x + 8) as *const u8),
         mask_v,
       );
-      let u_lo_u16 = vandq_u16(
+      let u_lo_u16 = extract_hb_u16x8::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(u.as_ptr().add(x) as *const u8),
         mask_v,
       );
-      let u_hi_u16 = vandq_u16(
+      let u_hi_u16 = extract_hb_u16x8::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(u.as_ptr().add(x + 8) as *const u8),
         mask_v,
       );
-      let v_lo_u16 = vandq_u16(
+      let v_lo_u16 = extract_hb_u16x8::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(v.as_ptr().add(x) as *const u8),
         mask_v,
       );
-      let v_hi_u16 = vandq_u16(
+      let v_hi_u16 = extract_hb_u16x8::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(v.as_ptr().add(x + 8) as *const u8),
         mask_v,
       );
@@ -1246,13 +1384,25 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_u16_row<
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
       if ALPHA_SRC {
+        // ALPHA_SRC implies the low-bit YUVA family (the MSB variant has no
+        // alpha plane), so the scalar tail is always the low-bit kernel here.
         // SAFETY (const-checked): ALPHA_SRC = true implies Some(_).
         let tail_a = &a_src.as_ref().unwrap_unchecked()[x..width];
         scalar::yuv_444p_n_to_rgba_u16_with_alpha_src_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_a, tail_out, tail_w, matrix, full_range,
         );
       } else if ALPHA {
-        scalar::yuv_444p_n_to_rgba_u16_row::<BITS, BE>(
+        if MSB {
+          scalar::yuv_444p_n_msb_to_rgba_u16_row::<BITS, BE>(
+            tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+          );
+        } else {
+          scalar::yuv_444p_n_to_rgba_u16_row::<BITS, BE>(
+            tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+          );
+        }
+      } else if MSB {
+        scalar::yuv_444p_n_msb_to_rgb_u16_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       } else {
@@ -1372,6 +1522,53 @@ pub(crate) unsafe fn yuv_444p_n_to_hsv_row<const BITS: u32, const BE: bool>(
   unsafe {
     yuv_to_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
       yuv_444p_n_to_rgb_row::<BITS, BE>(
+        &y[offset..],
+        &u[offset..],
+        &v[offset..],
+        rgb,
+        n,
+        matrix,
+        full_range,
+      );
+    });
+  }
+}
+
+/// NEON MSB-aligned YUV 4:4:4 planar → planar **HSV** bytes. The recovery-shift
+/// twin of [`yuv_444p_n_to_hsv_row`] for the `Yuv444pNMsb` family: stages the
+/// 8-bit RGB chunk via the MSB RGB kernel [`yuv_444p_n_msb_to_rgb_row`]. Byte-
+/// identical to `rgb_to_hsv_row(yuv_444p_n_msb_to_rgb_row::<BITS, BE>(...))`.
+///
+/// # Safety
+///
+/// **NEON must be available**; `y` / `u` / `v` / `h_out` / `s_out` / `v_out`
+/// each `>= width`; `BITS ∈ {10, 12}`.
+#[inline]
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn yuv_444p_n_msb_to_hsv_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(u.len() >= width, "u row too short");
+  debug_assert!(v.len() >= width, "v row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  // SAFETY: the feature is the caller's obligation; the chunk filler forwards
+  // to the NEON MSB high-bit 4:4:4 RGB kernel under the same contract.
+  unsafe {
+    yuv_to_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      yuv_444p_n_msb_to_rgb_row::<BITS, BE>(
         &y[offset..],
         &u[offset..],
         &v[offset..],

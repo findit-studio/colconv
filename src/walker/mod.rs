@@ -53,7 +53,7 @@ use crate::{
 use crate::{
   frame::{
     Yuv410pFrame, Yuv411pFrame, Yuv420pFrame, Yuv420pFrame16, Yuv422pFrame, Yuv422pFrame16,
-    Yuv440pFrame, Yuv440pFrame16, Yuv444pFrame, Yuv444pFrame16,
+    Yuv440pFrame, Yuv440pFrame16, Yuv444pFrame, Yuv444pFrame16, Yuv444pMsbFrame,
   },
   source::{
     Yuv410p, Yuv410pSink, Yuv411p, Yuv411pSink, Yuv420p, Yuv420p9, Yuv420p9Sink, Yuv420p10,
@@ -61,13 +61,14 @@ use crate::{
     Yuv420pSink, Yuv422p, Yuv422p9, Yuv422p9Sink, Yuv422p10, Yuv422p10Sink, Yuv422p12,
     Yuv422p12Sink, Yuv422p14, Yuv422p14Sink, Yuv422p16, Yuv422p16Sink, Yuv422pSink, Yuv440p,
     Yuv440p10, Yuv440p10Sink, Yuv440p12, Yuv440p12Sink, Yuv440pSink, Yuv444p, Yuv444p9,
-    Yuv444p9Sink, Yuv444p10, Yuv444p10Sink, Yuv444p12, Yuv444p12Sink, Yuv444p14, Yuv444p14Sink,
-    Yuv444p16, Yuv444p16Sink, Yuv444pSink, yuv410p_to, yuv411p_to, yuv420p_to, yuv420p9_to_endian,
+    Yuv444p9Sink, Yuv444p10, Yuv444p10Msb, Yuv444p10MsbSink, Yuv444p10Sink, Yuv444p12,
+    Yuv444p12Msb, Yuv444p12MsbSink, Yuv444p12Sink, Yuv444p14, Yuv444p14Sink, Yuv444p16,
+    Yuv444p16Sink, Yuv444pSink, yuv410p_to, yuv411p_to, yuv420p_to, yuv420p9_to_endian,
     yuv420p10_to_endian, yuv420p12_to_endian, yuv420p14_to_endian, yuv420p16_to_endian, yuv422p_to,
     yuv422p9_to_endian, yuv422p10_to_endian, yuv422p12_to_endian, yuv422p14_to_endian,
     yuv422p16_to_endian, yuv440p_to, yuv440p10_to_endian, yuv440p12_to_endian, yuv444p_to,
-    yuv444p9_to_endian, yuv444p10_to_endian, yuv444p12_to_endian, yuv444p14_to_endian,
-    yuv444p16_to_endian,
+    yuv444p9_to_endian, yuv444p10_msb_to_endian, yuv444p10_to_endian, yuv444p12_msb_to_endian,
+    yuv444p12_to_endian, yuv444p14_to_endian, yuv444p16_to_endian,
   },
 };
 // Semi-planar YUV — Nv* (8-bit) on the plain arm + P0xx/P2xx/P4xx
@@ -918,6 +919,14 @@ walker!(@const_bits 10, BE; Yuv444p10, Yuv444p10Sink, Yuv444pFrame16, YuvOptions
 #[cfg_attr(docsrs, doc(cfg(feature = "yuv-planar")))]
 walker!(@const_bits 12, BE; Yuv444p12, Yuv444p12Sink, Yuv444pFrame16, YuvOptions,
   |src, opts, sink| yuv444p12_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "yuv-planar")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuv-planar")))]
+walker!(@const_bits 10, BE; Yuv444p10Msb, Yuv444p10MsbSink, Yuv444pMsbFrame, YuvOptions,
+  |src, opts, sink| yuv444p10_msb_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "yuv-planar")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuv-planar")))]
+walker!(@const_bits 12, BE; Yuv444p12Msb, Yuv444p12MsbSink, Yuv444pMsbFrame, YuvOptions,
+  |src, opts, sink| yuv444p12_msb_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
 #[cfg(feature = "yuv-planar")]
 #[cfg_attr(docsrs, doc(cfg(feature = "yuv-planar")))]
 walker!(@const_bits 14, BE; Yuv444p14, Yuv444p14Sink, Yuv444pFrame16, YuvOptions,

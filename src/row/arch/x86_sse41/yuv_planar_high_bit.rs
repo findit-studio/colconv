@@ -605,7 +605,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_row<const BITS: u32, const BE: bool>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_row::<BITS, false, false, BE>(
+    yuv_444p_n_to_rgb_or_rgba_row::<BITS, false, false, BE, false>(
       y, u, v, rgb_out, width, matrix, full_range, None,
     );
   }
@@ -634,7 +634,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_row<const BITS: u32, const BE: bool>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, false, BE>(
+    yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, false, BE, false>(
       y, u, v, rgba_out, width, matrix, full_range, None,
     );
   }
@@ -667,7 +667,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_with_alpha_src_row<const BITS: u32, cons
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, true, BE>(
+    yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, true, BE, false>(
       y,
       u,
       v,
@@ -704,6 +704,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_row<
   const ALPHA: bool,
   const ALPHA_SRC: bool,
   const BE: bool,
+  const MSB: bool,
 >(
   y: &[u16],
   u: &[u16],
@@ -718,6 +719,8 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_row<
   // Source alpha requires RGBA output — there is no 3 bpp store with
   // alpha to put it in.
   const { assert!(!ALPHA_SRC || ALPHA) };
+  // The MSB-aligned variant carries no alpha plane.
+  const { assert!(!MSB || !ALPHA_SRC) };
   let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width);
   debug_assert!(u.len() >= width);
@@ -752,27 +755,27 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_row<
       // 16 Y + 16 U + 16 V per iter. Full-width chroma load (two
       // u16x8 each) — no horizontal duplication needed. BE input is
       // byte-swapped by `load_endian_u16x8::<BE>` first.
-      let y_low_i16 = _mm_and_si128(
+      let y_low_i16 = extract_hb_simd::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(y.as_ptr().add(x) as *const u8),
         mask_v,
       );
-      let y_high_i16 = _mm_and_si128(
+      let y_high_i16 = extract_hb_simd::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(y.as_ptr().add(x + 8) as *const u8),
         mask_v,
       );
-      let u_lo_vec = _mm_and_si128(
+      let u_lo_vec = extract_hb_simd::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(u.as_ptr().add(x) as *const u8),
         mask_v,
       );
-      let u_hi_vec = _mm_and_si128(
+      let u_hi_vec = extract_hb_simd::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(u.as_ptr().add(x + 8) as *const u8),
         mask_v,
       );
-      let v_lo_vec = _mm_and_si128(
+      let v_lo_vec = extract_hb_simd::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(v.as_ptr().add(x) as *const u8),
         mask_v,
       );
-      let v_hi_vec = _mm_and_si128(
+      let v_hi_vec = extract_hb_simd::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(v.as_ptr().add(x + 8) as *const u8),
         mask_v,
       );
@@ -869,7 +872,17 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_row<
           tail_y, tail_u, tail_v, tail_a, tail_out, tail_w, matrix, full_range,
         );
       } else if ALPHA {
-        scalar::yuv_444p_n_to_rgba_row::<BITS, BE>(
+        if MSB {
+          scalar::yuv_444p_n_msb_to_rgba_row::<BITS, BE>(
+            tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+          );
+        } else {
+          scalar::yuv_444p_n_to_rgba_row::<BITS, BE>(
+            tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+          );
+        }
+      } else if MSB {
+        scalar::yuv_444p_n_msb_to_rgb_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       } else {
@@ -903,7 +916,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_u16_row<const BITS: u32, const BE: bool>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, false, false, BE>(
+    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, false, false, BE, false>(
       y, u, v, rgb_out, width, matrix, full_range, None,
     );
   }
@@ -932,7 +945,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_u16_row<const BITS: u32, const BE: bool>
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, false, BE>(
+    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, false, BE, false>(
       y, u, v, rgba_out, width, matrix, full_range, None,
     );
   }
@@ -966,7 +979,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32, 
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, true, BE>(
+    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, true, BE, false>(
       y,
       u,
       v,
@@ -1006,6 +1019,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_u16_row<
   const ALPHA: bool,
   const ALPHA_SRC: bool,
   const BE: bool,
+  const MSB: bool,
 >(
   y: &[u16],
   u: &[u16],
@@ -1023,6 +1037,8 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_u16_row<
   // Source alpha requires RGBA output — there is no 3 bpp store with
   // alpha to put it in.
   const { assert!(!ALPHA_SRC || ALPHA) };
+  // The MSB-aligned variant carries no alpha plane.
+  const { assert!(!MSB || !ALPHA_SRC) };
   let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width);
   debug_assert!(u.len() >= width);
@@ -1058,27 +1074,27 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_u16_row<
     let mut x = 0usize;
     while x + 16 <= width {
       // BE input is byte-swapped by `load_endian_u16x8::<BE>` first.
-      let y_low_i16 = _mm_and_si128(
+      let y_low_i16 = extract_hb_simd::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(y.as_ptr().add(x) as *const u8),
         mask_v,
       );
-      let y_high_i16 = _mm_and_si128(
+      let y_high_i16 = extract_hb_simd::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(y.as_ptr().add(x + 8) as *const u8),
         mask_v,
       );
-      let u_lo_vec = _mm_and_si128(
+      let u_lo_vec = extract_hb_simd::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(u.as_ptr().add(x) as *const u8),
         mask_v,
       );
-      let u_hi_vec = _mm_and_si128(
+      let u_hi_vec = extract_hb_simd::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(u.as_ptr().add(x + 8) as *const u8),
         mask_v,
       );
-      let v_lo_vec = _mm_and_si128(
+      let v_lo_vec = extract_hb_simd::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(v.as_ptr().add(x) as *const u8),
         mask_v,
       );
-      let v_hi_vec = _mm_and_si128(
+      let v_hi_vec = extract_hb_simd::<BITS, MSB>(
         endian::load_endian_u16x8::<BE>(v.as_ptr().add(x + 8) as *const u8),
         mask_v,
       );
@@ -1166,7 +1182,17 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_u16_row<
           tail_y, tail_u, tail_v, tail_a, tail_out, tail_w, matrix, full_range,
         );
       } else if ALPHA {
-        scalar::yuv_444p_n_to_rgba_u16_row::<BITS, BE>(
+        if MSB {
+          scalar::yuv_444p_n_msb_to_rgba_u16_row::<BITS, BE>(
+            tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+          );
+        } else {
+          scalar::yuv_444p_n_to_rgba_u16_row::<BITS, BE>(
+            tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+          );
+        }
+      } else if MSB {
+        scalar::yuv_444p_n_msb_to_rgb_u16_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       } else {
@@ -1286,6 +1312,148 @@ pub(crate) unsafe fn yuv_444p_n_to_hsv_row<const BITS: u32, const BE: bool>(
   unsafe {
     yuv_to_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
       yuv_444p_n_to_rgb_row::<BITS, BE>(
+        &y[offset..],
+        &u[offset..],
+        &v[offset..],
+        rgb,
+        n,
+        matrix,
+        full_range,
+      );
+    });
+  }
+}
+
+/// Recovers `BITS`-bit logical samples from one endian-normalized wire
+/// vector for the high-bit planar YUV 4:4:4 family. `MSB = false`
+/// (low-bit-packed `Yuv444pN`) AND-masks the active low `BITS`; `MSB = true`
+/// (MSB-aligned `Yuv444pNMsb`, FFmpeg `shift = 16 - BITS`) logically
+/// right-shifts the active high `BITS` down (`>> (16 - BITS)`). Both consts
+/// fold at monomorphisation; `mask_v` is threaded so it stays used in the
+/// `MSB = true` arm. # Safety: the SIMD feature must be available.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+unsafe fn extract_hb_simd<const BITS: u32, const MSB: bool>(
+  raw: __m128i,
+  mask_v: __m128i,
+) -> __m128i {
+  if MSB {
+    _mm_srl_epi16(raw, _mm_cvtsi32_si128((16 - BITS) as i32))
+  } else {
+    _mm_and_si128(raw, mask_v)
+  }
+}
+
+/// yuv_444p_n_msb_to_rgb_row — MSB-aligned recovery-shift twin (`MSB = true`).
+/// # Safety: SIMD feature available; slice-length contract of the low-bit twin.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_444p_n_msb_to_rgb_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p_n_to_rgb_or_rgba_row::<BITS, false, false, BE, true>(
+      y, u, v, rgb_out, width, matrix, full_range, None,
+    );
+  }
+}
+
+/// yuv_444p_n_msb_to_rgba_row — MSB-aligned recovery-shift twin (`MSB = true`).
+/// # Safety: SIMD feature available; slice-length contract of the low-bit twin.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_444p_n_msb_to_rgba_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, false, BE, true>(
+      y, u, v, rgba_out, width, matrix, full_range, None,
+    );
+  }
+}
+
+/// yuv_444p_n_msb_to_rgb_u16_row — MSB-aligned recovery-shift twin (`MSB = true`).
+/// # Safety: SIMD feature available; slice-length contract of the low-bit twin.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_444p_n_msb_to_rgb_u16_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, false, false, BE, true>(
+      y, u, v, rgb_out, width, matrix, full_range, None,
+    );
+  }
+}
+
+/// yuv_444p_n_msb_to_rgba_u16_row — MSB-aligned recovery-shift twin (`MSB = true`).
+/// # Safety: SIMD feature available; slice-length contract of the low-bit twin.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_444p_n_msb_to_rgba_u16_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, false, BE, true>(
+      y, u, v, rgba_out, width, matrix, full_range, None,
+    );
+  }
+}
+
+/// MSB-aligned YUV 4:4:4 planar -> planar HSV bytes (recovery-shift twin).
+/// # Safety: SIMD feature available; per-plane slice-length contract.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn yuv_444p_n_msb_to_hsv_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(u.len() >= width, "u row too short");
+  debug_assert!(v.len() >= width, "v row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+  // SAFETY: forwards to the MSB RGB kernel under the same contract.
+  unsafe {
+    yuv_to_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      yuv_444p_n_msb_to_rgb_row::<BITS, BE>(
         &y[offset..],
         &u[offset..],
         &v[offset..],

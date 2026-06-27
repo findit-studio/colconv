@@ -2805,6 +2805,92 @@ mod gbr_parity {
     }
   }
 
+  /// Yuv444p10Msb LE — MSB-aligned high-bit planar YUV 4:4:4 (sample in high
+  /// 10 bits). Drives the `@const_bits` impl at `<const BE = false>` against the
+  /// LE `yuv444p10_msb_to` wrapper.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_yuv444p10_msb_le_matches_direct() {
+    use crate::{
+      frame::Yuv444p10MsbLeFrame,
+      source::{Yuv444p10Msb, yuv444p10_msb_to},
+    };
+    let (y, u, v) = planes16(10);
+    let (y, u, v) = (msb_align(&y, 10), msb_align(&u, 10), msb_align(&v, 10));
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Yuv444p10MsbLeFrame::new(&y, &u, &v, W, H, W, W, W);
+
+        let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+        let mut sw = MixedSinker::<Yuv444p10Msb>::new(W as usize, H as usize)
+          .with_rgb(&mut via_walker)
+          .unwrap();
+        <Yuv444p10Msb as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Yuv444p10Msb>::new(W as usize, H as usize)
+          .with_rgb(&mut via_direct)
+          .unwrap();
+        yuv444p10_msb_to(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "yuv444p10msb LE parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+
+  /// Yuv444p12Msb BE — drives the `@const_bits` impl at `Yuv444p12Msb<true>`
+  /// against the `Yuv444p12MsbBeFrame` alias, compared to a direct
+  /// `yuv444p12_msb_to_endian::<_, true>`.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_yuv444p12_msb_be_matches_direct() {
+    use crate::{
+      frame::Yuv444p12MsbBeFrame,
+      source::{Yuv444p12Msb, yuv444p12_msb_to_endian},
+    };
+    let (y, u, v) = planes16(12);
+    let (y, u, v) = (msb_align(&y, 12), msb_align(&u, 12), msb_align(&v, 12));
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Yuv444p12MsbBeFrame::new(&y, &u, &v, W, H, W, W, W);
+
+        let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+        let mut sw = MixedSinker::<Yuv444p12Msb<true>>::new(W as usize, H as usize)
+          .with_rgb(&mut via_walker)
+          .unwrap();
+        <Yuv444p12Msb<true> as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Yuv444p12Msb<true>>::new(W as usize, H as usize)
+          .with_rgb(&mut via_direct)
+          .unwrap();
+        yuv444p12_msb_to_endian::<_, true>(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "yuv444p12msb BE parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+
   /// Like `walk_gbr_forwards_full_range_and_matrix_via_luma` but for the MSB
   /// markers: GBR → luma weights G/B/R through the matrix and scales by
   /// `full_range`, so luma parity proves the Walker forwards both knobs into
