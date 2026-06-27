@@ -375,6 +375,10 @@ mod resample_yuv_planar_hsv_direct;
 #[cfg(feature = "yuv-semi-planar")]
 mod subsampled_high_bit_pn;
 #[cfg(feature = "yuv-semi-planar")]
+mod subsampled_high_bit_pn_4_2_2_hsv_direct;
+#[cfg(feature = "yuv-semi-planar")]
+mod subsampled_high_bit_pn_4_4_4_hsv_direct;
+#[cfg(feature = "yuv-semi-planar")]
 mod subsampled_high_bit_pn_hsv_direct;
 #[cfg(feature = "yuv-444-packed")]
 mod uyva;

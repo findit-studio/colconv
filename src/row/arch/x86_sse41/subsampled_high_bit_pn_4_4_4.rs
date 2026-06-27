@@ -837,3 +837,161 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const 
     }
   }
 }
+
+// ---- Pn 4:4:4 → HSV (staged via a reused 8-bit RGB chunk) -------------
+//
+// The SSE4.1 twins of the scalar `p_n_444_to_hsv_row` /
+// `p_n_444_16_to_hsv_row`. Rather than re-derive an HSV-specific register
+// pipeline, each fills a small fixed reused **8-bit** RGB scratch (one
+// `HSV_CHUNK`-pixel chunk at a time) with the EXISTING SSE4.1
+// `p_n_444_to_rgb_row::<BITS, BE>` / `p_n_444_16_to_rgb_row::<BE>` kernel
+// of this file — so the chunk filler IS the production 8-bit RGB kernel —
+// then runs the SSE4.1 `rgb_to_hsv_row` on the chunk. The result is
+// byte-identical to `rgb_to_hsv_row(p_n_444*_to_rgb_row(...))` within the
+// SSE4.1 tier, with no source-width RGB allocation. The scalar tail of
+// each underlying RGB kernel handles widths below the SIMD block, so no
+// separate tail is needed here. The driver is defined locally (mirroring
+// the 4:2:0 sibling); both compile under the same `yuv-semi-planar` gate.
+
+/// One reused 8-bit RGB chunk's worth of pixels staged before the HSV
+/// pass.
+const HSV_CHUNK: usize = 64;
+
+/// Shared SSE4.1 driver: walks `width` in `HSV_CHUNK`-pixel chunks, fills
+/// a small reused stack RGB scratch via `fill_rgb` (the existing SSE4.1
+/// 4:4:4 RGB kernel for the format, passed the chunk `offset` and length
+/// `n`), then runs the SSE4.1 [`rgb_to_hsv_row`] on that chunk into the
+/// H/S/V planes. Byte-identical to
+/// `rgb_to_hsv_row(p_n_444*_to_rgb_row(...))` within the SSE4.1 tier, with
+/// no source-width RGB allocation.
+///
+/// `fill_rgb` receives `(offset, n, &mut rgb_chunk)` and must write
+/// `n * 3` packed RGB bytes for the `n` pixels at `offset`.
+///
+/// # Safety
+///
+/// SSE4.1 must be available, and `fill_rgb` must uphold the underlying RGB
+/// kernel's safety contract for each chunk. Each of `h_out` / `s_out` /
+/// `v_out` must be `>= width`.
+#[inline]
+unsafe fn pn_hsv_via_rgb_chunks(
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  mut fill_rgb: impl FnMut(usize, usize, &mut [u8]),
+) {
+  let mut scratch = [0u8; HSV_CHUNK * 3];
+  let mut offset = 0;
+  while offset < width {
+    let n = (width - offset).min(HSV_CHUNK);
+    fill_rgb(offset, n, &mut scratch[..n * 3]);
+    // SAFETY: SSE4.1 verified by the wrapper's `#[target_feature]`; the
+    // chunk and the output sub-slices are all length `n`.
+    unsafe {
+      rgb_to_hsv_row(
+        &scratch[..n * 3],
+        &mut h_out[offset..offset + n],
+        &mut s_out[offset..offset + n],
+        &mut v_out[offset..offset + n],
+        n,
+      );
+    }
+    offset += n;
+  }
+}
+
+/// SSE4.1: high-bit-packed semi-planar 4:4:4 (P410/P412) → planar HSV
+/// bytes (OpenCV encoding), staged via the reused-8-bit-RGB-chunk pattern
+/// over the SSE4.1 [`p_n_444_to_rgb_row`] + [`rgb_to_hsv_row`].
+/// Const-generic over `BITS ∈ {10, 12}` and `BE`. Byte-identical to
+/// `rgb_to_hsv_row(p_n_444_to_rgb_row::<BITS, BE>(...))` within the SSE4.1
+/// tier.
+///
+/// # Safety
+///
+/// 1. The SSE4.1 feature must be available.
+/// 2. `y.len() >= width`, `uv_full.len() >= 2 * width`.
+/// 3. `h_out.len()`, `s_out.len()`, `v_out.len()` `>= width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn p_n_444_to_hsv_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  uv_full: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(uv_full.len() >= 2 * width, "uv_full row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  // SAFETY: the feature is the caller's obligation; the chunk filler
+  // forwards the per-chunk sub-slices to the SSE4.1 4:4:4 RGB kernel under
+  // the same contract (its own scalar tail covers small n). The UV
+  // sub-slice is offset by `offset * 2` because 4:4:4 carries one
+  // interleaved U/V pair per pixel.
+  unsafe {
+    pn_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      p_n_444_to_rgb_or_rgba_row::<BITS, false, BE>(
+        &y[offset..],
+        &uv_full[offset * 2..],
+        rgb,
+        n,
+        matrix,
+        full_range,
+      );
+    });
+  }
+}
+
+/// SSE4.1: P416 (semi-planar 4:4:4, 16-bit) → planar HSV bytes (OpenCV
+/// encoding), staged via the SSE4.1 [`p_n_444_16_to_rgb_row`] +
+/// [`rgb_to_hsv_row`]. `BE` selects the source byte order. Byte-identical
+/// to `rgb_to_hsv_row(p_n_444_16_to_rgb_row::<BE>(...))` within the SSE4.1
+/// tier.
+///
+/// # Safety
+///
+/// Same contract as [`p_n_444_to_hsv_row`].
+#[inline]
+#[target_feature(enable = "sse4.1")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn p_n_444_16_to_hsv_row<const BE: bool>(
+  y: &[u16],
+  uv_full: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(uv_full.len() >= 2 * width, "uv_full row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  // SAFETY: the feature is the caller's obligation; the chunk filler
+  // forwards to the SSE4.1 P416 RGB kernel under the same contract (its
+  // own scalar tail covers small n).
+  unsafe {
+    pn_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      p_n_444_16_to_rgb_or_rgba_row::<false, BE>(
+        &y[offset..],
+        &uv_full[offset * 2..],
+        rgb,
+        n,
+        matrix,
+        full_range,
+      );
+    });
+  }
+}

@@ -687,9 +687,36 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P210<BE>, R> {
     }
 
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
+    // HSV-without-RGB-or-RGBA goes through the direct `p010_to_hsv_row`
+    // kernel (no source-width RGB scratch). The per-row chroma contract of
+    // 4:2:2 matches 4:2:0's half-width interleaved UV, so the P210 row
+    // kernel IS the P010 one; the 4:2:0-vs-4:2:2 difference is purely
+    // vertical, resolved by the walker. When RGB or RGBA is also attached
+    // the RGB kernel runs anyway, so HSV derives off that buffer for free
+    // and `need_rgb_kernel` keeps it alive.
+    let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = rgb.is_some() || want_hsv;
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      p010_to_hsv_row_endian(
+        row.y(),
+        row.uv_half(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
@@ -1115,9 +1142,36 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P212<BE>, R> {
     }
 
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
+    // HSV-without-RGB-or-RGBA goes through the direct `p012_to_hsv_row`
+    // kernel (no source-width RGB scratch). The per-row chroma contract of
+    // 4:2:2 matches 4:2:0's half-width interleaved UV, so the P212 row
+    // kernel IS the P012 one; the 4:2:0-vs-4:2:2 difference is purely
+    // vertical, resolved by the walker. When RGB or RGBA is also attached
+    // the RGB kernel runs anyway, so HSV derives off that buffer for free
+    // and `need_rgb_kernel` keeps it alive.
+    let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = rgb.is_some() || want_hsv;
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      p012_to_hsv_row_endian(
+        row.y(),
+        row.uv_half(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
@@ -1543,9 +1597,36 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P216<BE>, R> {
     }
 
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
+    // HSV-without-RGB-or-RGBA goes through the direct `p016_to_hsv_row`
+    // kernel (no source-width RGB scratch). The per-row chroma contract of
+    // 4:2:2 matches 4:2:0's half-width interleaved UV, so the P216 row
+    // kernel IS the P016 one; the 4:2:0-vs-4:2:2 difference is purely
+    // vertical, resolved by the walker. When RGB or RGBA is also attached
+    // the RGB kernel runs anyway, so HSV derives off that buffer for free
+    // and `need_rgb_kernel` keeps it alive.
+    let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = rgb.is_some() || want_hsv;
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      p016_to_hsv_row_endian(
+        row.y(),
+        row.uv_half(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
