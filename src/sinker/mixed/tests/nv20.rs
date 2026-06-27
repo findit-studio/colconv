@@ -514,6 +514,9 @@ fn nv20_rgba_too_short_returns_err() {
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
+// Sweeps a fixed full-range NV20 frame for kernel parity; the deprecated
+// raw setter is intentional here (NV20 pins no range).
+#[allow(deprecated)]
 fn nv20_walker_matches_direct_le_and_be() {
   let (w, h) = (40u32, 4u32);
   let opts = YuvOptions::new()
