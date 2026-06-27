@@ -284,8 +284,238 @@ pub(crate) fn yuv_444p_n_to_hsv_row<const BITS: u32, const BE: bool>(
   );
 }
 
+/// MSB-aligned YUV 4:4:4 planar 10/12-bit → **u8** RGB dispatcher. The
+/// recovery-shift twin of [`yuv_444p_n_to_rgb_row`] (`Yuv444pNMsb`, samples in
+/// the high `BITS` bits). Const-generic over `BITS ∈ {10, 12}`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn yuv_444p_n_msb_to_rgb_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  let rgb_min = rgb_row_bytes(width);
+  assert!(y.len() >= width, "y row too short");
+  assert!(u.len() >= width, "u row too short");
+  assert!(v.len() >= width, "v row too short");
+  assert!(rgb_out.len() >= rgb_min, "rgb_out row too short");
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified.
+          unsafe {
+            arch::neon::yuv_444p_n_msb_to_rgb_row::<BITS, BE>(y, u, v, rgb_out, width, matrix, full_range);
+          }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX‑512BW verified.
+          unsafe {
+            arch::x86_avx512::yuv_444p_n_msb_to_rgb_row::<BITS, BE>(y, u, v, rgb_out, width, matrix, full_range);
+          }
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified.
+          unsafe {
+            arch::x86_avx2::yuv_444p_n_msb_to_rgb_row::<BITS, BE>(y, u, v, rgb_out, width, matrix, full_range);
+          }
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified.
+          unsafe {
+            arch::x86_sse41::yuv_444p_n_msb_to_rgb_row::<BITS, BE>(y, u, v, rgb_out, width, matrix, full_range);
+          }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 compile‑time verified.
+          unsafe {
+            arch::wasm_simd128::yuv_444p_n_msb_to_rgb_row::<BITS, BE>(y, u, v, rgb_out, width, matrix, full_range);
+          }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+
+  scalar::yuv_444p_n_msb_to_rgb_row::<BITS, BE>(y, u, v, rgb_out, width, matrix, full_range);
+}
+
+/// MSB-aligned YUV 4:4:4 planar 10/12-bit → **native-depth u16** RGB
+/// dispatcher (low-bit-packed output). The recovery-shift twin of
+/// [`yuv_444p_n_to_rgb_u16_row`]. Const-generic over `BITS ∈ {10, 12}`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn yuv_444p_n_msb_to_rgb_u16_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  let rgb_min = rgb_row_elems(width);
+  assert!(y.len() >= width, "y row too short");
+  assert!(u.len() >= width, "u row too short");
+  assert!(v.len() >= width, "v row too short");
+  assert!(rgb_out.len() >= rgb_min, "rgb_out row too short");
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified.
+          unsafe {
+            arch::neon::yuv_444p_n_msb_to_rgb_u16_row::<BITS, BE>(y, u, v, rgb_out, width, matrix, full_range);
+          }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX‑512BW verified.
+          unsafe {
+            arch::x86_avx512::yuv_444p_n_msb_to_rgb_u16_row::<BITS, BE>(y, u, v, rgb_out, width, matrix, full_range);
+          }
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified.
+          unsafe {
+            arch::x86_avx2::yuv_444p_n_msb_to_rgb_u16_row::<BITS, BE>(y, u, v, rgb_out, width, matrix, full_range);
+          }
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified.
+          unsafe {
+            arch::x86_sse41::yuv_444p_n_msb_to_rgb_u16_row::<BITS, BE>(y, u, v, rgb_out, width, matrix, full_range);
+          }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 compile‑time verified.
+          unsafe {
+            arch::wasm_simd128::yuv_444p_n_msb_to_rgb_u16_row::<BITS, BE>(y, u, v, rgb_out, width, matrix, full_range);
+          }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+
+  scalar::yuv_444p_n_msb_to_rgb_u16_row::<BITS, BE>(y, u, v, rgb_out, width, matrix, full_range);
+}
+
+/// MSB-aligned YUV 4:4:4 planar 10/12-bit → planar **HSV** dispatcher. The
+/// recovery-shift twin of [`yuv_444p_n_to_hsv_row`]. Const-generic over
+/// `BITS ∈ {10, 12}` and `BE`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn yuv_444p_n_msb_to_hsv_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  assert!(y.len() >= width, "y row too short");
+  assert!(u.len() >= width, "u row too short");
+  assert!(v.len() >= width, "v row too short");
+  assert!(h_out.len() >= width, "h_out row too short");
+  assert!(s_out.len() >= width, "s_out row too short");
+  assert!(v_out.len() >= width, "v_out row too short");
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified.
+          unsafe {
+            arch::neon::yuv_444p_n_msb_to_hsv_row::<BITS, BE>(
+              y, u, v, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX‑512BW verified.
+          unsafe {
+            arch::x86_avx512::yuv_444p_n_msb_to_hsv_row::<BITS, BE>(
+              y, u, v, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified.
+          unsafe {
+            arch::x86_avx2::yuv_444p_n_msb_to_hsv_row::<BITS, BE>(
+              y, u, v, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified.
+          unsafe {
+            arch::x86_sse41::yuv_444p_n_msb_to_hsv_row::<BITS, BE>(
+              y, u, v, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 compile‑time verified.
+          unsafe {
+            arch::wasm_simd128::yuv_444p_n_msb_to_hsv_row::<BITS, BE>(
+              y, u, v, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+
+  scalar::yuv_444p_n_msb_to_hsv_row::<BITS, BE>(
+    y, u, v, h_out, s_out, v_out, width, matrix, full_range,
+  );
+}
+
 pub(super) mod yuv444p10;
+pub(super) mod yuv444p10_msb;
 pub(super) mod yuv444p12;
+pub(super) mod yuv444p12_msb;
 pub(super) mod yuv444p14;
 pub(super) mod yuv444p16;
 pub(super) mod yuv444p9;
@@ -294,6 +524,8 @@ pub(super) mod yuv_444;
 pub use yuv_444::*;
 pub use yuv444p9::*;
 pub use yuv444p10::*;
+pub use yuv444p10_msb::*;
 pub use yuv444p12::*;
+pub use yuv444p12_msb::*;
 pub use yuv444p14::*;
 pub use yuv444p16::*;

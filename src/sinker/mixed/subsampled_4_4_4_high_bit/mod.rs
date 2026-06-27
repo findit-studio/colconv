@@ -6,6 +6,8 @@
 mod p4xx;
 #[cfg(feature = "yuv-planar")]
 mod yuv444p;
+#[cfg(feature = "yuv-planar")]
+mod yuv444p_msb;
 
 #[cfg(all(
   test,

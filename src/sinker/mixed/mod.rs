@@ -2171,6 +2171,29 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// `process`, reset in `begin_frame`.
   #[cfg(feature = "yuv-planar")]
   native_planar_u16: Option<std::boxed::Box<planar_high_bit_native::NativePlanarYuvU16>>,
+  /// De-pack staging for the native fast tier of the **MSB-aligned high-bit
+  /// planar** 4:4:4 family ([`Yuv444p10Msb`](crate::source::Yuv444p10Msb) /
+  /// [`Yuv444p12Msb`](crate::source::Yuv444p12Msb)). Each plane is
+  /// high-bit-packed (`logical << (16 - BITS)`); the native wrapper
+  /// wire-decodes (`from_le` / `from_be`) and DE-PACKS (`>> (16 - BITS)`) each
+  /// of Y / U / V into these host-native LOGICAL `u16` scratches before the
+  /// reused HIGH-BIT non-4:2:0 planar join
+  /// ([`planar_high_bit_native::yuv_planar16_process_native`]) bins them at
+  /// `Yuv444p` geometry (the MSB twin of the low-bit family, which feeds the
+  /// join directly — no de-pack). `yuv444_msb_y_depack` grows to `width` on
+  /// every native row; `yuv444_msb_u_depack` / `yuv444_msb_v_depack` grow to
+  /// `width` each only on a colour native row (4:4:4 chroma is full-width);
+  /// empty otherwise.
+  #[cfg(feature = "yuv-planar")]
+  yuv444_msb_y_depack: Vec<u16>,
+  /// U-plane de-pack scratch for the native MSB-aligned planar 4:4:4 tier;
+  /// twin of [`Self::yuv444_msb_y_depack`].
+  #[cfg(feature = "yuv-planar")]
+  yuv444_msb_u_depack: Vec<u16>,
+  /// V-plane de-pack scratch for the native MSB-aligned planar 4:4:4 tier;
+  /// twin of [`Self::yuv444_msb_u_depack`].
+  #[cfg(feature = "yuv-planar")]
+  yuv444_msb_v_depack: Vec<u16>,
   /// Half-width U / V de-interleave staging for the native 4:2:0
   /// decimation tier of the **semi-planar** family
   /// ([`Nv12`](crate::source::Nv12) / [`Nv21`](crate::source::Nv21)):
@@ -3311,6 +3334,12 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       native_420_u16: None,
       #[cfg(feature = "yuv-planar")]
       native_planar_u16: None,
+      #[cfg(feature = "yuv-planar")]
+      yuv444_msb_y_depack: Vec::new(),
+      #[cfg(feature = "yuv-planar")]
+      yuv444_msb_u_depack: Vec::new(),
+      #[cfg(feature = "yuv-planar")]
+      yuv444_msb_v_depack: Vec::new(),
       #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
       semi_planar_u_half: Vec::new(),
       #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
@@ -14118,19 +14147,13 @@ use planar_high_bit_native::yuv_planar16_process_native;
 // `Y210` / `Y212` / `Y216` tier) reuses the same join + preflight after
 // de-packing + de-interleaving the YUYV-ordered MSB-aligned u16 words. Bring
 // the join type + preflight into the `mixed` scope so those sinks reach them by
-// `super::{..}` / `super::super::{..}`. Gated to the intersection of `yuv-planar`
-// (where the join lives) and any consuming family (`yuv-semi-planar` for the
-// P-format wrappers, `y2xx` for the packed 4:2:2 wrapper, `yuv-444-packed` for
-// the packed 4:4:4 V410 / Xv36 wrapper).
-#[cfg(all(
-  any(
-    feature = "yuv-semi-planar",
-    feature = "y2xx",
-    feature = "yuv-444-packed",
-    feature = "v210"
-  ),
-  feature = "yuv-planar"
-))]
+// `super::{..}` / `super::super::{..}`. The MSB-aligned planar 4:4:4 native
+// wrapper (`subsampled_4_4_4_high_bit::yuv444p_msb`) is a `yuv-planar`-only
+// consumer (it de-packs the high-bit samples then reuses the same join +
+// preflight as the low-bit twin), so the re-export tracks `yuv-planar` alone —
+// matching the [`yuv_planar16_process_native`] re-export above; the
+// semi-planar / `y2xx` / packed-4:4:4 wrappers are additional consumers.
+#[cfg(feature = "yuv-planar")]
 use planar_high_bit_native::{NativePlanarYuvU16, native_planar_hb_preflight};
 // The source-scratch alloc failpoint is armed only by the high-bit planar
 // native suite, which is gated on `rgb` (its colour oracle), so its re-export

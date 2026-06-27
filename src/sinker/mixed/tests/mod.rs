@@ -362,6 +362,8 @@ mod semi_planar_8bit;
 mod semi_planar_hsv_direct;
 #[cfg(feature = "yuv-planar")]
 mod subsampled_4_2_0_high_bit;
+#[cfg(feature = "yuv-planar")]
+mod yuv444p_msb;
 // Exercises the high-bit semi-planar P-format `MixedSinker` impls (the
 // P210/P410 sanity + walker-SIMD suites run under yuv-semi-planar-solo);
 // the planar Yuv4*p cross-check tests + their frame helper are gated on

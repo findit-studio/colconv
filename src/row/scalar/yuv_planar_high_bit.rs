@@ -1,5 +1,26 @@
 use super::{load_u16, *};
 
+/// Recovers the `BITS`-bit logical sample from one **endian-normalized** wire
+/// `u16` for the high-bit planar YUV family.
+///
+/// `MSB = false` (low-bit-packed `Yuv444pN`, samples in the low `BITS`) masks
+/// the active low `BITS` (`& ((1 << BITS) - 1)`); `MSB = true` (MSB-aligned
+/// `Yuv444pNMsb`, samples in the high `BITS`, FFmpeg `shift = 16 - BITS`)
+/// right-shifts the active high `BITS` down (`>> (16 - BITS)`). `value` must
+/// already be host-native (apply [`load_u16`] first). Both `BITS` and `MSB`
+/// are const, so the branch folds and the unused path is eliminated per
+/// monomorphisation. Mirrors the semi-planar [`depack_pn`](super::subsampled_high_bit_pn)
+/// helper; mispacked input has the wrong bits discarded (the deliberate,
+/// SIMD-matching failure mode).
+#[cfg_attr(not(tarpaulin), inline(always))]
+const fn extract_hb<const BITS: u32, const MSB: bool>(value: u16) -> u16 {
+  if MSB {
+    value >> (16 - BITS)
+  } else {
+    value & bits_mask::<BITS>()
+  }
+}
+
 // ---- High-bit-depth YUV 4:2:0 → RGB (BITS ∈ {10, 12, 14}) -------------
 
 /// Converts one row of high-bit-depth 4:2:0 YUV (`u16` samples in the
@@ -481,8 +502,45 @@ pub(crate) fn yuv_444p_n_to_rgb_row<const BITS: u32, const BE: bool>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_444p_n_to_rgb_or_rgba_row::<BITS, false, false, BE>(
+  yuv_444p_n_to_rgb_or_rgba_row::<BITS, false, false, BE, false>(
     y, u, v, None, rgb_out, width, matrix, full_range,
+  );
+}
+
+/// MSB-aligned YUV 4:4:4 planar high-bit-depth → **u8** packed RGB. The
+/// recovery-shift twin of [`yuv_444p_n_to_rgb_row`] for the `Yuv444pNMsb`
+/// family (samples in the high `BITS` bits, `shift = 16 - BITS`). Pinned to
+/// `BITS ∈ {10, 12}` (FFmpeg ships only `yuv444p10msb` / `yuv444p12msb`).
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn yuv_444p_n_msb_to_rgb_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  yuv_444p_n_to_rgb_or_rgba_row::<BITS, false, false, BE, true>(
+    y, u, v, None, rgb_out, width, matrix, full_range,
+  );
+}
+
+/// MSB-aligned YUV 4:4:4 planar high-bit-depth → **u8** packed **RGBA**
+/// (opaque alpha `0xFF`). The recovery-shift twin of
+/// [`yuv_444p_n_to_rgba_row`] for the `Yuv444pNMsb` family.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn yuv_444p_n_msb_to_rgba_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, false, BE, true>(
+    y, u, v, None, rgba_out, width, matrix, full_range,
   );
 }
 
@@ -508,7 +566,7 @@ pub(crate) fn yuv_444p_n_to_rgba_row<const BITS: u32, const BE: bool>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, false, BE>(
+  yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, false, BE, false>(
     y, u, v, None, rgba_out, width, matrix, full_range,
   );
 }
@@ -541,7 +599,7 @@ pub(crate) fn yuv_444p_n_to_rgba_with_alpha_src_row<const BITS: u32, const BE: b
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, true, BE>(
+  yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, true, BE, false>(
     y,
     u,
     v,
@@ -579,6 +637,7 @@ pub(crate) fn yuv_444p_n_to_rgb_or_rgba_row<
   const ALPHA: bool,
   const ALPHA_SRC: bool,
   const BE: bool,
+  const MSB: bool,
 >(
   y: &[u16],
   u: &[u16],
@@ -598,6 +657,9 @@ pub(crate) fn yuv_444p_n_to_rgb_or_rgba_row<
   // Source alpha requires RGBA output — there is no 3 bpp store with
   // alpha to put it in.
   const { assert!(!ALPHA_SRC || ALPHA) };
+  // The MSB-aligned variant has no alpha plane (FFmpeg ships only
+  // `yuv444p{10,12}msb`), so `ALPHA_SRC` is always low-bit-masked.
+  const { assert!(!MSB || !ALPHA_SRC) };
   let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width, "y row too short");
   debug_assert!(u.len() >= width, "u row too short");
@@ -613,18 +675,29 @@ pub(crate) fn yuv_444p_n_to_rgb_or_rgba_row<
   let coeffs = Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = range_params_n::<BITS, 8>(full_range);
   let bias = chroma_bias::<BITS>();
-  let mask = bits_mask::<BITS>();
 
   for x in 0..width {
-    // 4:4:4: one UV pair per pixel, no subsampling.
-    let u_d = q15_scale((load_u16::<BE>(u[x]) & mask) as i32 - bias, c_scale);
-    let v_d = q15_scale((load_u16::<BE>(v[x]) & mask) as i32 - bias, c_scale);
+    // 4:4:4: one UV pair per pixel, no subsampling. The sample is recovered
+    // from the wire `u16` via [`extract_hb`]: low-bit mask (`MSB = false`,
+    // `Yuv444pN`) or `>> (16 - BITS)` recovery shift (`MSB = true`,
+    // `Yuv444pNMsb`).
+    let u_d = q15_scale(
+      extract_hb::<BITS, MSB>(load_u16::<BE>(u[x])) as i32 - bias,
+      c_scale,
+    );
+    let v_d = q15_scale(
+      extract_hb::<BITS, MSB>(load_u16::<BE>(v[x])) as i32 - bias,
+      c_scale,
+    );
 
     let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
     let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
     let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
-    let y0 = q15_scale((load_u16::<BE>(y[x]) & mask) as i32 - y_off, y_scale);
+    let y0 = q15_scale(
+      extract_hb::<BITS, MSB>(load_u16::<BE>(y[x])) as i32 - y_off,
+      y_scale,
+    );
     out[x * bpp] = clamp_u8(y0 + r_chroma);
     out[x * bpp + 1] = clamp_u8(y0 + g_chroma);
     out[x * bpp + 2] = clamp_u8(y0 + b_chroma);
@@ -635,7 +708,7 @@ pub(crate) fn yuv_444p_n_to_rgb_or_rgba_row<
       // out-of-range u16 samples, and an unmasked overrange value
       // (e.g. 1024 at BITS=10) would shift down to 256 → cast-to-u8 0,
       // silently turning over-range alpha into transparent output.
-      let a_u16 = load_u16::<BE>(a_src.as_ref().unwrap()[x]) & mask;
+      let a_u16 = load_u16::<BE>(a_src.as_ref().unwrap()[x]) & bits_mask::<BITS>();
       out[x * bpp + 3] = (a_u16 >> (BITS - 8)) as u8;
     } else if ALPHA {
       out[x * bpp + 3] = 0xFF;
@@ -663,8 +736,44 @@ pub(crate) fn yuv_444p_n_to_rgb_u16_row<const BITS: u32, const BE: bool>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, false, false, BE>(
+  yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, false, false, BE, false>(
     y, u, v, None, rgb_out, width, matrix, full_range,
+  );
+}
+
+/// MSB-aligned YUV 4:4:4 planar high-bit-depth → **native-depth `u16`**
+/// packed RGB (low-bit-packed output). The recovery-shift twin of
+/// [`yuv_444p_n_to_rgb_u16_row`] for the `Yuv444pNMsb` family.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn yuv_444p_n_msb_to_rgb_u16_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, false, false, BE, true>(
+    y, u, v, None, rgb_out, width, matrix, full_range,
+  );
+}
+
+/// MSB-aligned YUV 4:4:4 planar high-bit-depth → **native-depth `u16`**
+/// packed **RGBA** (opaque alpha `(1 << BITS) - 1`). The recovery-shift twin
+/// of [`yuv_444p_n_to_rgba_u16_row`] for the `Yuv444pNMsb` family.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn yuv_444p_n_msb_to_rgba_u16_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, false, BE, true>(
+    y, u, v, None, rgba_out, width, matrix, full_range,
   );
 }
 
@@ -691,7 +800,7 @@ pub(crate) fn yuv_444p_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, false, BE>(
+  yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, false, BE, false>(
     y, u, v, None, rgba_out, width, matrix, full_range,
   );
 }
@@ -725,7 +834,7 @@ pub(crate) fn yuv_444p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32, const B
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, true, BE>(
+  yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, true, BE, false>(
     y,
     u,
     v,
@@ -757,6 +866,7 @@ pub(crate) fn yuv_444p_n_to_rgb_or_rgba_u16_row<
   const ALPHA: bool,
   const ALPHA_SRC: bool,
   const BE: bool,
+  const MSB: bool,
 >(
   y: &[u16],
   u: &[u16],
@@ -773,6 +883,8 @@ pub(crate) fn yuv_444p_n_to_rgb_or_rgba_u16_row<
   const { assert!(BITS == 9 || BITS == 10 || BITS == 12 || BITS == 14) };
   // Source alpha requires RGBA output.
   const { assert!(!ALPHA_SRC || ALPHA) };
+  // The MSB-aligned variant carries no alpha plane.
+  const { assert!(!MSB || !ALPHA_SRC) };
   let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width, "y row too short");
   debug_assert!(u.len() >= width, "u row too short");
@@ -789,18 +901,28 @@ pub(crate) fn yuv_444p_n_to_rgb_or_rgba_u16_row<
   let (y_off, y_scale, c_scale) = range_params_n::<BITS, BITS>(full_range);
   let bias = chroma_bias::<BITS>();
   let out_max: i32 = (1i32 << BITS) - 1;
-  let mask = bits_mask::<BITS>();
   let alpha_max: u16 = out_max as u16;
 
   for x in 0..width {
-    let u_d = q15_scale((load_u16::<BE>(u[x]) & mask) as i32 - bias, c_scale);
-    let v_d = q15_scale((load_u16::<BE>(v[x]) & mask) as i32 - bias, c_scale);
+    // `MSB = false` masks the low `BITS`; `MSB = true` recovers via
+    // `>> (16 - BITS)` — see [`extract_hb`].
+    let u_d = q15_scale(
+      extract_hb::<BITS, MSB>(load_u16::<BE>(u[x])) as i32 - bias,
+      c_scale,
+    );
+    let v_d = q15_scale(
+      extract_hb::<BITS, MSB>(load_u16::<BE>(v[x])) as i32 - bias,
+      c_scale,
+    );
 
     let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
     let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
     let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
-    let y0 = q15_scale((load_u16::<BE>(y[x]) & mask) as i32 - y_off, y_scale);
+    let y0 = q15_scale(
+      extract_hb::<BITS, MSB>(load_u16::<BE>(y[x])) as i32 - y_off,
+      y_scale,
+    );
     out[x * bpp] = (y0 + r_chroma).clamp(0, out_max) as u16;
     out[x * bpp + 1] = (y0 + g_chroma).clamp(0, out_max) as u16;
     out[x * bpp + 2] = (y0 + b_chroma).clamp(0, out_max) as u16;
@@ -810,7 +932,7 @@ pub(crate) fn yuv_444p_n_to_rgb_or_rgba_u16_row<
       // out-of-range u16 samples, and the documented native-depth
       // output range is `[0, (1 << BITS) - 1]`. Without masking, an
       // overrange `1024` at BITS=10 would leak straight to output.
-      out[x * bpp + 3] = load_u16::<BE>(a_src.as_ref().unwrap()[x]) & mask;
+      out[x * bpp + 3] = load_u16::<BE>(a_src.as_ref().unwrap()[x]) & bits_mask::<BITS>();
     } else if ALPHA {
       out[x * bpp + 3] = alpha_max;
     }
@@ -967,6 +1089,69 @@ pub(crate) fn yuv_444p_n_to_hsv_row<const BITS: u32, const BE: bool>(
     let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
     let y0 = q15_scale((load_u16::<BE>(y[x]) & mask) as i32 - y_off, y_scale);
+    let (h, s, vv) = rgb_to_hsv_pixel(
+      clamp_u8(y0 + r_chroma) as i32,
+      clamp_u8(y0 + g_chroma) as i32,
+      clamp_u8(y0 + b_chroma) as i32,
+    );
+    h_out[x] = h;
+    s_out[x] = s;
+    v_out[x] = vv;
+  }
+}
+
+/// MSB-aligned YUV 4:4:4 planar high-bit-depth → planar HSV bytes. The
+/// recovery-shift twin of [`yuv_444p_n_to_hsv_row`] for the `Yuv444pNMsb`
+/// family (`BITS ∈ {10, 12}`, samples in the high `BITS`, recovered via
+/// `>> (16 - BITS)`). Byte-identical to
+/// `rgb_to_hsv_row(yuv_444p_n_msb_to_rgb_row::<BITS, BE>(...))`.
+///
+/// # Panics (debug builds)
+///
+/// - `y.len() >= width`, `u.len() >= width`, `v.len() >= width`, and
+///   each of `h_out` / `s_out` / `v_out` `>= width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn yuv_444p_n_msb_to_hsv_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  const { assert!(BITS == 9 || BITS == 10 || BITS == 12 || BITS == 14) };
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(u.len() >= width, "u row too short");
+  debug_assert!(v.len() >= width, "v row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  let coeffs = Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = range_params_n::<BITS, 8>(full_range);
+  let bias = chroma_bias::<BITS>();
+
+  for x in 0..width {
+    let u_d = q15_scale(
+      extract_hb::<BITS, true>(load_u16::<BE>(u[x])) as i32 - bias,
+      c_scale,
+    );
+    let v_d = q15_scale(
+      extract_hb::<BITS, true>(load_u16::<BE>(v[x])) as i32 - bias,
+      c_scale,
+    );
+    let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
+    let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
+    let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
+
+    let y0 = q15_scale(
+      extract_hb::<BITS, true>(load_u16::<BE>(y[x])) as i32 - y_off,
+      y_scale,
+    );
     let (h, s, vv) = rgb_to_hsv_pixel(
       clamp_u8(y0 + r_chroma) as i32,
       clamp_u8(y0 + g_chroma) as i32,
