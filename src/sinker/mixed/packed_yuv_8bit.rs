@@ -942,6 +942,33 @@ impl<R> PixelSink for MixedSinker<'_, Yuyv422, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
+    // Strategy A output mode resolution — resolved BEFORE any output write so
+    // the atomicity preflight below runs ahead of the luma writes.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // planar / semi-planar siblings): reserve the only fallible row scratch this
+    // row can grow BEFORE any output row (luma / luma_u16 included) is written,
+    // so an allocator refusal returns a typed `AllocationFailed` leaving the
+    // output frame untouched rather than partially mutated. The sole growable
+    // scratch is the RGB row buffer, taken exactly when a colour decode needs an
+    // RGB row but no caller RGB buffer is borrowable — `want_hsv && want_rgba &&
+    // !want_rgb` (`rgb_row_buf_or_scratch`'s own scratch arm; an attached RGB
+    // buffer is borrowed instead and never allocates). The later decode call
+    // then reuses the already-sized buffer.
+    if want_hsv && want_rgba && !want_rgb {
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     // Luma u8 — extract Y bytes from packed plane via dedicated kernel.
     if let Some(luma) = luma.as_deref_mut() {
       yuyv422_to_luma_row(
@@ -965,9 +992,6 @@ impl<R> PixelSink for MixedSinker<'_, Yuyv422, R> {
     // kernel (no source-width RGB scratch). When RGB or RGBA is *also*
     // attached the RGB kernel runs anyway, so HSV derives off that buffer
     // for free (the cheap path) and `need_rgb_kernel` keeps it alive.
-    let want_rgb = rgb.is_some();
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
     let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
     let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
 
@@ -1303,6 +1327,33 @@ impl<R> PixelSink for MixedSinker<'_, Uyvy422, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
+    // Strategy A output mode resolution — resolved BEFORE any output write so
+    // the atomicity preflight below runs ahead of the luma writes.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // planar / semi-planar siblings): reserve the only fallible row scratch this
+    // row can grow BEFORE any output row (luma / luma_u16 included) is written,
+    // so an allocator refusal returns a typed `AllocationFailed` leaving the
+    // output frame untouched rather than partially mutated. The sole growable
+    // scratch is the RGB row buffer, taken exactly when a colour decode needs an
+    // RGB row but no caller RGB buffer is borrowable — `want_hsv && want_rgba &&
+    // !want_rgb` (`rgb_row_buf_or_scratch`'s own scratch arm; an attached RGB
+    // buffer is borrowed instead and never allocates). The later decode call
+    // then reuses the already-sized buffer.
+    if want_hsv && want_rgba && !want_rgb {
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     if let Some(luma) = luma.as_deref_mut() {
       uyvy422_to_luma_row(
         packed,
@@ -1325,9 +1376,6 @@ impl<R> PixelSink for MixedSinker<'_, Uyvy422, R> {
     // kernel (no source-width RGB scratch). When RGB or RGBA is *also*
     // attached the RGB kernel runs anyway, so HSV derives off that buffer
     // for free (the cheap path) and `need_rgb_kernel` keeps it alive.
-    let want_rgb = rgb.is_some();
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
     let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
     let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
 
@@ -1657,6 +1705,33 @@ impl<R> PixelSink for MixedSinker<'_, Yvyu422, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
+    // Strategy A output mode resolution — resolved BEFORE any output write so
+    // the atomicity preflight below runs ahead of the luma writes.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // planar / semi-planar siblings): reserve the only fallible row scratch this
+    // row can grow BEFORE any output row (luma / luma_u16 included) is written,
+    // so an allocator refusal returns a typed `AllocationFailed` leaving the
+    // output frame untouched rather than partially mutated. The sole growable
+    // scratch is the RGB row buffer, taken exactly when a colour decode needs an
+    // RGB row but no caller RGB buffer is borrowable — `want_hsv && want_rgba &&
+    // !want_rgb` (`rgb_row_buf_or_scratch`'s own scratch arm; an attached RGB
+    // buffer is borrowed instead and never allocates). The later decode call
+    // then reuses the already-sized buffer.
+    if want_hsv && want_rgba && !want_rgb {
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     if let Some(luma) = luma.as_deref_mut() {
       yvyu422_to_luma_row(
         packed,
@@ -1679,9 +1754,6 @@ impl<R> PixelSink for MixedSinker<'_, Yvyu422, R> {
     // kernel (no source-width RGB scratch). When RGB or RGBA is *also*
     // attached the RGB kernel runs anyway, so HSV derives off that buffer
     // for free (the cheap path) and `need_rgb_kernel` keeps it alive.
-    let want_rgb = rgb.is_some();
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
     let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
     let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
 
