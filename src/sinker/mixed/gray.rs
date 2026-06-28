@@ -208,6 +208,34 @@ impl<R> PixelSink for MixedSinker<'_, Gray8, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
+    // Output-mode flags — resolved BEFORE any output row is written so the
+    // atomicity preflight below runs ahead of the luma copy.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // planar / semi-planar / packed-YUV siblings): the only fallible row
+    // scratch this path can grow is the RGB row buffer, and its allocating
+    // (`None`) arm is reached for exactly one identity shape —
+    // `want_hsv && want_rgba && !want_rgb` (every other `!want_rgb` case is
+    // served by a standalone RGBA / HSV fast path below that never stages RGB).
+    // Because the luma plane (Gray8: Y IS luma, copied verbatim) and luma_u16
+    // are written before that scratch, reserve it up front so an allocator
+    // refusal returns a typed `AllocationFailed` leaving the output frame
+    // untouched rather than partially mutated. The later staging call reuses
+    // the already-sized buffer (default path byte-identical).
+    if want_hsv && want_rgba && !want_rgb {
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     // Luma u8 — Gray8: Y IS luma; copy directly (no kernel overhead).
     // Luma outputs always pass raw Y through — no full_range rescaling.
     if let Some(buf) = luma.as_deref_mut() {
@@ -224,10 +252,7 @@ impl<R> PixelSink for MixedSinker<'_, Gray8, R> {
       );
     }
 
-    // u8 RGB / RGBA / HSV path.
-    let want_rgb = rgb.is_some();
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
+    // u8 RGB / RGBA / HSV path (flags hoisted above for the atomicity preflight).
 
     // Standalone RGBA fast path — no RGB or HSV requested.
     if want_rgba && !want_rgb && !want_hsv {
@@ -567,6 +592,33 @@ fn process_gray_n<'a, const BITS: u32, const BE: bool>(
   let one_plane_start = idx * w;
   let one_plane_end = one_plane_start + w;
 
+  // Output-mode flags — resolved BEFORE any output row is written so the
+  // atomicity preflight below runs ahead of the luma writes.
+  let want_rgb = rgb.is_some();
+  let want_rgba = rgba.is_some();
+  let want_hsv = hsv.is_some();
+
+  // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+  // planar / semi-planar / packed-YUV siblings): the only fallible row scratch
+  // this path can grow is the RGB row buffer, and its allocating (`None`) arm
+  // is reached for exactly one identity shape — `want_hsv && want_rgba &&
+  // !want_rgb` (every other `!want_rgb` case is served by a standalone RGBA /
+  // HSV fast path below that never stages RGB). Because raw-Y luma, luma_u16
+  // and the u16 RGB/RGBA rows are written before that scratch, reserve it up
+  // front so an allocator refusal returns a typed `AllocationFailed` leaving
+  // the output frame untouched rather than partially mutated. The later staging
+  // call reuses the already-sized buffer (default path byte-identical).
+  if want_hsv && want_rgba && !want_rgb {
+    rgb_row_buf_or_scratch(
+      rgb.as_deref_mut(),
+      rgb_scratch,
+      one_plane_start,
+      one_plane_end,
+      w,
+      h,
+    )?;
+  }
+
   // Luma u8 — always passes raw Y through, no full_range rescaling.
   if let Some(buf) = luma.as_deref_mut() {
     gray_n_to_luma_row::<BITS, BE>(
@@ -614,10 +666,7 @@ fn process_gray_n<'a, const BITS: u32, const BE: bool>(
     }
   }
 
-  // u8 RGB / RGBA / HSV path.
-  let want_rgb = rgb.is_some();
-  let want_rgba = rgba.is_some();
-  let want_hsv = hsv.is_some();
+  // u8 RGB / RGBA / HSV path (flags hoisted above for the atomicity preflight).
 
   // Standalone RGBA fast path.
   if want_rgba && !want_rgb && !want_hsv {
@@ -3954,6 +4003,34 @@ impl<R> PixelSink for MixedSinker<'_, Ya8, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
+    // Output-mode flags — resolved BEFORE any output row is written so the
+    // atomicity preflight below runs ahead of the luma writes.
+    let want_rgb = self.rgb.is_some();
+    let want_rgba = self.rgba.is_some();
+    let want_hsv = self.hsv.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // planar / semi-planar / packed-YUV siblings): the only fallible row
+    // scratch this path can grow is the RGB row buffer, and its allocating
+    // (`None`) arm is reached for exactly one identity shape —
+    // `want_hsv && want_rgba && !want_rgb` (every other `!want_rgb` case is
+    // served by a standalone RGBA / HSV fast path below that never stages RGB).
+    // Because native-Y luma, luma_u16 and the u16 RGB/RGBA rows are written
+    // before that scratch, reserve it up front so an allocator refusal returns
+    // a typed `AllocationFailed` leaving the output frame untouched rather than
+    // partially mutated. The later staging call reuses the already-sized buffer
+    // (default path byte-identical).
+    if want_hsv && want_rgba && !want_rgb {
+      rgb_row_buf_or_scratch(
+        self.rgb.as_deref_mut(),
+        &mut self.rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     // luma u8.
     if let Some(buf) = self.luma.as_deref_mut() {
       ya8_to_luma_row(
@@ -3995,10 +4072,8 @@ impl<R> PixelSink for MixedSinker<'_, Ya8, R> {
       ya8_to_rgba_u16_row(packed, rgba_u16_row, w, use_simd);
     }
 
-    // u8 RGB / RGBA / HSV path. Strategy A+: rgb first, then copy α into rgba.
-    let want_rgb = self.rgb.is_some();
-    let want_rgba = self.rgba.is_some();
-    let want_hsv = self.hsv.is_some();
+    // u8 RGB / RGBA / HSV path (flags hoisted above for the atomicity
+    // preflight). Strategy A+: rgb first, then copy α into rgba.
 
     // Standalone RGBA fast path (no RGB or HSV).
     if want_rgba && !want_rgb && !want_hsv {
@@ -4353,6 +4428,34 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Ya16<BE>, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
+    // Output-mode flags — resolved BEFORE any output row is written so the
+    // atomicity preflight below runs ahead of the luma writes.
+    let want_rgb = self.rgb.is_some();
+    let want_rgba = self.rgba.is_some();
+    let want_hsv = self.hsv.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // planar / semi-planar / packed-YUV siblings): the only fallible row
+    // scratch this path can grow is the RGB row buffer, and its allocating
+    // (`None`) arm is reached for exactly one identity shape —
+    // `want_hsv && want_rgba && !want_rgb` (every other `!want_rgb` case is
+    // served by a standalone RGBA / HSV fast path below that never stages RGB).
+    // Because `Y >> 8` luma, luma_u16 and the u16 RGB/RGBA rows are written
+    // before that scratch, reserve it up front so an allocator refusal returns
+    // a typed `AllocationFailed` leaving the output frame untouched rather than
+    // partially mutated. The later staging call reuses the already-sized buffer
+    // (default path byte-identical).
+    if want_hsv && want_rgba && !want_rgb {
+      rgb_row_buf_or_scratch(
+        self.rgb.as_deref_mut(),
+        &mut self.rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     // luma u8 — `Y >> 8`.
     if let Some(buf) = self.luma.as_deref_mut() {
       ya16_to_luma_row::<BE>(
@@ -4405,10 +4508,8 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Ya16<BE>, R> {
       }
     }
 
-    // u8 RGB / RGBA / HSV path. Strategy A+: rgb first, then copy α into rgba.
-    let want_rgb = self.rgb.is_some();
-    let want_rgba = self.rgba.is_some();
-    let want_hsv = self.hsv.is_some();
+    // u8 RGB / RGBA / HSV path (flags hoisted above for the atomicity
+    // preflight). Strategy A+: rgb first, then copy α into rgba.
 
     // Standalone RGBA fast path.
     if want_rgba && !want_rgb && !want_hsv {

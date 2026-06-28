@@ -1781,3 +1781,205 @@ fn gray32_be_endian_matches_le() {
 
   assert_eq!(rgb_le, rgb_be, "BE and LE Gray32 RGB must match");
 }
+
+// ---- Atomicity (#308) -------------------------------------------------------
+//
+// The gray identity-path `process` impls that route the `want_hsv && want_rgba
+// && !want_rgb` combo through the RGB row scratch (Gray8, Ya8, GrayN, Ya16 —
+// the narrow `want_hsv && !want_rgb && !want_rgba` HSV intercept lets that one
+// shape fall through, unlike the broad-intercept Gray16/Gray32/Grayf* which
+// never reach the scratch's allocating arm) must run the RGB-scratch preflight
+// BEFORE any output row (luma included) is written, so an allocator refusal
+// returns a recoverable `AllocationFailed` leaving the output frame untouched
+// rather than partially mutated. Each test attaches `luma + RGBA + HSV` (no
+// RGB) — the lone identity shape that reaches `rgb_row_buf_or_scratch`'s scratch
+// arm — and proves the source-copied luma plane stays at its sentinel. Reuses
+// the crate's RGB-scratch failpoint (`yuva`-gated, so these tests are too).
+
+#[cfg(feature = "yuva")]
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn gray8_rgb_scratch_alloc_failure_leaves_outputs_untouched() {
+  use super::super::MixedSinkerError;
+  use crate::resample::ResampleError;
+
+  let (w, h) = (16usize, 8usize);
+  let n = w * h;
+  let plane = std::vec![0x12u8; n];
+  let frame = make_gray8_frame(&plane, w as u32, h as u32);
+  let mut luma = std::vec![0xABu8; n];
+  let mut rgba = std::vec![0xCDu8; n * 4];
+  let (mut hh, mut ss, mut vv) = (
+    std::vec![0xCDu8; n],
+    std::vec![0xCDu8; n],
+    std::vec![0xCDu8; n],
+  );
+  let mut sink = MixedSinker::<crate::source::Gray8>::new(w, h)
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
+
+  super::super::arm_rgb_scratch_alloc_failure();
+  let err = gray8_to(&frame, FR, M, &mut sink).unwrap_err();
+  drop(sink);
+
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "RGB-scratch refusal must surface as a recoverable AllocationFailed, got {err:?}"
+  );
+  assert!(
+    luma.iter().all(|&b| b == 0xAB),
+    "luma (Gray8: Y copied before the scratch) must be untouched on the alloc-failure path"
+  );
+}
+
+#[cfg(feature = "yuva")]
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn ya8_rgb_scratch_alloc_failure_leaves_outputs_untouched() {
+  use super::super::MixedSinkerError;
+  use crate::resample::ResampleError;
+
+  let (w, h) = (16usize, 8usize);
+  let n = w * h;
+  let packed: std::vec::Vec<u8> = (0..n).flat_map(|_| [0x12u8, 0x80u8]).collect();
+  let frame = Ya8Frame::new(&packed, w as u32, h as u32, (w * 2) as u32);
+  let mut luma = std::vec![0xABu8; n];
+  let mut rgba = std::vec![0xCDu8; n * 4];
+  let (mut hh, mut ss, mut vv) = (
+    std::vec![0xCDu8; n],
+    std::vec![0xCDu8; n],
+    std::vec![0xCDu8; n],
+  );
+  let mut sink = MixedSinker::<crate::source::Ya8>::new(w, h)
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
+
+  super::super::arm_rgb_scratch_alloc_failure();
+  let err = ya8_to(&frame, FR, M, &mut sink).unwrap_err();
+  drop(sink);
+
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "RGB-scratch refusal must surface as a recoverable AllocationFailed, got {err:?}"
+  );
+  assert!(
+    luma.iter().all(|&b| b == 0xAB),
+    "luma (Ya8: native Y written before the scratch) must be untouched on the alloc-failure path"
+  );
+}
+
+// GrayN (high-bit gray, u16 plane) shares the narrow-intercept structure of the
+// 8-bit gray paths, so it has the identical latent bug despite being >8-bit.
+#[cfg(feature = "yuva")]
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn gray_n_rgb_scratch_alloc_failure_leaves_outputs_untouched() {
+  use super::super::MixedSinkerError;
+  use crate::resample::ResampleError;
+
+  let (w, h) = (16usize, 8usize);
+  let n = w * h;
+  let plane = std::vec![0x0012u16; n];
+  let frame: GrayNFrame<'_, 10> = GrayNFrame::new(&plane, w as u32, h as u32, w as u32);
+  let mut luma = std::vec![0xABu8; n];
+  let mut rgba = std::vec![0xCDu8; n * 4];
+  let (mut hh, mut ss, mut vv) = (
+    std::vec![0xCDu8; n],
+    std::vec![0xCDu8; n],
+    std::vec![0xCDu8; n],
+  );
+  let mut sink = MixedSinker::<crate::source::Gray10>::new(w, h)
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
+
+  super::super::arm_rgb_scratch_alloc_failure();
+  let err = gray10_to(&frame, FR, M, &mut sink).unwrap_err();
+  drop(sink);
+
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "RGB-scratch refusal must surface as a recoverable AllocationFailed, got {err:?}"
+  );
+  assert!(
+    luma.iter().all(|&b| b == 0xAB),
+    "luma (GrayN: raw Y written before the scratch) must be untouched on the alloc-failure path"
+  );
+}
+
+// Ya16 (16-bit gray+alpha) shares the narrow-intercept structure too.
+#[cfg(feature = "yuva")]
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn ya16_rgb_scratch_alloc_failure_leaves_outputs_untouched() {
+  use super::super::MixedSinkerError;
+  use crate::resample::ResampleError;
+
+  let (w, h) = (16usize, 8usize);
+  let n = w * h;
+  let host: std::vec::Vec<u16> = (0..n).flat_map(|_| [0x1234u16, 0x8000u16]).collect();
+  let packed = as_le_u16(&host);
+  let frame = Ya16Frame::new(&packed, w as u32, h as u32, (w * 2) as u32);
+  let mut luma = std::vec![0xABu8; n];
+  let mut rgba = std::vec![0xCDu8; n * 4];
+  let (mut hh, mut ss, mut vv) = (
+    std::vec![0xCDu8; n],
+    std::vec![0xCDu8; n],
+    std::vec![0xCDu8; n],
+  );
+  let mut sink = MixedSinker::<crate::source::Ya16>::new(w, h)
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
+
+  super::super::arm_rgb_scratch_alloc_failure();
+  let err = ya16_to(&frame, FR, M, &mut sink).unwrap_err();
+  drop(sink);
+
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "RGB-scratch refusal must surface as a recoverable AllocationFailed, got {err:?}"
+  );
+  assert!(
+    luma.iter().all(|&b| b == 0xAB),
+    "luma (Ya16: Y>>8 written before the scratch) must be untouched on the alloc-failure path"
+  );
+}
