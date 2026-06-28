@@ -343,3 +343,148 @@ pub fn yuv444p12_to_hsv_row_endian(
     );
   }
 }
+
+// ---- ICtCp (BT.2100, H.273 MatrixCoefficients = 14) routing -------------
+//
+// Transfer-aware siblings of the affine `*_endian` dispatchers, mirroring
+// the `ChromaDerivedNcl` `*_primaries` pattern: when the matrix is
+// `ColorMatrix::Ictcp` **and** the source carries a PQ/HLG transfer, the row
+// decodes through the dedicated scalar non-affine kernel
+// ([`scalar::ictcp`]); otherwise it delegates byte-identically to the affine
+// `*_endian` dispatcher. `ICtCp` is scalar-only (the transcendental EOTF
+// does not vectorize), so `use_simd` is honoured only on the affine
+// fallback. Gated on the transcendental tier (`std`/`alloc`, via `libm`)
+// `scalar::ictcp` itself requires; without it an `Ictcp` source falls back
+// to the affine path.
+#[cfg(any(feature = "std", feature = "alloc"))]
+use crate::Transfer;
+#[cfg(any(feature = "std", feature = "alloc"))]
+use scalar::ictcp::{self, IctcpTransfer};
+
+/// [`yuv444p12_to_rgb_row_endian`] with the `ColorMatrix::Ictcp` non-affine
+/// decode spliced in for PQ/HLG `transfer`. See the module routing note.
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn yuv444p12_to_rgb_row_ictcp_endian(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  transfer: Transfer,
+  use_simd: bool,
+  big_endian: bool,
+) {
+  if matches!(matrix, ColorMatrix::Ictcp)
+    && let Some(tf) = IctcpTransfer::for_transfer(transfer)
+  {
+    if big_endian {
+      ictcp::ictcp_444p_n_to_rgb_row::<12, true>(y, u, v, rgb_out, width, full_range, tf);
+    } else {
+      ictcp::ictcp_444p_n_to_rgb_row::<12, false>(y, u, v, rgb_out, width, full_range, tf);
+    }
+    return;
+  }
+  yuv444p12_to_rgb_row_endian(
+    y, u, v, rgb_out, width, matrix, full_range, use_simd, big_endian,
+  );
+}
+
+/// [`yuv444p12_to_rgba_row_endian`] with the `ColorMatrix::Ictcp` non-affine
+/// decode (opaque alpha) for PQ/HLG `transfer`.
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn yuv444p12_to_rgba_row_ictcp_endian(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  transfer: Transfer,
+  use_simd: bool,
+  big_endian: bool,
+) {
+  if matches!(matrix, ColorMatrix::Ictcp)
+    && let Some(tf) = IctcpTransfer::for_transfer(transfer)
+  {
+    if big_endian {
+      ictcp::ictcp_444p_n_to_rgba_row::<12, true>(y, u, v, rgba_out, width, full_range, tf);
+    } else {
+      ictcp::ictcp_444p_n_to_rgba_row::<12, false>(y, u, v, rgba_out, width, full_range, tf);
+    }
+    return;
+  }
+  yuv444p12_to_rgba_row_endian(
+    y, u, v, rgba_out, width, matrix, full_range, use_simd, big_endian,
+  );
+}
+
+/// [`yuv444p12_to_rgb_u16_row_endian`] with the `ColorMatrix::Ictcp`
+/// non-affine decode for PQ/HLG `transfer`.
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn yuv444p12_to_rgb_u16_row_ictcp_endian(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  transfer: Transfer,
+  use_simd: bool,
+  big_endian: bool,
+) {
+  if matches!(matrix, ColorMatrix::Ictcp)
+    && let Some(tf) = IctcpTransfer::for_transfer(transfer)
+  {
+    if big_endian {
+      ictcp::ictcp_444p_n_to_rgb_u16_row::<12, true>(y, u, v, rgb_out, width, full_range, tf);
+    } else {
+      ictcp::ictcp_444p_n_to_rgb_u16_row::<12, false>(y, u, v, rgb_out, width, full_range, tf);
+    }
+    return;
+  }
+  yuv444p12_to_rgb_u16_row_endian(
+    y, u, v, rgb_out, width, matrix, full_range, use_simd, big_endian,
+  );
+}
+
+/// [`yuv444p12_to_rgba_u16_row_endian`] with the `ColorMatrix::Ictcp`
+/// non-affine decode (opaque alpha `0xFFFF`) for PQ/HLG `transfer`.
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn yuv444p12_to_rgba_u16_row_ictcp_endian(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  transfer: Transfer,
+  use_simd: bool,
+  big_endian: bool,
+) {
+  if matches!(matrix, ColorMatrix::Ictcp)
+    && let Some(tf) = IctcpTransfer::for_transfer(transfer)
+  {
+    if big_endian {
+      ictcp::ictcp_444p_n_to_rgba_u16_row::<12, true>(y, u, v, rgba_out, width, full_range, tf);
+    } else {
+      ictcp::ictcp_444p_n_to_rgba_u16_row::<12, false>(y, u, v, rgba_out, width, full_range, tf);
+    }
+    return;
+  }
+  yuv444p12_to_rgba_u16_row_endian(
+    y, u, v, rgba_out, width, matrix, full_range, use_simd, big_endian,
+  );
+}

@@ -304,6 +304,8 @@ mod nv20;
 // NV20's native fast tier reuses the high-bit non-4:2:0 planar join (like the
 // P2xx native suite), and the cross-packing equivalence pins the native tier
 // against P210, so the resample suite needs BOTH families.
+#[cfg(feature = "yuv-planar")]
+mod ictcp;
 #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
 mod resample_nv20;
 #[cfg(all(feature = "y2xx", feature = "yuv-planar"))]

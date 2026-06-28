@@ -1052,6 +1052,17 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p12<BE>, R> {
     let h = self.height;
     let idx = row.row();
     let use_simd = self.simd;
+    // The ICtCp non-affine decode (#303) selects PQ vs HLG from the sink's
+    // signalled transfer (the YUV row carries only matrix + range); captured
+    // before the `self` destructure below. `Unspecified` (the default)
+    // routes a `ColorMatrix::Ictcp` source back to the affine fallback.
+    let transfer = self.transfer;
+    // Whether this row decodes as ICtCp (BT.2100, #303): the `Ictcp` matrix
+    // with a resolvable PQ/HLG transfer. Drives the non-affine HSV routing and
+    // the RGB-scratch atomicity preflight below; `false` leaves every affine
+    // fast path byte-identical.
+    let ictcp_active = matches!(row.matrix(), crate::ColorMatrix::Ictcp)
+      && crate::row::scalar::ictcp::IctcpTransfer::for_transfer(transfer).is_some();
 
     if row.y().len() != w {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
@@ -1281,10 +1292,12 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p12<BE>, R> {
     // grow a scratch, and these formats expose no luma_u16. The allocating
     // (rgb=None) arm of `rgb_row_buf_or_scratch` is reached exactly when a colour
     // decode needs an RGB row but no caller RGB buffer is borrowable —
-    // `want_hsv && want_rgba && !want_rgb`. The later decode reuses the
-    // already-sized buffer, so the default path is byte-identical; only the
-    // failure-path ordering changes.
-    if want_hsv && want_rgba && !want_rgb {
+    // `want_hsv && !want_rgb && (want_rgba || ictcp_active)`: HSV staged from an
+    // RGB row, either the affine `want_rgba` case or the ICtCp HSV path (which
+    // derives HSV from the non-affine RGB even for HSV-only / HSV+rgb_u16). The
+    // later decode reuses the already-sized buffer, so the default path is
+    // byte-identical; only the failure-path ordering changes.
+    if want_hsv && !want_rgb && (want_rgba || ictcp_active) {
       rgb_row_buf_or_scratch(
         rgb.as_deref_mut(),
         rgb_scratch,
@@ -1313,7 +1326,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p12<BE>, R> {
       let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
         rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-      yuv444p12_to_rgba_u16_row_endian(
+      yuv444p12_to_rgba_u16_row_ictcp_endian(
         row.y(),
         row.u(),
         row.v(),
@@ -1321,6 +1334,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p12<BE>, R> {
         w,
         row.matrix(),
         row.full_range(),
+        transfer,
         use_simd,
         BE,
       );
@@ -1334,7 +1348,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p12<BE>, R> {
           )))?;
       let rgb_plane_start = one_plane_start * 3;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-      yuv444p12_to_rgb_u16_row_endian(
+      yuv444p12_to_rgb_u16_row_ictcp_endian(
         row.y(),
         row.u(),
         row.v(),
@@ -1342,6 +1356,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p12<BE>, R> {
         w,
         row.matrix(),
         row.full_range(),
+        transfer,
         use_simd,
         BE,
       );
@@ -1356,10 +1371,11 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p12<BE>, R> {
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
     // HSV-without-RGB-or-RGBA goes through the direct `yuv444p12_to_hsv_row_endian`
     // kernel (no source-width RGB scratch — the SIMD path stages a fixed
-    // 8-bit RGB chunk internally). RGB or RGBA also attached keeps the
-    // convert-once-then-derive path alive via `need_rgb_kernel`.
-    let want_hsv_direct = want_hsv && rgb.is_none() && !want_rgba;
-    let need_rgb_kernel = rgb.is_some() || (want_hsv && want_rgba);
+    // 8-bit RGB chunk internally) for NON-ICtCp matrices. RGB or RGBA also
+    // attached — or ICtCp, which must derive HSV from its non-affine RGB —
+    // keeps the convert-once-then-derive path alive via `need_rgb_kernel`.
+    let want_hsv_direct = want_hsv && rgb.is_none() && !want_rgba && !ictcp_active;
+    let need_rgb_kernel = rgb.is_some() || (want_hsv && (want_rgba || ictcp_active));
 
     if want_hsv_direct {
       let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
@@ -1383,7 +1399,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p12<BE>, R> {
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      yuv444p12_to_rgba_row_endian(
+      yuv444p12_to_rgba_row_ictcp_endian(
         row.y(),
         row.u(),
         row.v(),
@@ -1391,6 +1407,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p12<BE>, R> {
         w,
         row.matrix(),
         row.full_range(),
+        transfer,
         use_simd,
         BE,
       );
@@ -1410,7 +1427,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p12<BE>, R> {
       h,
     )?;
 
-    yuv444p12_to_rgb_row_endian(
+    yuv444p12_to_rgb_row_ictcp_endian(
       row.y(),
       row.u(),
       row.v(),
@@ -1418,6 +1435,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p12<BE>, R> {
       w,
       row.matrix(),
       row.full_range(),
+      transfer,
       use_simd,
       BE,
     );

@@ -101,6 +101,11 @@ pub(crate) mod grayf16;
 #[cfg(feature = "gray")]
 pub(crate) mod grayf32;
 mod hsv;
+// ICtCp (BT.2100, H.273 MatrixCoefficients = 14) non-affine decode. Gated
+// like `xyz12`: the transcendental EOTF/OETF need `std` or `alloc` (libm);
+// the representative wiring targets the `yuv-planar` 4:4:4 family (#303).
+#[cfg(all(feature = "yuv-planar", any(feature = "std", feature = "alloc")))]
+pub(crate) mod ictcp;
 #[cfg(feature = "rgb-legacy")]
 pub(crate) mod legacy_rgb;
 #[cfg(feature = "mono")]
