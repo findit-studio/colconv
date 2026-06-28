@@ -637,38 +637,6 @@ impl NativeRouteChanged {
   }
 }
 
-/// Payload for [`MixedSinkerError::UnsupportedMatrixResample`]: a non-affine
-/// colour matrix was paired with a resampling (non-identity) plan, which the
-/// resample tier does not (yet) decode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct UnsupportedMatrixResample {
-  /// Source row whose `process` call hit the unsupported combination.
-  row: usize,
-  /// Human-readable name of the offending non-affine matrix
-  /// (`"ChromaDerivedCl"` / `"Ictcp"`).
-  matrix: &'static str,
-}
-
-impl UnsupportedMatrixResample {
-  /// Constructs a new `UnsupportedMatrixResample` payload.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn new(row: usize, matrix: &'static str) -> Self {
-    Self { row, matrix }
-  }
-
-  /// Source row whose `process` call hit the unsupported combination.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn row(&self) -> usize {
-    self.row
-  }
-
-  /// Name of the offending non-affine matrix.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn matrix(&self) -> &'static str {
-    self.matrix
-  }
-}
-
 /// Mid-frame [`AveragingDomain::Linear`] transfer-function change payload
 /// for [`MixedSinkerError::TransferFunctionChanged`].
 ///
@@ -1006,37 +974,6 @@ pub enum MixedSinkerError {
     .0.row()
   )]
   AveragingDomainChanged(AveragingDomainChanged),
-
-  /// A non-affine colour matrix was paired with a resampling (non-identity)
-  /// plan, which the resample tier cannot decode.
-  ///
-  /// The constant-luminance [`ColorMatrix::ChromaDerivedCl`] (BT.2020
-  /// `YcCbcCrc`) and [`ColorMatrix::Ictcp`] (BT.2100) decodes are non-affine:
-  /// they reconstruct RGB through a per-channel non-linear transfer, not a
-  /// single Q15 matrix, and are wired only on the **identity** (no-resample)
-  /// path. The resample tier averages in the encoded-code / native-code domain
-  /// and decodes through the *affine* `yuv444p*_to_rgb*` kernels, which would
-  /// silently produce wrong, route-dependent colour for these matrices (the
-  /// averaged result is not the constant-luminance / ICtCp decode). Rather than
-  /// emit corrupt output, the offending `process` call fails before any stream
-  /// consumes the row. Decode these matrices on an identity sink (no resample
-  /// plan), or downscale after the colour convert. Full non-affine resample
-  /// support is tracked as follow-up.
-  ///
-  /// Only raised when the matrix actually **resolves** to its non-affine
-  /// decode (BT.2020 primaries for `ChromaDerivedCl`, a PQ/HLG transfer for
-  /// `Ictcp`); an unresolved tag already falls back to the affine path on the
-  /// identity route, so it resamples affinely without error, unchanged.
-  ///
-  /// [`ColorMatrix::ChromaDerivedCl`]: crate::ColorMatrix::ChromaDerivedCl
-  /// [`ColorMatrix::Ictcp`]: crate::ColorMatrix::Ictcp
-  #[error(
-    "MixedSinker cannot resample the non-affine {} matrix at source row {}; \
-     decode on an identity sink or downscale after the colour convert",
-    .0.matrix(),
-    .0.row()
-  )]
-  UnsupportedMatrixResample(UnsupportedMatrixResample),
 }
 
 /// Identifies which slice of a multi‑plane source row mismatched in
