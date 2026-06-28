@@ -338,6 +338,79 @@ pub(crate) fn chroma_upsample_420_center_h(c_half: &[u8], c_full: &mut [u8], wid
   }
 }
 
+/// `u16` twin of [`chroma_upsample_420_center_h`] for the **high-bit** planar
+/// 4:2:0 formats (`Yuv420p9` … `Yuv420p16`, #302). Same MPEG-1 / JPEG
+/// phase-0.5 `1/4`–`3/4` reconstruction with edge clamp, but on `u16` chroma.
+///
+/// Both `c_half` and `c_full` carry samples in the source's **wire byte order**
+/// (`big_endian`); the function is generic over the source bit depth `BITS`
+/// (`9`…`16`, the low-packed planar `Yuv420p9`…`Yuv420p16`). Each input is
+/// normalized wire → host-native logical AND masked to the low `BITS`
+/// (`& ((1 << BITS) - 1)` — the `bits_mask::<BITS>()` the fused decode applies;
+/// `u16::MAX` / a no-op at `BITS = 16`) BEFORE the arithmetic, so dirty upper
+/// bits in a malformed-but-accepted low-packed frame are discarded EXACTLY as
+/// the non-centered decode kernels do (`load_u16 & bits_mask` / `extract_hb`).
+/// Without the mask a dirty sample's high bits would leak into a neighbour's
+/// low bits through the 1/4–3/4 blend — before the 4:4:4 kernel's later mask —
+/// decoding the centered path differently from the default. The blend then runs
+/// in the logical domain (a masked `9`…`16`-bit value, so `left + 3 * mid` ≤
+/// `4 * 65535` never overflows the `u32` accumulator and the result stays in
+/// `[0, (1 << BITS) - 1]`), and each output is re-encoded to the SAME wire
+/// order. Keeping the output wire format identical to the input lets the caller
+/// feed it straight to the existing `yuv444p{9,10,12,14,16}_to_*_row_endian`
+/// kernels with the same `big_endian` flag — so the centered high-bit path
+/// reuses their full SIMD backends and stays bit-identical per tier,
+/// host-endianness-independent.
+///
+/// # Panics (debug builds)
+///
+/// - `width` must be even (4:2:0 pairs pixel columns).
+/// - `c_half.len() >= width / 2`, `c_full.len() >= width`.
+// Gated like the `u8` sibling: reachable only through the high-bit `Yuv420p`
+// sink's centered path, which stages the full-width chroma in a `Vec` scratch.
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn chroma_upsample_420_center_h_u16<const BITS: u32>(
+  c_half: &[u16],
+  c_full: &mut [u16],
+  width: usize,
+  big_endian: bool,
+) {
+  debug_assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
+  debug_assert!(c_half.len() >= width / 2, "c_half row too short");
+  debug_assert!(c_full.len() >= width, "c_full row too short");
+
+  // Low-packed sample mask `(1 << BITS) - 1`, identical to `bits_mask::<BITS>()`
+  // (computed inline so the kernel keeps the `u8`-sibling's `any(std, alloc)`
+  // gate rather than `bits_mask`'s narrower one). `u16::MAX` — a no-op — at
+  // `BITS = 16`. Applied in `load` after the endian normalization.
+  let mask = ((1u32 << BITS) - 1) as u16;
+  let load = |raw: u16| -> u32 {
+    let logical = if big_endian {
+      u16::from_be(raw)
+    } else {
+      u16::from_le(raw)
+    };
+    (logical & mask) as u32
+  };
+  let store = |logical: u32| -> u16 {
+    let v = logical as u16;
+    if big_endian { v.to_be() } else { v.to_le() }
+  };
+
+  let half = width / 2;
+  for j in 0..half {
+    // `c[j-1]` clamps to `c[0]` at the left edge; `c[j+1]` clamps to the
+    // last sample at the right edge — boundary replication, so the edge
+    // columns collapse to `c[0]` / `c[half-1]` exactly.
+    let left = load(c_half[j.saturating_sub(1)]);
+    let mid = load(c_half[j]);
+    let right = load(c_half[if j + 1 < half { j + 1 } else { j }]);
+    c_full[2 * j] = store((left + 3 * mid + 2) >> 2);
+    c_full[2 * j + 1] = store((3 * mid + right + 2) >> 2);
+  }
+}
+
 // ---- YUV 4:1:0 → RGB (fused: 4x horizontal upsample + convert) -------
 
 /// Converts one row of 4:1:0 YUV — Y at full width, U/V at

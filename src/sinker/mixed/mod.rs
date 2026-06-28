@@ -2555,6 +2555,18 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// `yuv-semi-planar`).
   #[cfg(feature = "yuv-planar")]
   chroma_full: Vec<u8>,
+  /// Full-width `u16` chroma staging for the **high-bit** planar 4:2:0
+  /// siting-aware upsample (`Yuv420p9` … `Yuv420p16`, #302) — the `u16` twin of
+  /// [`Self::chroma_full`]. Holds the horizontally upsampled U then V planes
+  /// back-to-back (`2 * width` `u16` elements: `[0..width]` = U,
+  /// `[width..2*width]` = V), in the source's wire byte order, so the
+  /// centered-siting identity path can reuse the high-bit 4:4:4 decode kernels.
+  /// Lazily grown to `2 * width` `u16` on the first centered-siting chroma row;
+  /// empty otherwise (the default left/unspecified siting never touches it).
+  /// Gated to `yuv-planar` (the high-bit 4:4:4 kernels + `u16` scalar upsample
+  /// it reuses live there).
+  #[cfg(feature = "yuv-planar")]
+  chroma_full_u16: Vec<u16>,
   /// Source-width `u8` luma staging for the **packed YUV 4:2:2** resample
   /// path (the interleaved Y bytes are de-interleaved here via the format's
   /// own `*_to_luma_row` kernel — the exact Y→luma derivation the direct
@@ -2911,8 +2923,9 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// [`Self::set_chroma_location`]; the centered horizontal sitings
   /// (`Center` / `Top` / `Bottom`, per `chroma_420_center_sited_h`) route
   /// the identity-plan 4:2:0 decode through the phase-0.5 chroma upsample +
-  /// 4:4:4 kernels. Currently consulted by the planar 8-bit `Yuv420p`
-  /// identity path; other 4:2:0 families and the resampling tiers ignore it
+  /// 4:4:4 kernels. Consulted by the planar 8-bit `Yuv420p`, the semi-planar
+  /// `Nv12` / `Nv21`, and the high-bit planar `Yuv420p9` … `Yuv420p16` identity
+  /// paths; the remaining 4:2:0 families and the resampling tiers ignore it
   /// until the #302 rollout wires them in.
   #[cfg(feature = "yuv-planar")]
   chroma_location: crate::ChromaLocation,
@@ -3608,6 +3621,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       rgb_scratch: Vec::new(),
       #[cfg(feature = "yuv-planar")]
       chroma_full: Vec::new(),
+      #[cfg(feature = "yuv-planar")]
+      chroma_full_u16: Vec::new(),
       #[cfg(any(feature = "yuv-packed", feature = "gray"))]
       luma_scratch: Vec::new(),
       #[cfg(feature = "rgb-legacy")]
