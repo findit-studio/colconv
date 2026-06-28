@@ -635,6 +635,36 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P010<BE>, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
+    // Resolve the output set up front so the atomicity preflight below runs
+    // before any output row is written.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // planar_8bit / semi_planar_8bit 8-bit siblings): reserve the only growable
+    // row scratch this identity row can touch — the u8 RGB row buffer — BEFORE
+    // any output row is written (the luma plane below, then the u16 RGB / RGBA
+    // fan-out), so an allocator refusal returns a typed `AllocationFailed`
+    // leaving the output frame untouched rather than partially mutated. The u16
+    // RGB / RGBA outputs need no preflight: they write straight into their
+    // caller buffers (the rgb_u16 plane itself stages the rgba_u16 expand) and
+    // never grow a scratch. `rgb_row_buf_or_scratch`'s allocating (rgb=None) arm
+    // is reached exactly when a colour decode needs an RGB row but no caller RGB
+    // buffer is borrowable — `want_hsv && want_rgba && !want_rgb`. The later
+    // decode reuses the already-sized buffer, so the default path is
+    // byte-identical; only the failure-path ordering changes.
+    if want_hsv && want_rgba && !want_rgb {
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     // Luma: P010 samples are high-bit-packed (`value << 6`). Taking the
     // high byte via `>> 8` gives the top 8 bits of the 10-bit value —
     // functionally equivalent to `(value >> 2)` for the yuv420p10 path.
@@ -699,9 +729,6 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P010<BE>, R> {
     // for free (the cheap path) and `need_rgb_kernel` keeps it alive.
     // (Resample row-stage HSV-only is a #263 follow-up — see the row-
     // stage block above; HSV stays correct via the convert-once path.)
-    let want_rgb = rgb.is_some();
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
     let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
     let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
 
@@ -1125,6 +1152,36 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P012<BE>, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
+    // Resolve the output set up front so the atomicity preflight below runs
+    // before any output row is written.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // planar_8bit / semi_planar_8bit 8-bit siblings): reserve the only growable
+    // row scratch this identity row can touch — the u8 RGB row buffer — BEFORE
+    // any output row is written (the luma plane below, then the u16 RGB / RGBA
+    // fan-out), so an allocator refusal returns a typed `AllocationFailed`
+    // leaving the output frame untouched rather than partially mutated. The u16
+    // RGB / RGBA outputs need no preflight: they write straight into their
+    // caller buffers (the rgb_u16 plane itself stages the rgba_u16 expand) and
+    // never grow a scratch. `rgb_row_buf_or_scratch`'s allocating (rgb=None) arm
+    // is reached exactly when a colour decode needs an RGB row but no caller RGB
+    // buffer is borrowable — `want_hsv && want_rgba && !want_rgb`. The later
+    // decode reuses the already-sized buffer, so the default path is
+    // byte-identical; only the failure-path ordering changes.
+    if want_hsv && want_rgba && !want_rgb {
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     // Luma: P012 samples are high‑bit‑packed (`value << 4`). Taking the
     // high byte via `>> 8` gives the top 8 bits of the 12‑bit value —
     // identical accessor to P010 (both put active bits in the high
@@ -1187,9 +1244,6 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P012<BE>, R> {
     // HSV-only (no RGB / RGBA) goes direct through `p012_to_hsv_row` (no
     // source-width RGB scratch); see the P010 impl for the routing
     // rationale and the #263 row-stage deferral.
-    let want_rgb = rgb.is_some();
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
     let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
     let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
 
@@ -1611,6 +1665,36 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P016<BE>, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
+    // Resolve the output set up front so the atomicity preflight below runs
+    // before any output row is written.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // planar_8bit / semi_planar_8bit 8-bit siblings): reserve the only growable
+    // row scratch this identity row can touch — the u8 RGB row buffer — BEFORE
+    // any output row is written (the luma plane below, then the u16 RGB / RGBA
+    // fan-out), so an allocator refusal returns a typed `AllocationFailed`
+    // leaving the output frame untouched rather than partially mutated. The u16
+    // RGB / RGBA outputs need no preflight: they write straight into their
+    // caller buffers (the rgb_u16 plane itself stages the rgba_u16 expand) and
+    // never grow a scratch. `rgb_row_buf_or_scratch`'s allocating (rgb=None) arm
+    // is reached exactly when a colour decode needs an RGB row but no caller RGB
+    // buffer is borrowable — `want_hsv && want_rgba && !want_rgb`. The later
+    // decode reuses the already-sized buffer, so the default path is
+    // byte-identical; only the failure-path ordering changes.
+    if want_hsv && want_rgba && !want_rgb {
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     // Luma: 16‑bit Y value >> 8 is the top byte. Routed through the
     // native-Y kernel (bit-identical to the former inline `>> 8` loop,
     // including the BE-wire normalization).
@@ -1668,9 +1752,6 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P016<BE>, R> {
     // HSV-only (no RGB / RGBA) goes direct through `p016_to_hsv_row` (no
     // source-width RGB scratch); see the P010 impl for the routing
     // rationale and the #263 row-stage deferral.
-    let want_rgb = rgb.is_some();
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
     let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
     let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
 

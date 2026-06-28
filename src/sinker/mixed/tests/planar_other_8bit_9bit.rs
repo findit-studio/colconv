@@ -1749,3 +1749,52 @@ fn yuv440p_rgb_scratch_alloc_failure_leaves_outputs_untouched() {
     "luma must be untouched on the rgb-scratch alloc-failure path"
   );
 }
+
+// Yuv420p9 is the 9-bit member of the high-bit 4:2:0 family (#308 slice);
+// its identity `process` hoists the same up-front RGB-scratch preflight. The
+// 9-bit luma output is the downshifted u8 plane, so the sentinel assertion
+// matches the 8-bit siblings above.
+#[cfg(feature = "yuva")]
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuv420p9_rgb_scratch_alloc_failure_leaves_outputs_untouched() {
+  use crate::resample::ResampleError;
+
+  let (yp, up, vp) = solid_yuv422p_n_frame(16, 8, 256, 256, 256);
+  let up = up[..8 * 4].to_vec();
+  let vp = vp[..8 * 4].to_vec();
+  let src = Yuv420p9Frame::new(&yp, &up, &vp, 16, 8, 16, 8, 8);
+  let mut luma = std::vec![0xABu8; 16 * 8];
+  let mut rgba = std::vec![0xCDu8; 16 * 8 * 4];
+  let (mut hh, mut ss, mut vv) = (
+    std::vec![0xCDu8; 16 * 8],
+    std::vec![0xCDu8; 16 * 8],
+    std::vec![0xCDu8; 16 * 8],
+  );
+  let mut sink = MixedSinker::<Yuv420p9>::new(16, 8)
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
+
+  super::super::arm_rgb_scratch_alloc_failure();
+  let err = yuv420p9_to(&src, false, ColorMatrix::Bt601, &mut sink).unwrap_err();
+  drop(sink);
+
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "RGB-scratch refusal must surface as a recoverable AllocationFailed, got {err:?}"
+  );
+  assert!(
+    luma.iter().all(|&b| b == 0xAB),
+    "luma must be untouched on the rgb-scratch alloc-failure path"
+  );
+}
