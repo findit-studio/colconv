@@ -86,6 +86,8 @@ mod chroma_siting_420;
 mod chroma_siting_422;
 #[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
 mod chroma_siting_422_packed;
+#[cfg(feature = "yuva")]
+mod chroma_siting_422_yuva;
 #[cfg(feature = "yuv-planar")]
 mod chroma_siting_hibit_420;
 #[cfg(feature = "yuv-planar")]
