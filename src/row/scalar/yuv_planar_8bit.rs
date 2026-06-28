@@ -140,6 +140,37 @@ pub(crate) fn yuv_420_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: boo
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  yuv_420_to_rgb_or_rgba_row_with_coeffs::<ALPHA, ALPHA_SRC>(
+    y,
+    u_half,
+    v_half,
+    a_src,
+    out,
+    width,
+    Coefficients::for_matrix(matrix),
+    full_range,
+  );
+}
+
+/// [`yuv_420_to_rgb_or_rgba_row`] with the YCbCr→RGB [`Coefficients`]
+/// already resolved, instead of re-deriving them from a [`ColorMatrix`]
+/// tag inside the kernel. This lets a caller that resolved coefficients
+/// from something *other* than the matrix tag — e.g. the primaries-derived
+/// [`ColorMatrix::ChromaDerivedNcl`] path via
+/// [`Coefficients::for_matrix_with_primaries`] — reuse this exact reference
+/// kernel. The per-pixel math is identical to the matrix wrapper.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn yuv_420_to_rgb_or_rgba_row_with_coeffs<const ALPHA: bool, const ALPHA_SRC: bool>(
+  y: &[u8],
+  u_half: &[u8],
+  v_half: &[u8],
+  a_src: Option<&[u8]>,
+  out: &mut [u8],
+  width: usize,
+  coeffs: Coefficients,
+  full_range: bool,
+) {
   // Source alpha requires RGBA output — there is no 3 bpp store with
   // alpha to put it in.
   const { assert!(!ALPHA_SRC || ALPHA) };
@@ -156,7 +187,6 @@ pub(crate) fn yuv_420_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: boo
     );
   }
 
-  let coeffs = Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = range_params_n::<8, 8>(full_range);
 
   // Process two pixels per iteration — they share one chroma sample.
@@ -213,6 +243,44 @@ pub(crate) fn yuv_420_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: boo
 
     x += 2;
   }
+}
+
+/// [`yuv_420_to_rgb_row`] with caller-resolved [`Coefficients`] — the entry
+/// the [`ColorMatrix::ChromaDerivedNcl`] decode path uses so the
+/// primaries-derived coefficients
+/// ([`Coefficients::for_matrix_with_primaries`]) feed the *same* scalar
+/// kernel. Output is byte-identical to [`yuv_420_to_rgb_row`] when `coeffs`
+/// equals `Coefficients::for_matrix(matrix)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn yuv_420_to_rgb_row_with_coeffs(
+  y: &[u8],
+  u_half: &[u8],
+  v_half: &[u8],
+  rgb_out: &mut [u8],
+  width: usize,
+  coeffs: Coefficients,
+  full_range: bool,
+) {
+  yuv_420_to_rgb_or_rgba_row_with_coeffs::<false, false>(
+    y, u_half, v_half, None, rgb_out, width, coeffs, full_range,
+  );
+}
+
+/// [`yuv_420_to_rgba_row`] with caller-resolved [`Coefficients`]. The RGBA
+/// twin of [`yuv_420_to_rgb_row_with_coeffs`]; alpha is `0xFF` (opaque).
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn yuv_420_to_rgba_row_with_coeffs(
+  y: &[u8],
+  u_half: &[u8],
+  v_half: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  coeffs: Coefficients,
+  full_range: bool,
+) {
+  yuv_420_to_rgb_or_rgba_row_with_coeffs::<true, false>(
+    y, u_half, v_half, None, rgba_out, width, coeffs, full_range,
+  );
 }
 
 // ---- Chroma-siting-aware 4:2:0 horizontal upsample (#302) ------------
@@ -491,6 +559,37 @@ pub(crate) fn yuv_444_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: boo
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  yuv_444_to_rgb_or_rgba_row_with_coeffs::<ALPHA, ALPHA_SRC>(
+    y,
+    u,
+    v,
+    a_src,
+    out,
+    width,
+    Coefficients::for_matrix(matrix),
+    full_range,
+  );
+}
+
+/// [`yuv_444_to_rgb_or_rgba_row`] with the YCbCr→RGB [`Coefficients`]
+/// already resolved, instead of re-deriving them from a [`ColorMatrix`]
+/// tag. Lets the primaries-derived [`ColorMatrix::ChromaDerivedNcl`] path
+/// (via [`Coefficients::for_matrix_with_primaries`]) share this exact 4:4:4
+/// reference kernel — used by the centered chroma-siting (#302) decode after
+/// the half-width chroma is upsampled to full width. Per-pixel math is
+/// identical to the matrix wrapper.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn yuv_444_to_rgb_or_rgba_row_with_coeffs<const ALPHA: bool, const ALPHA_SRC: bool>(
+  y: &[u8],
+  u: &[u8],
+  v: &[u8],
+  a_src: Option<&[u8]>,
+  out: &mut [u8],
+  width: usize,
+  coeffs: Coefficients,
+  full_range: bool,
+) {
   // Source alpha requires RGBA output — there is no 3 bpp store with
   // alpha to put it in.
   const { assert!(!ALPHA_SRC || ALPHA) };
@@ -506,7 +605,6 @@ pub(crate) fn yuv_444_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: boo
     );
   }
 
-  let coeffs = Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = range_params_n::<8, 8>(full_range);
   const RND: i32 = 1 << 14;
 
@@ -531,6 +629,44 @@ pub(crate) fn yuv_444_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: boo
       out[x * bpp + 3] = 0xFF;
     }
   }
+}
+
+/// [`yuv_444_to_rgb_row`] with caller-resolved [`Coefficients`] — the 4:4:4
+/// entry the centered chroma-siting (#302) `ChromaDerivedNcl` decode uses so
+/// the primaries-derived coefficients
+/// ([`Coefficients::for_matrix_with_primaries`]) feed the *same* scalar
+/// kernel. Output is byte-identical to [`yuv_444_to_rgb_row`] when `coeffs`
+/// equals `Coefficients::for_matrix(matrix)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn yuv_444_to_rgb_row_with_coeffs(
+  y: &[u8],
+  u: &[u8],
+  v: &[u8],
+  rgb_out: &mut [u8],
+  width: usize,
+  coeffs: Coefficients,
+  full_range: bool,
+) {
+  yuv_444_to_rgb_or_rgba_row_with_coeffs::<false, false>(
+    y, u, v, None, rgb_out, width, coeffs, full_range,
+  );
+}
+
+/// [`yuv_444_to_rgba_row`] with caller-resolved [`Coefficients`]. The RGBA
+/// twin of [`yuv_444_to_rgb_row_with_coeffs`]; alpha is `0xFF` (opaque).
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn yuv_444_to_rgba_row_with_coeffs(
+  y: &[u8],
+  u: &[u8],
+  v: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  coeffs: Coefficients,
+  full_range: bool,
+) {
+  yuv_444_to_rgb_or_rgba_row_with_coeffs::<true, false>(
+    y, u, v, None, rgba_out, width, coeffs, full_range,
+  );
 }
 
 // ---- Unclamped real-valued YUV → RGB decode (RFC #238 #244) ----------

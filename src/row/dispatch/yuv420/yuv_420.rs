@@ -18,6 +18,9 @@ use crate::{
   ColorMatrix,
   row::{rgb_row_bytes, rgba_row_bytes, scalar},
 };
+// `ChromaDerivedNcl` resolves its coefficients from the signalled primaries,
+// so the primaries-aware dispatchers need the type.
+use crate::Primaries;
 
 /// Converts one row of 4:2:0 YUV to packed RGB.
 ///
@@ -225,6 +228,83 @@ pub fn yuv_420_to_rgba_row(
   }
 
   scalar::yuv_420_to_rgba_row(y, u_half, v_half, rgba_out, width, matrix, full_range);
+}
+
+/// [`yuv_420_to_rgb_row`] that additionally honours
+/// [`ColorMatrix::ChromaDerivedNcl`] (ITU-T H.273 `MatrixCoefficients =
+/// 12`), whose `Kr` / `Kb` are *derived* from the signalled colour
+/// `primaries` rather than fixed by the matrix tag.
+///
+/// For `ChromaDerivedNcl` with primaries that carry chromaticities, the
+/// coefficients are resolved once via
+/// `scalar::Coefficients::for_matrix_with_primaries` and the row runs on the
+/// **scalar reference**: no SIMD kernel can derive
+/// this set from the matrix tag, and routing the matrix deterministically to
+/// scalar keeps it free of any SIMD-vs-scalar split. Every other matrix — and
+/// `ChromaDerivedNcl` without usable primaries — falls through to
+/// [`yuv_420_to_rgb_row`] unchanged (byte-identical, full SIMD dispatch,
+/// the prior BT.709 fallback for an unresolved `ChromaDerivedNcl`).
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn yuv_420_to_rgb_row_primaries(
+  y: &[u8],
+  u_half: &[u8],
+  v_half: &[u8],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  primaries: Primaries,
+  full_range: bool,
+  use_simd: bool,
+) {
+  if matches!(matrix, ColorMatrix::ChromaDerivedNcl) && primaries.chromaticities().is_some() {
+    // Same release-build boundary asserts as `yuv_420_to_rgb_row` (the
+    // scalar kernel only `debug_assert!`s its bounds).
+    assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
+    let rgb_min = rgb_row_bytes(width);
+    assert!(y.len() >= width, "y row too short");
+    assert!(u_half.len() >= width / 2, "u_half row too short");
+    assert!(v_half.len() >= width / 2, "v_half row too short");
+    assert!(rgb_out.len() >= rgb_min, "rgb_out row too short");
+    let coeffs = scalar::Coefficients::for_matrix_with_primaries(matrix, primaries);
+    scalar::yuv_420_to_rgb_row_with_coeffs(y, u_half, v_half, rgb_out, width, coeffs, full_range);
+    return;
+  }
+  yuv_420_to_rgb_row(
+    y, u_half, v_half, rgb_out, width, matrix, full_range, use_simd,
+  );
+}
+
+/// [`yuv_420_to_rgba_row`] with the [`ColorMatrix::ChromaDerivedNcl`]
+/// primaries-derived path — the RGBA twin of [`yuv_420_to_rgb_row_primaries`]
+/// (alpha `0xFF`, opaque). See it for the routing rationale.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn yuv_420_to_rgba_row_primaries(
+  y: &[u8],
+  u_half: &[u8],
+  v_half: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  primaries: Primaries,
+  full_range: bool,
+  use_simd: bool,
+) {
+  if matches!(matrix, ColorMatrix::ChromaDerivedNcl) && primaries.chromaticities().is_some() {
+    assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
+    let rgba_min = rgba_row_bytes(width);
+    assert!(y.len() >= width, "y row too short");
+    assert!(u_half.len() >= width / 2, "u_half row too short");
+    assert!(v_half.len() >= width / 2, "v_half row too short");
+    assert!(rgba_out.len() >= rgba_min, "rgba_out row too short");
+    let coeffs = scalar::Coefficients::for_matrix_with_primaries(matrix, primaries);
+    scalar::yuv_420_to_rgba_row_with_coeffs(y, u_half, v_half, rgba_out, width, coeffs, full_range);
+    return;
+  }
+  yuv_420_to_rgba_row(
+    y, u_half, v_half, rgba_out, width, matrix, full_range, use_simd,
+  );
 }
 
 /// Converts one row of 4:2:0 YUV **directly** to planar HSV bytes

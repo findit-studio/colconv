@@ -369,6 +369,161 @@ fn color_spec_center_drives_decode_without_manual_chroma_call() {
   );
 }
 
+// ---- centered siting + ChromaDerivedNcl (#303 cross-feature seam) -----------
+
+/// The centered chroma-siting decode must honour
+/// [`ColorMatrix::ChromaDerivedNcl`] just like the non-centered path: its
+/// Kr/Kb are derived from the ColorSpec's primaries, NOT the BT.709 fallback.
+/// Before the fix the centered branch called the 4:4:4 kernels with only the
+/// matrix tag, so a non-BT709 ChromaDerivedNcl decoded with BT.709
+/// coefficients (wrong colors) and could even run on SIMD — this test fails
+/// against that bug. Covers RGB and RGBA, and the scalar-routing invariant.
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn center_chroma_derived_ncl_uses_primaries_not_bt709() {
+  use crate::{
+    ColorInfo, ColorSpec, DynamicRange, PixelFormat, Primaries, Transfer,
+    row::{
+      yuv_444_to_rgb_row, yuv_444_to_rgb_row_primaries, yuv_444_to_rgba_row,
+      yuv_444_to_rgba_row_primaries,
+    },
+  };
+
+  let w = W as usize;
+  let h = H as usize;
+  let (yp, up, vp) = ramp_yuv420p();
+  // The centered full-width chroma the decode reconstructs per row.
+  let (u444, v444) = ref_full_chroma(&up, &vp);
+  // A non-BT709 primary set: ChromaDerivedNcl here must diverge from BT.709.
+  let prim = Primaries::Bt2020;
+  let info = ColorInfo::new(
+    prim,
+    Transfer::Bt709,
+    ColorMatrix::ChromaDerivedNcl,
+    DynamicRange::Limited,
+    ChromaLocation::Center,
+  );
+  let spec = ColorSpec::from_info(PixelFormat::Yuv420p, info);
+
+  // Drive the centered Yuv420p decode via the ColorSpec (limited-range).
+  let decode_rgb = |simd: bool| {
+    let src = Yuv420pFrame::new(&yp, &up, &vp, W, H, W, W / 2, W / 2);
+    let mut rgb = std::vec![0u8; w * h * 3];
+    let mut sink = MixedSinker::<Yuv420p>::new(w, h)
+      .with_rgb(&mut rgb)
+      .unwrap()
+      .with_color_spec(spec)
+      .with_simd(simd);
+    yuv420p_to(&src, false, ColorMatrix::ChromaDerivedNcl, &mut sink).unwrap();
+    rgb
+  };
+
+  // Exact reference: same centered-upsampled chroma, decoded 4:4:4 with the
+  // primaries-derived coefficients (vs the BT.709 fallback the bug produced).
+  let mut rgb_derived = std::vec![0u8; w * h * 3];
+  let mut rgb_bt709 = std::vec![0u8; w * h * 3];
+  for r in 0..h {
+    let (ys, us, vs) = (
+      &yp[r * w..r * w + w],
+      &u444[r * w..r * w + w],
+      &v444[r * w..r * w + w],
+    );
+    yuv_444_to_rgb_row_primaries(
+      ys,
+      us,
+      vs,
+      &mut rgb_derived[r * w * 3..(r + 1) * w * 3],
+      w,
+      ColorMatrix::ChromaDerivedNcl,
+      prim,
+      false,
+      true,
+    );
+    yuv_444_to_rgb_row(
+      ys,
+      us,
+      vs,
+      &mut rgb_bt709[r * w * 3..(r + 1) * w * 3],
+      w,
+      ColorMatrix::Bt709,
+      false,
+      true,
+    );
+  }
+  let rgb = decode_rgb(true);
+  assert_eq!(
+    rgb, rgb_derived,
+    "centered ChromaDerivedNcl RGB must use the primaries-derived coefficients"
+  );
+  assert_ne!(
+    rgb, rgb_bt709,
+    "centered ChromaDerivedNcl RGB must NOT decode as the BT.709 fallback (the bug)"
+  );
+  assert_ne!(
+    rgb_derived, rgb_bt709,
+    "sanity: Bt2020-derived and BT.709 coefficients differ on the chroma ramp"
+  );
+  // Scalar-routing invariant: ChromaDerivedNcl is deterministic across tiers
+  // (it is forced onto the scalar kernel), so SIMD == scalar.
+  assert_eq!(
+    rgb,
+    decode_rgb(false),
+    "centered ChromaDerivedNcl must be scalar-routed (no SIMD/scalar split)"
+  );
+
+  // ---- RGBA twin ----
+  let src = Yuv420pFrame::new(&yp, &up, &vp, W, H, W, W / 2, W / 2);
+  let mut rgba = std::vec![0u8; w * h * 4];
+  let mut sink = MixedSinker::<Yuv420p>::new(w, h)
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_color_spec(spec);
+  yuv420p_to(&src, false, ColorMatrix::ChromaDerivedNcl, &mut sink).unwrap();
+  drop(sink);
+
+  let mut rgba_derived = std::vec![0u8; w * h * 4];
+  let mut rgba_bt709 = std::vec![0u8; w * h * 4];
+  for r in 0..h {
+    let (ys, us, vs) = (
+      &yp[r * w..r * w + w],
+      &u444[r * w..r * w + w],
+      &v444[r * w..r * w + w],
+    );
+    yuv_444_to_rgba_row_primaries(
+      ys,
+      us,
+      vs,
+      &mut rgba_derived[r * w * 4..(r + 1) * w * 4],
+      w,
+      ColorMatrix::ChromaDerivedNcl,
+      prim,
+      false,
+      true,
+    );
+    yuv_444_to_rgba_row(
+      ys,
+      us,
+      vs,
+      &mut rgba_bt709[r * w * 4..(r + 1) * w * 4],
+      w,
+      ColorMatrix::Bt709,
+      false,
+      true,
+    );
+  }
+  assert_eq!(
+    rgba, rgba_derived,
+    "centered ChromaDerivedNcl RGBA must use the primaries-derived coefficients"
+  );
+  assert_ne!(
+    rgba, rgba_bt709,
+    "centered ChromaDerivedNcl RGBA must NOT decode as the BT.709 fallback (the bug)"
+  );
+}
+
 // ---- preflight-ordering atomicity (#302, cf. #180) -------------------------
 
 #[test]
