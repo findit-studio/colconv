@@ -291,7 +291,7 @@ fn p0xx_process_native<const BITS: u32, const BE: bool>(
 // value in the high `BITS`), so the centered horizontal upsample
 // de-interleaves, phase-0.5 upsamples each of U / V, and RE-INTERLEAVES into a
 // full-width `U V …` plane the existing P-format 4:4:4 kernels consume — all
-// fused in [`chroma_upsample_420_center_h_p0xx`](crate::row::scalar::chroma_upsample_420_center_h_p0xx),
+// fused in [`chroma_upsample_2to1_center_h_p0xx`](crate::row::scalar::chroma_upsample_2to1_center_h_p0xx),
 // reusing their full SIMD backends so a centered decode stays bit-identical per
 // tier. (`ChromaDerivedNcl` is the lone exception: P010/012/016 — like every
 // format except `Yuv420p` — resolve it via the BT.709 matrix-tag fallback
@@ -319,7 +319,7 @@ fn p0xx_process_native<const BITS: u32, const BE: bool>(
 /// (`FORCE_CHROMA_FULL_ALLOC_FAILURE`) so the atomicity regression reuses
 /// `arm_chroma_full_alloc_failure`.
 #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
-fn reserve_420_chroma_full_u16(
+pub(crate) fn reserve_420_chroma_full_u16(
   chroma_full: &mut std::vec::Vec<u16>,
   width: usize,
   height: usize,
@@ -353,7 +353,7 @@ fn reserve_420_chroma_full_u16(
 /// INTERLEAVED `U V …` plane in the **already-reserved** `chroma_full` (#302),
 /// returning the `2 * width` `u16` slice the P-format 4:4:4 decode kernels
 /// consume. The de-interleave + phase-0.5 blend + re-interleave are fused in
-/// [`chroma_upsample_420_center_h_p0xx`](crate::row::scalar::chroma_upsample_420_center_h_p0xx)
+/// [`chroma_upsample_2to1_center_h_p0xx`](crate::row::scalar::chroma_upsample_2to1_center_h_p0xx)
 /// (operating in the source's MSB-aligned wire convention + `big_endian`
 /// order), so the output feeds straight to `p0xx_to_*_row_endian` with the same
 /// `big_endian` flag — reusing their SIMD backends, bit-identical per tier.
@@ -366,7 +366,7 @@ fn reserve_420_chroma_full_u16(
 /// the centered sitings reach here; the default left/unspecified path never
 /// touches this scratch.
 #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
-fn upsample_420_chroma_center_h_p0xx<'s, const BITS: u32>(
+pub(crate) fn upsample_420_chroma_center_h_p0xx<'s, const BITS: u32>(
   chroma_full: &'s mut [u16],
   uv_half: &[u16],
   width: usize,
@@ -376,7 +376,7 @@ fn upsample_420_chroma_center_h_p0xx<'s, const BITS: u32>(
     chroma_full.len() >= 2 * width,
     "chroma_full must be reserved via reserve_420_chroma_full_u16 first"
   );
-  crate::row::scalar::chroma_upsample_420_center_h_p0xx::<BITS>(
+  crate::row::scalar::chroma_upsample_2to1_center_h_p0xx::<BITS>(
     uv_half,
     &mut chroma_full[..2 * width],
     width,

@@ -22,9 +22,12 @@ const fn depack_pn<const BITS: u32, const LOW_PACKED: bool>(value: u16) -> u16 {
   }
 }
 
-/// Chroma-siting-aware horizontal upsample for the **high-bit-packed
-/// semi-planar** 4:2:0 P-format family (P010 / P012 / P016, #302) — the
-/// MSB-aligned `u16` twin of
+/// Chroma-siting-aware horizontal 2:1 upsample for the **high-bit-packed
+/// semi-planar** P-format family — the 4:2:0 `P010` / `P012` / `P016` AND the
+/// 4:2:2 `P210` / `P212` / `P216` (#302). 4:2:0 and 4:2:2 subsample chroma 2:1
+/// **horizontally** identically (4:2:2 only drops the vertical subsample), so
+/// both reconstruct centered chroma with this one kernel — the MSB-aligned
+/// `u16` twin of
 /// [`chroma_upsample_2to1_center_h_u16`](super::yuv_planar_8bit::chroma_upsample_2to1_center_h_u16).
 ///
 /// Reconstructs **center-sited** chroma (MPEG-1 / JPEG horizontal phase,
@@ -67,16 +70,17 @@ const fn depack_pn<const BITS: u32, const LOW_PACKED: bool>(value: u16) -> u16 {
 /// - `width` must be even (4:2:0 pairs pixel columns).
 /// - `uv_half.len() >= width` (a half-row is `width` `u16`: `width / 2`
 ///   `U, V` pairs), `uv_full.len() >= 2 * width`.
-// Reachable only through the high-bit P-format sink's centered path, which
-// stages the full-width chroma in a `Vec` scratch — so the kernel is live
-// exactly where the sink (hence heap allocation) is. The centered path is
-// `all(yuv-semi-planar, yuv-planar)` (its `chroma_420_center_sited_h` predicate
-// + the 4:4:4 P-format decode kernels need `yuv-planar`); this module already
+// Reachable only through the high-bit P-format sinks' centered paths (4:2:0
+// `p0xx` and 4:2:2 `p2xx`), which stage the full-width chroma in a `Vec`
+// scratch — so the kernel is live exactly where the sink (hence heap
+// allocation) is. Those paths are `all(yuv-semi-planar, yuv-planar)` (their
+// `chroma_420_center_sited_h` / `chroma_422_center_sited_h` predicates + the
+// 4:4:4 P-format decode kernels need `yuv-planar`); this module already
 // requires `yuv-semi-planar`, so gating the kernel on `yuv-planar` matches its
-// sole caller and keeps it from being dead code in a semi-planar-only build.
+// callers and keeps it from being dead code in a semi-planar-only build.
 #[cfg(all(any(feature = "std", feature = "alloc"), feature = "yuv-planar"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn chroma_upsample_420_center_h_p0xx<const BITS: u32>(
+pub(crate) fn chroma_upsample_2to1_center_h_p0xx<const BITS: u32>(
   uv_half: &[u16],
   uv_full: &mut [u16],
   width: usize,

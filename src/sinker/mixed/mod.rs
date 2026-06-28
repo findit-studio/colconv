@@ -2704,11 +2704,14 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// [`Self::chroma_prev`].
   #[cfg(feature = "yuv-planar")]
   chroma_prev_row: Option<usize>,
-  /// Full-width `u16` chroma staging for the **high-bit** planar 4:2:0
-  /// siting-aware upsample (`Yuv420p9` … `Yuv420p16`, #302) — the `u16` twin of
-  /// [`Self::chroma_full`]. Holds the horizontally upsampled U then V planes
-  /// back-to-back (`2 * width` `u16` elements: `[0..width]` = U,
-  /// `[width..2*width]` = V), in the source's wire byte order, so the
+  /// Full-width `u16` chroma staging for the **high-bit** siting-aware upsample
+  /// (#302) — the `u16` twin of [`Self::chroma_full`]. Shared by the planar
+  /// `Yuv420p9` … `Yuv420p16` / `Yuv422p9` … `Yuv422p16` decodes (which lay it
+  /// out as the horizontally upsampled U then V planes back-to-back:
+  /// `[0..width]` = U, `[width..2*width]` = V) AND the semi-planar P-format
+  /// `P010` / `P012` / `P016` (4:2:0) / `P210` / `P212` / `P216` (4:2:2) decodes
+  /// (which lay it out as a full-width INTERLEAVED `U V U V…` plane). Either way
+  /// it is `2 * width` `u16` in the source's wire byte order, so the
   /// centered-siting identity path can reuse the high-bit 4:4:4 decode kernels.
   /// Lazily grown to `2 * width` `u16` on the first centered-siting chroma row;
   /// empty otherwise (the default left/unspecified siting never touches it).
