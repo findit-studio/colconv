@@ -2544,10 +2544,15 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// Full-width `u8` chroma staging for the siting-aware 4:2:0 upsample
   /// (#302). Holds the horizontally upsampled U then V planes back-to-back
   /// (`2 * width` bytes: `[0..width]` = U, `[width..2*width]` = V) so the
-  /// centered-siting identity path can reuse the 4:4:4 decode kernels.
-  /// Lazily grown to `2 * width` `u8` on the first centered-siting chroma
-  /// row; empty otherwise (the default left/unspecified siting never touches
-  /// it). Gated to `yuv-planar` (the only family wired in this PR).
+  /// centered-siting identity path can reuse the 4:4:4 decode kernels. Shared
+  /// by the planar `Yuv420p` and the semi-planar `Nv12` / `Nv21` decodes (the
+  /// latter de-interleave the interleaved UV into the half-width
+  /// [`Self::semi_planar_u_half`] / `_v_half` scratch first, then upsample into
+  /// this buffer). Lazily grown to `2 * width` `u8` on the first centered-siting
+  /// chroma row; empty otherwise (the default left/unspecified siting never
+  /// touches it). Gated to `yuv-planar` (the 4:4:4 kernels + scalar upsample it
+  /// reuses live there; the semi-planar path additionally requires
+  /// `yuv-semi-planar`).
   #[cfg(feature = "yuv-planar")]
   chroma_full: Vec<u8>,
   /// Source-width `u8` luma staging for the **packed YUV 4:2:2** resample
@@ -4408,12 +4413,12 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   /// `BottomLeft`) — keeps colconv's nearest-neighbor decode, byte-identical
   /// to the pre-#302 output. The horizontally **centered** sitings (`Center`
   /// / `Top` / `Bottom`, the MPEG-1 / JPEG phase) route the identity-plan
-  /// `Yuv420p` decode through a phase-0.5 chroma upsample + the 4:4:4
-  /// kernels, correcting the half-pixel chroma shift. The vertical phase is
-  /// not yet consumed (see `chroma_420_center_sited_h`); other 4:2:0
-  /// families and the resampling tiers ignore this knob until the #302
-  /// rollout extends them. See [`Self::set_chroma_location`] for the
-  /// in-place variant.
+  /// 4:2:0 decode through a phase-0.5 chroma upsample + the 4:4:4 kernels,
+  /// correcting the half-pixel chroma shift. Wired for the planar `Yuv420p`
+  /// and the semi-planar `Nv12` / `Nv21` identity decodes. The vertical phase
+  /// is not yet consumed (see `chroma_420_center_sited_h`); the remaining 4:2:0
+  /// families and the resampling tiers ignore this knob until the #302 rollout
+  /// extends them. See [`Self::set_chroma_location`] for the in-place variant.
   #[cfg(feature = "yuv-planar")]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn with_chroma_location(mut self, loc: crate::ChromaLocation) -> Self {
@@ -4471,6 +4476,16 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   /// # let _ = opts;
   /// # }
   /// ```
+  ///
+  /// **`ChromaDerivedNcl` scope.** The `primaries`-derived `ChromaDerivedNcl`
+  /// decode is currently wired for `Yuv420p` only (#316). Every other format —
+  /// the planar siblings (`Yuv422p` / `Yuv444p` / `Yuv440p` / …) and the
+  /// semi-planar `Nv12` / `Nv21` (#302) — resolves `ChromaDerivedNcl` via the
+  /// BT.709 matrix-tag fallback (`Coefficients::for_matrix`), ignoring the
+  /// `primaries`; the `chroma_location` is still honored. Wiring the
+  /// primaries-derived path into those formats is a follow-up. (Setting a
+  /// non-`ChromaDerivedNcl` matrix is unaffected — `primaries` are unused
+  /// there.)
   ///
   /// See [`Self::set_color_spec`] for the in-place variant and
   /// [`Self::with_chroma_location`] to set the siting directly.
@@ -4966,10 +4981,12 @@ pub(crate) fn disarm_rgb_scratch_alloc_failure() {
 
 // Test-only failpoint for the centered-siting 4:2:0 chroma scratch grow
 // (#302), mirroring `FORCE_RGB_SCRATCH_ALLOC_FAILURE`. Gated on `std` +
-// `yuv-planar` to match its only consumer — the `chroma_siting_420`
-// atomicity test (`yuv-planar`-gated; `thread_local!` needs `std`) — so it
-// is not dead code in a `std`-but-no-`yuva` test build. `reserve_420_chroma_full`
-// (in `planar_8bit`) reads it via `super::`.
+// `yuv-planar` to match its consumers — the `chroma_siting_420` (planar) and
+// `chroma_siting_nv` (semi-planar `Nv12` / `Nv21`) atomicity tests
+// (`yuv-planar`-gated; `thread_local!` needs `std`) — so it is not dead code in
+// a `std`-but-no-`yuva` test build. `reserve_420_chroma_full` (in
+// `planar_8bit`) reads it via `super::` for both the planar and semi-planar
+// centered paths.
 #[cfg(all(test, feature = "std", feature = "yuv-planar"))]
 std::thread_local! {
   static FORCE_CHROMA_FULL_ALLOC_FAILURE: core::cell::Cell<bool> =
