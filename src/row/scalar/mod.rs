@@ -75,6 +75,12 @@ pub(crate) mod area_reduce;
 mod ayuv64;
 #[cfg(feature = "bayer")]
 mod bayer;
+// Constant-luminance `YcCbcCrc` (BT.2020 CL, H.273 MatrixCoefficients = 13)
+// non-affine decode. Gated like `ictcp`: the transcendental inverse-OETF /
+// OETF need `std` or `alloc` (libm); the representative wiring targets the
+// `yuv-planar` 4:4:4 family (#303).
+#[cfg(all(feature = "yuv-planar", any(feature = "std", feature = "alloc")))]
+pub(crate) mod cl;
 #[cfg(all(
   any(feature = "std", feature = "alloc"),
   any(
