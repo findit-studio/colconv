@@ -446,3 +446,64 @@ fn y210_le_be_roundtrip_byte_identical() {
     "Y210 luma u16 LE/BE outputs diverge — `<const BE>` propagation broken"
   );
 }
+
+// ---- Atomicity (#308): RGB-scratch preflight before output writes -------
+//
+// Y210's identity `process` hoists the RGB-scratch reservation above every
+// output write (luma, luma_u16, then the u16 RGB / RGBA fan-out), so an
+// allocator refusal of the scratch grow surfaces as a recoverable
+// `AllocationFailed` BEFORE any output plane is touched. The allocating
+// (rgb = None) arm of `rgb_row_buf_or_scratch` is reached only at
+// `want_hsv && want_rgba && !want_rgb` (HSV-only routes through the direct
+// `y210_to_hsv_row_endian` kernel and never allocates): attach luma + luma_u16
+// + rgba + hsv (no rgb) and arm the shared failpoint. `yuva`-gated (shares the
+// crate's RGB-scratch failpoint).
+#[cfg(feature = "yuva")]
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn y210_rgb_scratch_alloc_failure_leaves_outputs_untouched() {
+  use crate::resample::ResampleError;
+
+  let buf = solid_y210_frame(16, 8, 512, 512, 512);
+  let src = Y210Frame::new(&buf, 16, 8, 32);
+  let mut luma = std::vec![0xABu8; 16 * 8];
+  let mut luma_u16 = std::vec![0xABCDu16; 16 * 8];
+  let mut rgba = std::vec![0xCDu8; 16 * 8 * 4];
+  let (mut hh, mut ss, mut vv) = (
+    std::vec![0xCDu8; 16 * 8],
+    std::vec![0xCDu8; 16 * 8],
+    std::vec![0xCDu8; 16 * 8],
+  );
+  let mut sink = MixedSinker::<Y210>::new(16, 8)
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_luma_u16(&mut luma_u16)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
+
+  super::super::arm_rgb_scratch_alloc_failure();
+  let err = y210_to(&src, false, ColorMatrix::Bt601, &mut sink).unwrap_err();
+  drop(sink);
+
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "RGB-scratch refusal must surface as a recoverable AllocationFailed, got {err:?}"
+  );
+  assert!(
+    luma.iter().all(|&b| b == 0xAB),
+    "luma must be untouched on the rgb-scratch alloc-failure path"
+  );
+  assert!(
+    luma_u16.iter().all(|&b| b == 0xABCD),
+    "luma_u16 must be untouched on the rgb-scratch alloc-failure path"
+  );
+}

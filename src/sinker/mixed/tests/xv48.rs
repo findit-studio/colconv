@@ -450,3 +450,64 @@ fn xv48_le_be_roundtrip_byte_identical() {
     "Xv48 LE/BE outputs diverge — `<const BE>` propagation broken"
   );
 }
+
+// ---- Atomicity (#308): RGB-scratch preflight before output writes -------
+//
+// Xv48's identity `process` hoists the RGB-scratch reservation above every
+// output write (luma, luma_u16, then the u16 RGB / RGBA fan-out), so an
+// allocator refusal of the scratch grow surfaces as a recoverable
+// `AllocationFailed` BEFORE any output plane is touched. The allocating
+// (rgb = None) arm of `rgb_row_buf_or_scratch` is reached only at
+// `want_hsv && want_rgba && !want_rgb` (HSV-only routes through the direct
+// `xv48_to_hsv_row` kernel and never allocates): attach luma + luma_u16 + rgba
+// + hsv (no rgb) and arm the shared failpoint. `yuva`-gated (shares the crate's
+// RGB-scratch failpoint).
+#[cfg(all(test, feature = "std", feature = "yuva"))]
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn xv48_rgb_scratch_alloc_failure_leaves_outputs_untouched() {
+  use crate::resample::ResampleError;
+
+  let buf = solid_xv48_frame(16, 8, 0x8000, 0x8000, 0x8000, 0);
+  let src = Xv48Frame::new(&buf, 16, 8, 64);
+  let mut luma = std::vec![0xABu8; 16 * 8];
+  let mut luma_u16 = std::vec![0xABCDu16; 16 * 8];
+  let mut rgba = std::vec![0xCDu8; 16 * 8 * 4];
+  let (mut hh, mut ss, mut vv) = (
+    std::vec![0xCDu8; 16 * 8],
+    std::vec![0xCDu8; 16 * 8],
+    std::vec![0xCDu8; 16 * 8],
+  );
+  let mut sink = MixedSinker::<Xv48>::new(16, 8)
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_luma_u16(&mut luma_u16)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
+
+  super::super::arm_rgb_scratch_alloc_failure();
+  let err = xv48_to(&src, false, ColorMatrix::Bt601, &mut sink).unwrap_err();
+  drop(sink);
+
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "RGB-scratch refusal must surface as a recoverable AllocationFailed, got {err:?}"
+  );
+  assert!(
+    luma.iter().all(|&b| b == 0xAB),
+    "luma must be untouched on the rgb-scratch alloc-failure path"
+  );
+  assert!(
+    luma_u16.iter().all(|&b| b == 0xABCD),
+    "luma_u16 must be untouched on the rgb-scratch alloc-failure path"
+  );
+}

@@ -412,6 +412,37 @@ impl<const BE: bool, R> PixelSink for MixedSinker<'_, Xv48<BE>, R> {
     let one_plane_end = one_plane_start + w;
     let packed = row.packed();
 
+    // Resolve the output set up front so the atomicity preflight below runs
+    // before any output row is written.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // high-bit semi-planar sibling): reserve the only growable row scratch this
+    // identity row can touch — the u8 RGB row buffer — BEFORE any output row is
+    // written (the luma / luma_u16 planes below, then the u16 RGB / RGBA
+    // fan-out), so an allocator refusal returns a typed `AllocationFailed`
+    // leaving the output frame untouched rather than partially mutated. The
+    // luma / luma_u16 and u16 RGB / RGBA outputs write straight into their
+    // caller buffers and never grow a scratch. `rgb_row_buf_or_scratch`'s
+    // allocating (rgb = None) arm is reached exactly when a colour decode needs
+    // an RGB row but no caller RGB buffer is borrowable — for this
+    // convert-once-then-derive path that is `want_hsv && want_rgba && !want_rgb`
+    // (HSV-only routes through the direct `xv48_to_hsv_row` kernel, which needs
+    // no RGB scratch). The later decode reuses the already-sized buffer, so the
+    // default path is byte-identical; only the failure-path ordering changes.
+    if want_hsv && want_rgba && !want_rgb {
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     // Luma u8 — extract 8-bit Y bytes from the XV48 plane via the
     // dedicated kernel (downshifts 16-bit Y >> 8 to u8).
     if let Some(buf) = luma.as_deref_mut() {
@@ -492,9 +523,8 @@ impl<const BE: bool, R> PixelSink for MixedSinker<'_, Xv48<BE>, R> {
     // paths above already ran, so this HSV-direct early return is safe.
     // Resample row-stage HSV-only is a #263 follow-up — HSV stays correct
     // via the convert-once path.
-    let want_rgb = rgb.is_some();
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
+    // `want_rgb` / `want_rgba` / `want_hsv` were resolved up front for the
+    // atomicity preflight (#308).
     let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
     let need_u8_rgb_kernel = want_rgb || (want_hsv && want_rgba);
 
