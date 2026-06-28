@@ -79,6 +79,8 @@ mod ayuv64;
 #[cfg(feature = "bayer")]
 mod bayer;
 #[cfg(feature = "yuv-planar")]
+mod chroma_derived_cl;
+#[cfg(feature = "yuv-planar")]
 mod chroma_siting_420;
 #[cfg(feature = "yuv-planar")]
 mod chroma_siting_hibit_420;
