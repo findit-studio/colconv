@@ -1,23 +1,27 @@
-//! Chroma-siting-aware **high-bit** 4:2:0 upsampling for `Yuv420p9` …
-//! `Yuv420p16` (#302).
+//! Chroma-siting-aware **high-bit** 4:2:2 upsampling for `Yuv422p9` …
+//! `Yuv422p16` (#302).
 //!
-//! Covers, per bit depth (9 / 10 / 12 / 14 / 16, via the macro below): the
-//! default / co-sited path staying byte-identical to the pre-#302
-//! nearest-neighbor decode (the regression guard, plus its negative control
-//! that the centered phase actually moves chroma); the centered RGB / RGBA /
-//! HSV decodes — and their `u16` twins — matching an independent
-//! "upsample-then-4:4:4" reference; SIMD-vs-scalar parity of the centered
-//! path; the preflight-ordering atomicity (a centered chroma-scratch alloc
-//! failure leaves luma AND colour untouched); and the `ChromaDerivedNcl`
-//! consistency invariant (the high-bit formats are NOT primaries-wired, so
-//! BOTH the default and centered paths resolve it via the BT.709 matrix-tag
-//! fallback). The bit-exact `u16` upsample kernel is also checked directly
-//! against a hand-computed oracle, including the big-endian wire path.
+//! 4:2:2 subsamples chroma 2:1 horizontally ONLY (one chroma row per luma row,
+//! no vertical subsampling), reusing the SAME wire-format `u16` phase-0.5
+//! upsample kernel 4:2:0 uses
+//! ([`chroma_upsample_2to1_center_h_u16`](crate::row::scalar::chroma_upsample_2to1_center_h_u16)) —
+//! whose bit-exact / endianness / dirty-upper-bit masking behaviour is oracle-
+//! tested in `chroma_siting_hibit_420`. Covers here, per bit depth (9 / 10 / 12 /
+//! 14 / 16, via the macro): the default / co-sited path staying byte-identical to
+//! the pre-#302 nearest-neighbor decode (+ its negative control); the centered
+//! RGB / RGBA / HSV decodes — and their `u16` twins — matching an independent
+//! "upsample-then-4:4:4" reference; SIMD-vs-scalar parity; that every centered
+//! siting (Center / Top / Bottom) agrees horizontally (4:2:2 has no vertical
+//! axis); the dirty-upper-bit sanitization end-to-end on BOTH wire endians (the
+//! `BE` flag threads through the 4:2:2 wiring); the preflight-ordering atomicity
+//! (a centered chroma-scratch alloc failure leaves luma AND colour untouched);
+//! and the `ChromaDerivedNcl` consistency invariant (NOT primaries-wired — both
+//! paths use the BT.709 matrix-tag fallback).
 //!
-//! The macro instantiates each bit depth with its **little-endian** marker, so
-//! a sample's wire `u16` equals its logical value on the (little-endian) test
-//! host; the references compute in that logical domain. The endianness
-//! re-encode is exercised host-independently by the kernel-level BE oracle.
+//! The macro instantiates each bit depth with its **little-endian** marker, so a
+//! sample's wire `u16` equals its logical value on the (little-endian) test host;
+//! the references compute in that logical domain. The BE re-encode is exercised
+//! by the `*_be` dirty-bit tests.
 
 use super::*;
 use crate::ChromaLocation;
@@ -25,21 +29,20 @@ use crate::ChromaLocation;
 const W: u32 = 16;
 const H: u32 = 8;
 
-/// Builds a high-bit 4:2:0 frame's logical planes: flat mid-gray luma plus a
-/// per-column chroma ramp (distinct adjacent columns so the horizontal phase
-/// is observable; the small `+ r` term keeps chroma rows from being identical
-/// so a vertical mistake would surface). Values are clamped to `maxv =
+/// Builds a high-bit 4:2:2 frame's logical planes: flat mid-gray luma plus a
+/// per-column chroma ramp on a half-width, **full-height** chroma plane (one
+/// chroma row per luma row). Distinct adjacent columns make the horizontal phase
+/// observable; the `+ r` term keeps chroma rows distinct. Clamped to `maxv =
 /// (1 << BITS) - 1`.
 fn ramp_planes_n(maxv: u32) -> (Vec<u16>, Vec<u16>, Vec<u16>) {
   let w = W as usize;
   let h = H as usize;
   let cw = w / 2;
-  let ch = h / 2;
   let step = (maxv / 16).max(1);
   let y = std::vec![(maxv / 2) as u16; w * h];
-  let mut u = std::vec![0u16; cw * ch];
-  let mut v = std::vec![0u16; cw * ch];
-  for r in 0..ch {
+  let mut u = std::vec![0u16; cw * h];
+  let mut v = std::vec![0u16; cw * h];
+  for r in 0..h {
     for c in 0..cw {
       u[r * cw + c] = (step * c as u32 + step + r as u32 * 5).min(maxv) as u16;
       v[r * cw + c] = maxv.saturating_sub(step * c as u32).max(step) as u16;
@@ -48,9 +51,9 @@ fn ramp_planes_n(maxv: u32) -> (Vec<u16>, Vec<u16>, Vec<u16>) {
   (y, u, v)
 }
 
-/// Independent reference for the centered-siting horizontal upsample — the
-/// MPEG-1 / JPEG phase-0.5 `1/4`–`3/4` weights with edge clamp, on logical
-/// `u16`. Written separately from the production kernel so it is a real oracle.
+/// Independent reference for the centered horizontal upsample — phase-0.5
+/// `1/4`–`3/4` with edge clamp, on logical `u16`. Written separately from the
+/// production kernel so it is a real oracle.
 fn ref_upsample_center_h_u16(c_half: &[u16], width: usize) -> Vec<u16> {
   let half = width / 2;
   let mut out = std::vec![0u16; width];
@@ -64,149 +67,32 @@ fn ref_upsample_center_h_u16(c_half: &[u16], width: usize) -> Vec<u16> {
   out
 }
 
-/// Builds the full-resolution U / V a centered-siting high-bit 4:2:0 decode
-/// reconstructs: each luma row `r` takes chroma row `r / 2` (the walker's
-/// vertical replication, unchanged by #302) horizontally upsampled with the
-/// centered weights. Feeding these to the matching `Yuv444pN` conversion is the
-/// end-to-end oracle for the centered path.
-fn ref_full_chroma_u16(u420: &[u16], v420: &[u16]) -> (Vec<u16>, Vec<u16>) {
+/// Full-resolution U / V a centered high-bit 4:2:2 decode reconstructs: each luma
+/// row `r` takes chroma row `r` (1:1 — NO vertical subsampling, unlike 4:2:0's
+/// `r / 2`) horizontally upsampled with the centered weights. Feeding these to
+/// the matching `Yuv444pN` conversion is the end-to-end oracle.
+fn ref_full_chroma_u16(u422: &[u16], v422: &[u16]) -> (Vec<u16>, Vec<u16>) {
   let w = W as usize;
   let h = H as usize;
   let cw = w / 2;
   let mut u444 = std::vec![0u16; w * h];
   let mut v444 = std::vec![0u16; w * h];
   for r in 0..h {
-    let cr = r / 2;
-    let urow = ref_upsample_center_h_u16(&u420[cr * cw..cr * cw + cw], w);
-    let vrow = ref_upsample_center_h_u16(&v420[cr * cw..cr * cw + cw], w);
+    let urow = ref_upsample_center_h_u16(&u422[r * cw..r * cw + cw], w);
+    let vrow = ref_upsample_center_h_u16(&v422[r * cw..r * cw + cw], w);
     u444[r * w..r * w + w].copy_from_slice(&urow);
     v444[r * w..r * w + w].copy_from_slice(&vrow);
   }
   (u444, v444)
 }
 
-// ---- u16 kernel oracle (endianness-explicit) -------------------------------
-
-#[test]
-fn center_upsample_u16_kernel_matches_hand_computed() {
-  // c = [0, 0, 400, 400] (half = 4, width = 8), little-endian wire.
-  //   even 2j   = (c[j-1] + 3·c[j] + 2) >> 2
-  //   odd  2j+1 = (3·c[j] + c[j+1] + 2) >> 2
-  // Values < 512 fit every depth, so the `BITS` mask is a no-op here; the
-  // dirty-upper-bit masking is exercised by
-  // `center_upsample_u16_kernel_masks_dirty_upper_bits`.
-  let c_half = [0u16, 0, 400, 400];
-  let mut out = [0u16; 8];
-  crate::row::scalar::chroma_upsample_2to1_center_h_u16::<10>(&c_half, &mut out, 8, false);
-  assert_eq!(out, [0, 0, 0, 100, 300, 400, 400, 400]);
-}
-
-#[test]
-fn center_upsample_u16_kernel_clamps_edges() {
-  // Width 4: left edge even = c[0] exactly, right edge odd = c[last] exactly.
-  let c_half = [1000u16, 2000];
-  let mut out = [0u16; 4];
-  crate::row::scalar::chroma_upsample_2to1_center_h_u16::<12>(&c_half, &mut out, 4, false);
-  assert_eq!(out, [1000, 1250, 1750, 2000]);
-  assert_eq!(out[0], c_half[0], "left edge even column is co-sited");
-  assert_eq!(out[3], c_half[1], "right edge odd column is co-sited");
-}
-
-#[test]
-fn center_upsample_u16_kernel_big_endian_matches_le_logical() {
-  // Same LOGICAL input, wire-encoded big-endian: the kernel interpolates in the
-  // logical domain and re-encodes to the same wire order, so decoding the BE
-  // output back yields the SAME logical result as the LE path. Host-independent.
-  let logical = [0u16, 0, 400, 400];
-  let le: Vec<u16> = logical.iter().map(|&x| x.to_le()).collect();
-  let be: Vec<u16> = logical.iter().map(|&x| x.to_be()).collect();
-  let mut out_le = [0u16; 8];
-  let mut out_be = [0u16; 8];
-  crate::row::scalar::chroma_upsample_2to1_center_h_u16::<10>(&le, &mut out_le, 8, false);
-  crate::row::scalar::chroma_upsample_2to1_center_h_u16::<10>(&be, &mut out_be, 8, true);
-  let dec_le: Vec<u16> = out_le.iter().map(|&x| u16::from_le(x)).collect();
-  let dec_be: Vec<u16> = out_be.iter().map(|&x| u16::from_be(x)).collect();
-  assert_eq!(
-    dec_be, dec_le,
-    "BE wire path must equal the LE logical interpolation"
-  );
-  assert_eq!(dec_be, std::vec![0u16, 0, 0, 100, 300, 400, 400, 400]);
-}
-
-#[test]
-fn center_upsample_u16_kernel_masks_dirty_upper_bits() {
-  // The fused high-bit decode kernels mask low-packed samples to BITS
-  // (`& bits_mask::<BITS>()`) before use, sanitizing dirty upper bits in a
-  // malformed-but-accepted frame. The centered upsample must do the SAME BEFORE
-  // its 1/4-3/4 blend — otherwise a dirty sample's high bits leak into a
-  // neighbour's low bits. For every sub-16-bit depth and both wire endians, a
-  // frame with ALL bits above BITS set must blend identically to the masked
-  // (clean) frame, and stay within `[0, (1 << BITS) - 1]`.
-  fn check<const BITS: u32>() {
-    let mask = ((1u32 << BITS) - 1) as u16;
-    let upper = !mask; // every bit above BITS
-    let clean = [0u16, 0, mask, mask]; // half = 4, width = 8; a non-constant ramp
-    let dirty = [
-      clean[0] | upper,
-      clean[1] | upper,
-      clean[2] | upper,
-      clean[3] | upper,
-    ];
-    for &be in &[false, true] {
-      let enc = |v: u16| if be { v.to_be() } else { v.to_le() };
-      let dec = |v: u16| if be { u16::from_be(v) } else { u16::from_le(v) };
-      let dirty_wire: Vec<u16> = dirty.iter().map(|&v| enc(v)).collect();
-      let clean_wire: Vec<u16> = clean.iter().map(|&v| enc(v)).collect();
-      let mut out_dirty = [0u16; 8];
-      let mut out_clean = [0u16; 8];
-      crate::row::scalar::chroma_upsample_2to1_center_h_u16::<BITS>(
-        &dirty_wire,
-        &mut out_dirty,
-        8,
-        be,
-      );
-      crate::row::scalar::chroma_upsample_2to1_center_h_u16::<BITS>(
-        &clean_wire,
-        &mut out_clean,
-        8,
-        be,
-      );
-      let dec_dirty: Vec<u16> = out_dirty.iter().map(|&v| dec(v)).collect();
-      let dec_clean: Vec<u16> = out_clean.iter().map(|&v| dec(v)).collect();
-      assert_eq!(
-        dec_dirty, dec_clean,
-        "BITS={BITS} be={be}: dirty upper bits must be masked before the blend"
-      );
-      assert!(
-        dec_dirty.iter().all(|&v| v <= mask),
-        "BITS={BITS} be={be}: blended output must stay within the bit depth"
-      );
-    }
-  }
-  check::<9>();
-  check::<10>();
-  check::<12>();
-  check::<14>();
-
-  // 16-bit has no spare bits: the mask is `u16::MAX` (a no-op), so a
-  // top-of-range sample is preserved through the blend.
-  let mut out = [0u16; 8];
-  crate::row::scalar::chroma_upsample_2to1_center_h_u16::<16>(
-    &[0u16, 0, 65535, 65535],
-    &mut out,
-    8,
-    false,
-  );
-  assert_eq!(out, [0, 0, 0, 16384, 49151, 65535, 65535, 65535]);
-}
-
 // ---- per-bit-depth suite ---------------------------------------------------
 
-// The suite is identical bar the bit depth, format marker, frame type, and
-// walker, so generate it once per depth. Each lands in its own `mod` so the
-// names don't collide.
-macro_rules! hibit_420_chroma_tests {
-  ($mod:ident, $bits:expr, $Marker:ident, $Frame:ident, $walker:ident, $Ref:ident, $RefFrame:ident, $ref_walker:ident, $MarkerBe:ty, $FrameBe:ident, $walker_be:ident) => {
+// Identical bar the bit depth, format marker, frame type, and walker, so
+// generate it once per depth. Each lands in its own `mod` so the names don't
+// collide.
+macro_rules! hibit_422_chroma_tests {
+  ($mod:ident, $bits:expr, $Marker:ident, $Frame:ident, $walker:ident, $Ref:ident, $RefFrame:ident, $ref_walker:ident, $MarkerBe:ty, $FrameBe:ident, $walker_be:ident, $Row:ident) => {
     mod $mod {
       use super::*;
 
@@ -311,7 +197,7 @@ macro_rules! hibit_420_chroma_tests {
         assert_eq!(
           convert_rgb(ChromaLocation::Center, true),
           rgb_ref,
-          "centered high-bit 4:2:0 RGB must equal upsample-then-4:4:4"
+          "centered high-bit 4:2:2 RGB must equal upsample-then-4:4:4"
         );
       }
 
@@ -341,7 +227,7 @@ macro_rules! hibit_420_chroma_tests {
 
         assert_eq!(
           rgb16, rgb16_ref,
-          "centered high-bit 4:2:0 RGB(u16) must equal upsample-then-4:4:4"
+          "centered high-bit 4:2:2 RGB(u16) must equal upsample-then-4:4:4"
         );
       }
 
@@ -432,9 +318,9 @@ macro_rules! hibit_420_chroma_tests {
         miri,
         ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
       )]
-      fn top_and_bottom_route_like_center_horizontally() {
-        // Top / Bottom share Center's horizontal (centered) phase; the vertical
-        // phase is not yet consumed (#302 horizontal-only), so all three agree.
+      fn every_centered_siting_agrees_horizontally() {
+        // 4:2:2 has no vertical axis, so Center / Top / Bottom all reduce to the
+        // same horizontal phase — all three agree.
         let center = convert_rgb(ChromaLocation::Center, true);
         assert_eq!(convert_rgb(ChromaLocation::Top, true), center);
         assert_eq!(convert_rgb(ChromaLocation::Bottom, true), center);
@@ -469,7 +355,7 @@ macro_rules! hibit_420_chroma_tests {
         );
       }
 
-      // ---- dirty-upper-bit sanitization (mask before the blend) ------------
+      // ---- dirty-upper-bit sanitization end-to-end (BE flag threading) -----
 
       #[test]
       #[cfg_attr(
@@ -479,10 +365,8 @@ macro_rules! hibit_420_chroma_tests {
       fn centered_sanitizes_dirty_upper_bits_le() {
         // A malformed-but-accepted low-packed frame with bits set ABOVE BITS must
         // decode (centered) identically to the masked clean frame: the centered
-        // upsample masks each sample to BITS BEFORE the 1/4-3/4 blend, exactly as
-        // the fused decode kernels do, so a dirty sample's high bits never leak
-        // into a neighbour's low bits. (At BITS = 16 `upper` is 0, so this is the
-        // clean == clean identity — 16-bit has no spare bits.)
+        // upsample masks each sample to BITS BEFORE the 1/4-3/4 blend. (At
+        // BITS = 16 `upper` is 0, so this is the clean == clean identity.)
         let upper = !(MAXV as u16);
         let (yp, up, vp) = ramp_planes_n(MAXV);
         let decode = |u: &[u16], v: &[u16]| -> Vec<u8> {
@@ -512,7 +396,8 @@ macro_rules! hibit_420_chroma_tests {
       fn centered_sanitizes_dirty_upper_bits_be() {
         // Same invariant on the big-endian wire path: the mask is applied in the
         // logical domain (after the endian load), so dirty bits are stripped for
-        // BE inputs too. Planes are BE-encoded and decoded via the BE marker /
+        // BE inputs too — confirming the `BE` flag threads through the 4:2:2
+        // centered staging. Planes are BE-encoded and decoded via the BE marker /
         // frame / walker.
         let upper = !(MAXV as u16);
         let (yp, up, vp) = ramp_planes_n(MAXV);
@@ -592,25 +477,19 @@ macro_rules! hibit_420_chroma_tests {
         ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
       )]
       fn centered_chroma_derived_ncl_uses_matrix_tag_fallback() {
-        // The high-bit Yuv420p formats are NOT ChromaDerivedNcl-primaries-wired
-        // (only 8-bit Yuv420p got #316). BOTH paths — the default fused 4:2:0
-        // kernel AND the centered 4:4:4 kernel — resolve ChromaDerivedNcl via the
-        // shared BT.709 matrix-tag fallback (`Coefficients::for_matrix`), IGNORING
-        // the ColorSpec primaries, so default and centered stay internally
-        // consistent (the centered phase shift is the ONLY difference between
-        // them). Full primaries-derived support is a documented Yuv420p-8bit-only
-        // follow-up. This guards that consistency AND that the centered path did
-        // not accidentally half-adopt primaries on one tier.
+        // The high-bit Yuv422p formats are NOT ChromaDerivedNcl-primaries-wired.
+        // BOTH paths — the default fused 4:2:2 kernel AND the centered 4:4:4
+        // kernel — resolve ChromaDerivedNcl via the shared BT.709 matrix-tag
+        // fallback (`Coefficients::for_matrix`), IGNORING the ColorSpec primaries,
+        // so default and centered stay internally consistent (the centered phase
+        // shift is the ONLY difference). Guards that consistency AND that the
+        // centered path did not accidentally half-adopt primaries on one tier.
         use crate::{ColorInfo, ColorSpec, DynamicRange, PixelFormat, Primaries, Transfer};
 
         let (yp, up, vp) = ramp_planes_n(MAXV);
-        // ChromaDerivedNcl + Bt2020 primaries: were the decode to honour the
-        // primaries (it must NOT here), it would diverge from BT.709. The
-        // PixelFormat in the spec is cosmetic — the sink consumes only
-        // chroma_location + primaries.
         let spec = |loc: ChromaLocation| {
           ColorSpec::from_info(
-            PixelFormat::Yuv420p,
+            PixelFormat::Yuv422p,
             ColorInfo::new(
               Primaries::Bt2020,
               Transfer::Bt709,
@@ -620,7 +499,6 @@ macro_rules! hibit_420_chroma_tests {
             ),
           )
         };
-        // ChromaDerivedNcl(Bt2020) decode via the ColorSpec path.
         let decode_cdn = |loc: ChromaLocation| -> Vec<u8> {
           let src = $Frame::new(&yp, &up, &vp, W, H, W, W / 2, W / 2);
           let mut rgb = std::vec![0u8; (W * H * 3) as usize];
@@ -631,7 +509,6 @@ macro_rules! hibit_420_chroma_tests {
           $walker(&src, false, ColorMatrix::ChromaDerivedNcl, &mut sink).unwrap();
           rgb
         };
-        // The BT.709 reference the matrix-tag fallback must equal.
         let decode_bt709 = |loc: ChromaLocation| -> Vec<u8> {
           let src = $Frame::new(&yp, &up, &vp, W, H, W, W / 2, W / 2);
           let mut rgb = std::vec![0u8; (W * H * 3) as usize];
@@ -643,87 +520,128 @@ macro_rules! hibit_420_chroma_tests {
           rgb
         };
 
-        // Centered: ChromaDerivedNcl(Bt2020) resolves to the BT.709 fallback, NOT
-        // the Bt2020-primaries-derived coefficients.
         assert_eq!(
           decode_cdn(ChromaLocation::Center),
           decode_bt709(ChromaLocation::Center),
           "centered high-bit ChromaDerivedNcl must resolve via the BT.709 matrix-tag fallback"
         );
-        // Default (co-sited): same fallback → default and centered agree on the
-        // coefficient path (neither half-adopts primaries).
         assert_eq!(
           decode_cdn(ChromaLocation::Left),
           decode_bt709(ChromaLocation::Left),
           "default high-bit ChromaDerivedNcl must resolve via the same BT.709 fallback"
         );
       }
+
+      // ---- no-output invariant: guard runs before the row-offset math --------
+
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "constructs an absurd geometry; the no-op contract is the point, not Miri"
+      )]
+      fn no_output_row_large_geometry_does_not_overflow() {
+        // The no-output guard must run BEFORE the `idx * w` single-plane offset
+        // arithmetic. A no-output `process` call never ran an attach-time
+        // `w x h x 1` validation, so on a 32-bit target (`usize == u32`) an absurd
+        // geometry where `idx * w` exceeds `u32::MAX` would overflow that offset
+        // and panic under overflow checks. With no outputs attached, `process`
+        // must return `Ok(())` having done NO row math and NO allocation.
+        //
+        // w = 4, idx = 2^30 -> idx * w = 2^32 = u32::MAX + 1 (overflows u32).
+        let w: usize = 4;
+        let idx: usize = 1 << 30;
+        let h: usize = idx + 1; // idx < height so the row-index check passes
+        assert!(
+          (idx as u64) * (w as u64) > u32::MAX as u64,
+          "test geometry must exceed u32::MAX to exercise the 32-bit offset overflow"
+        );
+
+        let y = std::vec![(MAXV / 2) as u16; w];
+        let c = std::vec![(MAXV / 2) as u16; w / 2];
+        let mut sink =
+          MixedSinker::<$Marker>::new(w, h).with_chroma_location(ChromaLocation::Center);
+        // No outputs attached: the guard returns before `idx * w` (no overflow
+        // panic) and before the centered preflight (no allocation).
+        let row = $Row::new(&y, &c, &c, idx, ColorMatrix::Bt601, false);
+        crate::PixelSink::process(&mut sink, row).unwrap();
+        let chroma_len = sink.chroma_full_u16.len();
+        drop(sink);
+        assert_eq!(
+          chroma_len, 0,
+          "a no-output large-geometry high-bit row must allocate nothing"
+        );
+      }
     }
   };
 }
 
-hibit_420_chroma_tests!(
+hibit_422_chroma_tests!(
   p9,
   9,
-  Yuv420p9,
-  Yuv420p9Frame,
-  yuv420p9_to,
+  Yuv422p9,
+  Yuv422p9Frame,
+  yuv422p9_to,
   Yuv444p9,
   Yuv444p9Frame,
   yuv444p9_to,
-  Yuv420p9<true>,
-  Yuv420p9BeFrame,
-  yuv420p9_to_endian
+  Yuv422p9<true>,
+  Yuv422p9BeFrame,
+  yuv422p9_to_endian,
+  Yuv422p9Row
 );
-hibit_420_chroma_tests!(
+hibit_422_chroma_tests!(
   p10,
   10,
-  Yuv420p10,
-  Yuv420p10Frame,
-  yuv420p10_to,
+  Yuv422p10,
+  Yuv422p10Frame,
+  yuv422p10_to,
   Yuv444p10,
   Yuv444p10Frame,
   yuv444p10_to,
-  Yuv420p10<true>,
-  Yuv420p10BeFrame,
-  yuv420p10_to_endian
+  Yuv422p10<true>,
+  Yuv422p10BeFrame,
+  yuv422p10_to_endian,
+  Yuv422p10Row
 );
-hibit_420_chroma_tests!(
+hibit_422_chroma_tests!(
   p12,
   12,
-  Yuv420p12,
-  Yuv420p12Frame,
-  yuv420p12_to,
+  Yuv422p12,
+  Yuv422p12Frame,
+  yuv422p12_to,
   Yuv444p12,
   Yuv444p12Frame,
   yuv444p12_to,
-  Yuv420p12<true>,
-  Yuv420p12BeFrame,
-  yuv420p12_to_endian
+  Yuv422p12<true>,
+  Yuv422p12BeFrame,
+  yuv422p12_to_endian,
+  Yuv422p12Row
 );
-hibit_420_chroma_tests!(
+hibit_422_chroma_tests!(
   p14,
   14,
-  Yuv420p14,
-  Yuv420p14Frame,
-  yuv420p14_to,
+  Yuv422p14,
+  Yuv422p14Frame,
+  yuv422p14_to,
   Yuv444p14,
   Yuv444p14Frame,
   yuv444p14_to,
-  Yuv420p14<true>,
-  Yuv420p14BeFrame,
-  yuv420p14_to_endian
+  Yuv422p14<true>,
+  Yuv422p14BeFrame,
+  yuv422p14_to_endian,
+  Yuv422p14Row
 );
-hibit_420_chroma_tests!(
+hibit_422_chroma_tests!(
   p16,
   16,
-  Yuv420p16,
-  Yuv420p16Frame,
-  yuv420p16_to,
+  Yuv422p16,
+  Yuv422p16Frame,
+  yuv422p16_to,
   Yuv444p16,
   Yuv444p16Frame,
   yuv444p16_to,
-  Yuv420p16<true>,
-  Yuv420p16BeFrame,
-  yuv420p16_to_endian
+  Yuv422p16<true>,
+  Yuv422p16BeFrame,
+  yuv422p16_to_endian,
+  Yuv422p16Row
 );

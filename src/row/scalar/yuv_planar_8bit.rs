@@ -285,7 +285,7 @@ pub(crate) fn yuv_420_to_rgba_row_with_coeffs(
 
 // ---- Chroma-siting-aware 4:2:0 horizontal upsample (#302) ------------
 
-/// Horizontally upsamples a half-width 4:2:0 chroma row to full width for
+/// Horizontally upsamples a half-width chroma row (4:2:0 or 4:2:2) to full width for
 /// **center-sited** chroma — the MPEG-1 / JPEG horizontal phase (FFmpeg
 /// `AVCHROMA_LOC_CENTER` / `Top` / `Bottom`), where the chroma sample sits
 /// at the **center** between the two luma columns it covers (a +0.5
@@ -313,15 +313,19 @@ pub(crate) fn yuv_420_to_rgba_row_with_coeffs(
 ///
 /// - `width` must be even (4:2:0 pairs pixel columns).
 /// - `c_half.len() >= width / 2`, `c_full.len() >= width`.
-// Gated like its only caller: the centered-siting `Yuv420p` sink path stages
+// Gated like its callers: the centered-siting `Yuv420p` / `Yuv422p` sink paths stage
 // the full-width chroma in a `Vec` scratch, so the upsample is reachable only
 // when the sink (and thus heap allocation) is — mirroring the
 // `yuv_420_to_rgb_f32_unclamped_row` alloc gate above. Without it the kernel
 // is dead in the `yuv-planar`-without-alloc feature subset.
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn chroma_upsample_420_center_h(c_half: &[u8], c_full: &mut [u8], width: usize) {
-  debug_assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
+pub(crate) fn chroma_upsample_2to1_center_h(c_half: &[u8], c_full: &mut [u8], width: usize) {
+  debug_assert_eq!(
+    width & 1,
+    0,
+    "2:1 horizontal chroma subsampling requires even width"
+  );
   debug_assert!(c_half.len() >= width / 2, "c_half row too short");
   debug_assert!(c_full.len() >= width, "c_full row too short");
 
@@ -338,7 +342,7 @@ pub(crate) fn chroma_upsample_420_center_h(c_half: &[u8], c_full: &mut [u8], wid
   }
 }
 
-/// Vertically-blended twin of [`chroma_upsample_420_center_h`] for the
+/// Vertically-blended twin of [`chroma_upsample_2to1_center_h`] for the
 /// **bottom-sited** vertical phase of an *even* output luma row (#302): the
 /// FFmpeg `AVCHROMA_LOC_BOTTOM` (`Bottom`) vertical position `v = 1`, where the
 /// chroma sample is co-sited with the *bottom* luma row of each pair. The even
@@ -351,7 +355,7 @@ pub(crate) fn chroma_upsample_420_center_h(c_half: &[u8], c_full: &mut [u8], wid
 /// ```
 ///
 /// fed into the **same** horizontal center phase as
-/// [`chroma_upsample_420_center_h`] (so `Bottom` keeps its `h = 0.5` centered
+/// [`chroma_upsample_2to1_center_h`] (so `Bottom` keeps its `h = 0.5` centered
 /// horizontal reconstruction):
 ///
 /// ```text
@@ -363,7 +367,7 @@ pub(crate) fn chroma_upsample_420_center_h(c_half: &[u8], c_full: &mut [u8], wid
 /// into one pass, so no half-width vertical-blend scratch is needed — only the
 /// caller's one-row chroma lookback (`prev_half`). The **odd** luma row `2i+1`
 /// is co-sited with chroma row `i` (`v = 1`), so it needs no vertical blend and
-/// reuses [`chroma_upsample_420_center_h`] on `cur_half` directly. The result is
+/// reuses [`chroma_upsample_2to1_center_h`] on `cur_half` directly. The result is
 /// a full-width chroma row the caller feeds to the existing 4:4:4 decode, so the
 /// bottom-sited path reuses the fully-SIMD 4:4:4 kernels and stays bit-identical
 /// per tier.
@@ -373,7 +377,7 @@ pub(crate) fn chroma_upsample_420_center_h(c_half: &[u8], c_full: &mut [u8], wid
 /// - `width` must be even (4:2:0 pairs pixel columns).
 /// - `prev_half.len() >= width / 2`, `cur_half.len() >= width / 2`,
 ///   `c_full.len() >= width`.
-// Gated like [`chroma_upsample_420_center_h`]: reachable only through the
+// Gated like [`chroma_upsample_2to1_center_h`]: reachable only through the
 // bottom-sited `Yuv420p` identity path, which stages the full-width chroma in a
 // `Vec` scratch (so heap allocation is available).
 #[cfg(any(feature = "std", feature = "alloc"))]
@@ -405,8 +409,9 @@ pub(crate) fn chroma_upsample_420_bottom_even_h(
   }
 }
 
-/// `u16` twin of [`chroma_upsample_420_center_h`] for the **high-bit** planar
-/// 4:2:0 formats (`Yuv420p9` … `Yuv420p16`, #302). Same MPEG-1 / JPEG
+/// `u16` twin of [`chroma_upsample_2to1_center_h`] for the **high-bit** planar
+/// 4:2:0 / 4:2:2 formats (`Yuv420p9` … `Yuv420p16` / `Yuv422p9` … `Yuv422p16`,
+/// #302). Same MPEG-1 / JPEG
 /// phase-0.5 `1/4`–`3/4` reconstruction with edge clamp, but on `u16` chroma.
 ///
 /// Both `c_half` and `c_full` carry samples in the source's **wire byte order**
@@ -433,17 +438,21 @@ pub(crate) fn chroma_upsample_420_bottom_even_h(
 ///
 /// - `width` must be even (4:2:0 pairs pixel columns).
 /// - `c_half.len() >= width / 2`, `c_full.len() >= width`.
-// Gated like the `u8` sibling: reachable only through the high-bit `Yuv420p`
-// sink's centered path, which stages the full-width chroma in a `Vec` scratch.
+// Gated like the `u8` sibling: reachable through the high-bit `Yuv420p` / `Yuv422p`
+// sinks' centered paths, which stage the full-width chroma in a `Vec` scratch.
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn chroma_upsample_420_center_h_u16<const BITS: u32>(
+pub(crate) fn chroma_upsample_2to1_center_h_u16<const BITS: u32>(
   c_half: &[u16],
   c_full: &mut [u16],
   width: usize,
   big_endian: bool,
 ) {
-  debug_assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
+  debug_assert_eq!(
+    width & 1,
+    0,
+    "2:1 horizontal chroma subsampling requires even width"
+  );
   debug_assert!(c_half.len() >= width / 2, "c_half row too short");
   debug_assert!(c_full.len() >= width, "c_full row too short");
 

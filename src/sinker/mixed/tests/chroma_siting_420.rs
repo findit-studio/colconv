@@ -95,7 +95,7 @@ fn center_upsample_kernel_matches_hand_computed() {
   //   even 2j = (c[j-1] + 3·c[j] + 2) >> 2, odd 2j+1 = (3·c[j] + c[j+1] + 2) >> 2.
   let c_half = [0u8, 0, 100, 100];
   let mut out = [0u8; 8];
-  crate::row::scalar::chroma_upsample_420_center_h(&c_half, &mut out, 8);
+  crate::row::scalar::chroma_upsample_2to1_center_h(&c_half, &mut out, 8);
   assert_eq!(out, [0, 0, 0, 25, 75, 100, 100, 100]);
 }
 
@@ -104,7 +104,7 @@ fn center_upsample_kernel_clamps_edges() {
   // Width 4: left edge even = c[0] exactly, right edge odd = c[last] exactly.
   let c_half = [10u8, 20];
   let mut out = [0u8; 4];
-  crate::row::scalar::chroma_upsample_420_center_h(&c_half, &mut out, 4);
+  crate::row::scalar::chroma_upsample_2to1_center_h(&c_half, &mut out, 4);
   assert_eq!(out, [10, 13, 18, 20]);
   assert_eq!(out[0], c_half[0], "left edge even column is co-sited");
   assert_eq!(out[3], c_half[1], "right edge odd column is co-sited");
@@ -739,7 +739,7 @@ fn bottom_even_kernel_equals_center_when_rows_match() {
   let mut bottom = [0u8; 8];
   let mut center = [0u8; 8];
   crate::row::scalar::chroma_upsample_420_bottom_even_h(&cur, &cur, &mut bottom, 8);
-  crate::row::scalar::chroma_upsample_420_center_h(&cur, &mut center, 8);
+  crate::row::scalar::chroma_upsample_2to1_center_h(&cur, &mut center, 8);
   assert_eq!(
     bottom, center,
     "prev == cur must collapse the vertical blend to the horizontal centered path"

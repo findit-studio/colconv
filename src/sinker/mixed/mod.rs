@@ -131,7 +131,7 @@ pub use mediaframe::{
 
 /// Whether `loc` places 4:2:0 chroma at the **horizontal center** between
 /// its two luma columns — the MPEG-1 / JPEG phase that needs phase-0.5
-/// reconstruction ([`chroma_upsample_420_center_h`](crate::row::scalar::chroma_upsample_420_center_h))
+/// reconstruction ([`chroma_upsample_2to1_center_h`](crate::row::scalar::chroma_upsample_2to1_center_h))
 /// rather than colconv's default nearest-neighbor decode (#302).
 ///
 /// The full [`ChromaLocation`](crate::ChromaLocation) → 4:2:0 sample-phase
@@ -203,6 +203,31 @@ pub(super) const fn chroma_420_center_sited_h(loc: crate::ChromaLocation) -> boo
 #[inline]
 pub(super) const fn chroma_420_bottom_sited_v(loc: crate::ChromaLocation) -> bool {
   matches!(loc, crate::ChromaLocation::Bottom)
+}
+
+/// Whether `loc` places 4:2:2 chroma at the **horizontal center** between its
+/// two luma columns — the MPEG-1 / JPEG horizontal phase that needs phase-0.5
+/// reconstruction
+/// ([`chroma_upsample_2to1_center_h`](crate::row::scalar::chroma_upsample_2to1_center_h),
+/// the SAME 2:1 horizontal upsample 4:2:0 uses) rather than colconv's default
+/// nearest-neighbor decode (#302).
+///
+/// 4:2:2 subsamples chroma 2:1 **horizontally only** — one chroma row per luma
+/// row, no vertical subsampling — so the siting reduces to its horizontal axis
+/// alone. This consumes exactly that axis: it returns `true` for the centered
+/// group (`Center` / `Top` / `Bottom`, all `h = 0.5`) and `false` for the
+/// co-sited group (`Left` / `TopLeft` / `BottomLeft`, all `h = 0`) and the
+/// unspecified / unknown codes, which keep the byte-identical nearest-neighbor
+/// decode. Unlike 4:2:0 there is no vertical companion predicate: for 4:2:2 the
+/// vertical phase drives no chroma reconstruction (the per-axis sample-phase map
+/// is in [`chroma_420_center_sited_h`]).
+#[cfg(feature = "yuv-planar")]
+#[inline]
+pub(super) const fn chroma_422_center_sited_h(loc: crate::ChromaLocation) -> bool {
+  matches!(
+    loc,
+    crate::ChromaLocation::Center | crate::ChromaLocation::Top | crate::ChromaLocation::Bottom
+  )
 }
 
 /// Frame dimensions handed to `begin_frame` don't match the sinker's
