@@ -317,6 +317,38 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p9<BE>, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
+    // Resolve the output set up front so the atomicity preflight below runs
+    // before any output row is written.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // high-bit 4:2:0 p0xx / yuv420p siblings): reserve the only growable row
+    // scratch this identity row can touch — the u8 RGB row buffer — BEFORE any
+    // output row is written (the luma plane below, then the u16 RGB / RGBA
+    // fan-out), so an allocator refusal returns a typed `AllocationFailed` and
+    // leaves the output frame untouched rather than partially mutated. At 4:4:4
+    // the chroma is full-resolution (no upsampling), but the output staging
+    // matches 4:2:0: the u16 RGB / RGBA outputs write straight into their caller
+    // buffers (the rgb_u16 plane itself stages the rgba_u16 expand) and never
+    // grow a scratch, and these formats expose no luma_u16. The allocating
+    // (rgb=None) arm of `rgb_row_buf_or_scratch` is reached exactly when a colour
+    // decode needs an RGB row but no caller RGB buffer is borrowable —
+    // `want_hsv && want_rgba && !want_rgb`. The later decode reuses the
+    // already-sized buffer, so the default path is byte-identical; only the
+    // failure-path ordering changes.
+    if want_hsv && want_rgba && !want_rgb {
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     if let Some(luma) = luma.as_deref_mut() {
       let dst = &mut luma[one_plane_start..one_plane_end];
       for (d, &s) in dst.iter_mut().zip(row.y().iter()) {
@@ -376,8 +408,6 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p9<BE>, R> {
     }
 
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
     // HSV-without-RGB-or-RGBA goes through the direct `yuv444p9_to_hsv_row_endian`
     // kernel (no source-width RGB scratch — the SIMD path stages a fixed
     // 8-bit RGB chunk internally). RGB or RGBA also attached keeps the
@@ -762,6 +792,38 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p10<BE>, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
+    // Resolve the output set up front so the atomicity preflight below runs
+    // before any output row is written.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // high-bit 4:2:0 p0xx / yuv420p siblings): reserve the only growable row
+    // scratch this identity row can touch — the u8 RGB row buffer — BEFORE any
+    // output row is written (the luma plane below, then the u16 RGB / RGBA
+    // fan-out), so an allocator refusal returns a typed `AllocationFailed` and
+    // leaves the output frame untouched rather than partially mutated. At 4:4:4
+    // the chroma is full-resolution (no upsampling), but the output staging
+    // matches 4:2:0: the u16 RGB / RGBA outputs write straight into their caller
+    // buffers (the rgb_u16 plane itself stages the rgba_u16 expand) and never
+    // grow a scratch, and these formats expose no luma_u16. The allocating
+    // (rgb=None) arm of `rgb_row_buf_or_scratch` is reached exactly when a colour
+    // decode needs an RGB row but no caller RGB buffer is borrowable —
+    // `want_hsv && want_rgba && !want_rgb`. The later decode reuses the
+    // already-sized buffer, so the default path is byte-identical; only the
+    // failure-path ordering changes.
+    if want_hsv && want_rgba && !want_rgb {
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     if let Some(luma) = luma.as_deref_mut() {
       let dst = &mut luma[one_plane_start..one_plane_end];
       for (d, &s) in dst.iter_mut().zip(row.y().iter()) {
@@ -821,8 +883,6 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p10<BE>, R> {
     }
 
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
     // HSV-without-RGB-or-RGBA goes through the direct `yuv444p10_to_hsv_row_endian`
     // kernel (no source-width RGB scratch — the SIMD path stages a fixed
     // 8-bit RGB chunk internally). RGB or RGBA also attached keeps the
@@ -1203,6 +1263,38 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p12<BE>, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
+    // Resolve the output set up front so the atomicity preflight below runs
+    // before any output row is written.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // high-bit 4:2:0 p0xx / yuv420p siblings): reserve the only growable row
+    // scratch this identity row can touch — the u8 RGB row buffer — BEFORE any
+    // output row is written (the luma plane below, then the u16 RGB / RGBA
+    // fan-out), so an allocator refusal returns a typed `AllocationFailed` and
+    // leaves the output frame untouched rather than partially mutated. At 4:4:4
+    // the chroma is full-resolution (no upsampling), but the output staging
+    // matches 4:2:0: the u16 RGB / RGBA outputs write straight into their caller
+    // buffers (the rgb_u16 plane itself stages the rgba_u16 expand) and never
+    // grow a scratch, and these formats expose no luma_u16. The allocating
+    // (rgb=None) arm of `rgb_row_buf_or_scratch` is reached exactly when a colour
+    // decode needs an RGB row but no caller RGB buffer is borrowable —
+    // `want_hsv && want_rgba && !want_rgb`. The later decode reuses the
+    // already-sized buffer, so the default path is byte-identical; only the
+    // failure-path ordering changes.
+    if want_hsv && want_rgba && !want_rgb {
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     if let Some(luma) = luma.as_deref_mut() {
       let dst = &mut luma[one_plane_start..one_plane_end];
       for (d, &s) in dst.iter_mut().zip(row.y().iter()) {
@@ -1262,8 +1354,6 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p12<BE>, R> {
     }
 
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
     // HSV-without-RGB-or-RGBA goes through the direct `yuv444p12_to_hsv_row_endian`
     // kernel (no source-width RGB scratch — the SIMD path stages a fixed
     // 8-bit RGB chunk internally). RGB or RGBA also attached keeps the
@@ -1644,6 +1734,38 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p14<BE>, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
+    // Resolve the output set up front so the atomicity preflight below runs
+    // before any output row is written.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // high-bit 4:2:0 p0xx / yuv420p siblings): reserve the only growable row
+    // scratch this identity row can touch — the u8 RGB row buffer — BEFORE any
+    // output row is written (the luma plane below, then the u16 RGB / RGBA
+    // fan-out), so an allocator refusal returns a typed `AllocationFailed` and
+    // leaves the output frame untouched rather than partially mutated. At 4:4:4
+    // the chroma is full-resolution (no upsampling), but the output staging
+    // matches 4:2:0: the u16 RGB / RGBA outputs write straight into their caller
+    // buffers (the rgb_u16 plane itself stages the rgba_u16 expand) and never
+    // grow a scratch, and these formats expose no luma_u16. The allocating
+    // (rgb=None) arm of `rgb_row_buf_or_scratch` is reached exactly when a colour
+    // decode needs an RGB row but no caller RGB buffer is borrowable —
+    // `want_hsv && want_rgba && !want_rgb`. The later decode reuses the
+    // already-sized buffer, so the default path is byte-identical; only the
+    // failure-path ordering changes.
+    if want_hsv && want_rgba && !want_rgb {
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     if let Some(luma) = luma.as_deref_mut() {
       let dst = &mut luma[one_plane_start..one_plane_end];
       for (d, &s) in dst.iter_mut().zip(row.y().iter()) {
@@ -1703,8 +1825,6 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p14<BE>, R> {
     }
 
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
     // HSV-without-RGB-or-RGBA goes through the direct `yuv444p14_to_hsv_row_endian`
     // kernel (no source-width RGB scratch — the SIMD path stages a fixed
     // 8-bit RGB chunk internally). RGB or RGBA also attached keeps the
@@ -2086,6 +2206,38 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p16<BE>, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
+    // Resolve the output set up front so the atomicity preflight below runs
+    // before any output row is written.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // high-bit 4:2:0 p0xx / yuv420p siblings): reserve the only growable row
+    // scratch this identity row can touch — the u8 RGB row buffer — BEFORE any
+    // output row is written (the luma plane below, then the u16 RGB / RGBA
+    // fan-out), so an allocator refusal returns a typed `AllocationFailed` and
+    // leaves the output frame untouched rather than partially mutated. At 4:4:4
+    // the chroma is full-resolution (no upsampling), but the output staging
+    // matches 4:2:0: the u16 RGB / RGBA outputs write straight into their caller
+    // buffers (the rgb_u16 plane itself stages the rgba_u16 expand) and never
+    // grow a scratch, and these formats expose no luma_u16. The allocating
+    // (rgb=None) arm of `rgb_row_buf_or_scratch` is reached exactly when a colour
+    // decode needs an RGB row but no caller RGB buffer is borrowable —
+    // `want_hsv && want_rgba && !want_rgb`. The later decode reuses the
+    // already-sized buffer, so the default path is byte-identical; only the
+    // failure-path ordering changes.
+    if want_hsv && want_rgba && !want_rgb {
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     if let Some(luma) = luma.as_deref_mut() {
       let dst = &mut luma[one_plane_start..one_plane_end];
       for (d, &s) in dst.iter_mut().zip(row.y().iter()) {
@@ -2145,8 +2297,6 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p16<BE>, R> {
     }
 
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
     // HSV-without-RGB-or-RGBA goes through the direct `yuv444p16_to_hsv_row_endian`
     // kernel (no source-width RGB scratch — the SIMD path stages a fixed
     // 8-bit RGB chunk internally). RGB or RGBA also attached keeps the

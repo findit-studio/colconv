@@ -331,3 +331,109 @@ msb_parity_suite!(
   Yuv444p12,
   yuv444p12_to
 );
+
+// ---- Atomicity (#308): MSB-aligned high-bit 4:4:4 planar ---------------
+//
+// The MSB recovery shares the identity-path `process` shape of the low-bit
+// `Yuv444p10` / `Yuv444p12` family, so it inherits the same up-front
+// RGB-scratch preflight: it must return `AllocationFailed` BEFORE any output
+// row — luma included — is written, leaving the output frame untouched on an
+// allocator refusal. Triggering set: luma + RGBA + HSV with NO rgb output —
+// `want_hsv && want_rgba && !want_rgb` would grow `rgb_row_buf_or_scratch`'s
+// scratch arm (the only growable scratch on the identity path; the u16 RGB /
+// RGBA outputs write straight into their caller buffers). Reuses the crate's
+// `yuva`-gated RGB-scratch failpoint.
+
+#[cfg(feature = "yuva")]
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuv444p10_msb_rgb_scratch_alloc_failure_leaves_outputs_untouched() {
+  use super::super::MixedSinkerError;
+  use crate::resample::ResampleError;
+
+  let n = 16 * 8;
+  let y = msb_align::<10>(&std::vec![512u16; n]);
+  let u = msb_align::<10>(&std::vec![512u16; n]);
+  let v = msb_align::<10>(&std::vec![512u16; n]);
+  let src = crate::frame::Yuv444pMsbFrame::<10>::new(&y, &u, &v, 16, 8, 16, 16, 16);
+  let mut luma = std::vec![0xABu8; n];
+  let mut rgba = std::vec![0xCDu8; n * 4];
+  let (mut hh, mut ss, mut vv) = (
+    std::vec![0xCDu8; n],
+    std::vec![0xCDu8; n],
+    std::vec![0xCDu8; n],
+  );
+  let mut sink = MixedSinker::<crate::source::Yuv444p10Msb>::new(16, 8)
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
+
+  super::super::arm_rgb_scratch_alloc_failure();
+  let err = crate::source::yuv444p10_msb_to(&src, false, MATRIX, &mut sink).unwrap_err();
+  drop(sink);
+
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "RGB-scratch refusal must surface as a recoverable AllocationFailed, got {err:?}"
+  );
+  assert!(
+    luma.iter().all(|&b| b == 0xAB),
+    "luma must be untouched on the rgb-scratch alloc-failure path"
+  );
+}
+
+#[cfg(feature = "yuva")]
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuv444p12_msb_rgb_scratch_alloc_failure_leaves_outputs_untouched() {
+  use super::super::MixedSinkerError;
+  use crate::resample::ResampleError;
+
+  let n = 16 * 8;
+  let y = msb_align::<12>(&std::vec![2048u16; n]);
+  let u = msb_align::<12>(&std::vec![2048u16; n]);
+  let v = msb_align::<12>(&std::vec![2048u16; n]);
+  let src = crate::frame::Yuv444pMsbFrame::<12>::new(&y, &u, &v, 16, 8, 16, 16, 16);
+  let mut luma = std::vec![0xABu8; n];
+  let mut rgba = std::vec![0xCDu8; n * 4];
+  let (mut hh, mut ss, mut vv) = (
+    std::vec![0xCDu8; n],
+    std::vec![0xCDu8; n],
+    std::vec![0xCDu8; n],
+  );
+  let mut sink = MixedSinker::<crate::source::Yuv444p12Msb>::new(16, 8)
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
+
+  super::super::arm_rgb_scratch_alloc_failure();
+  let err = crate::source::yuv444p12_msb_to(&src, false, MATRIX, &mut sink).unwrap_err();
+  drop(sink);
+
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "RGB-scratch refusal must surface as a recoverable AllocationFailed, got {err:?}"
+  );
+  assert!(
+    luma.iter().all(|&b| b == 0xAB),
+    "luma must be untouched on the rgb-scratch alloc-failure path"
+  );
+}
