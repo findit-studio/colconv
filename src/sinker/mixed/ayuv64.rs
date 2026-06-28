@@ -328,6 +328,38 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Ayuv64<BE>, R> {
     let one_plane_end = one_plane_start + w;
     let packed = row.packed();
 
+    // Output mode resolution — hoisted ABOVE the luma writes so the atomicity
+    // preflight runs ahead of any output mutation. `Ayuv64` also exposes u16
+    // colour outputs, so the scratch-arm gate must include them.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+    let want_rgb_u16 = rgb_u16.is_some();
+    let want_rgba_u16 = rgba_u16.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // merged packed 4:2:2 / planar / semi-planar siblings): the sole growable
+    // scratch is the u8 RGB row buffer, taken when the u8 colour decode needs
+    // an RGB row but no caller RGB buffer is borrowable. With `!want_rgb` the
+    // combo `need_rgb_kernel` decode reaches `rgb_row_buf_or_scratch`'s scratch
+    // arm whenever HSV is wanted alongside ANY other colour output — i.e.
+    // `want_rgba || want_rgb_u16 || want_rgba_u16` (the `!want_hsv_direct`
+    // condition; the u16 colour outputs derive HSV off the same u8 RGB row).
+    // Reserve it BEFORE the luma / luma_u16 writes so an allocator refusal is a
+    // recoverable `AllocationFailed` with the outputs untouched. (`with_rgb`
+    // borrows the caller buffer and never allocates; the u16 colour paths slice
+    // caller buffers; the standalone-RGBA fast paths use dedicated kernels.)
+    if want_hsv && !want_rgb && (want_rgba || want_rgb_u16 || want_rgba_u16) {
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     // Luma u8 — extract Y value from slot 1 of each AYUV64 quadruple
     // and downshift `>> 8` to u8.
     if let Some(buf) = luma.as_deref_mut() {
@@ -351,15 +383,6 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Ayuv64<BE>, R> {
         BE,
       );
     }
-
-    // ===== u8 RGB / RGBA / HSV path =====
-    let want_rgb = rgb.is_some();
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
-
-    // ===== u16 RGB / RGBA path =====
-    let want_rgb_u16 = rgb_u16.is_some();
-    let want_rgba_u16 = rgba_u16.is_some();
 
     // HSV-without-any-RGB/RGBA (u8 or u16) goes through the direct
     // `ayuv64_to_hsv_row` kernel — no source-width RGB scratch (the SIMD

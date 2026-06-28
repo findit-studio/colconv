@@ -329,6 +329,35 @@ impl<R> PixelSink for MixedSinker<'_, Vuya, R> {
     let one_plane_end = one_plane_start + w;
     let packed = row.packed();
 
+    // Output mode resolution — hoisted ABOVE the luma writes so the atomicity
+    // preflight runs ahead of any output mutation.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+
+    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
+    // merged packed 4:2:2 / planar / semi-planar siblings): reserve the only
+    // fallible row scratch this identity row can grow BEFORE any output row
+    // (luma / luma_u16 included) is written, so an allocator refusal returns a
+    // typed `AllocationFailed` leaving the output frame untouched rather than
+    // partially mutated. The sole growable scratch is the RGB row buffer, taken
+    // exactly when the colour decode needs an RGB row but no caller RGB buffer
+    // is borrowable — `want_hsv && want_rgba && !want_rgb` (the
+    // `rgb_row_buf_or_scratch` scratch arm; an attached RGB buffer is borrowed
+    // and never allocates, and standalone `with_rgba` uses the dedicated
+    // `vuya_to_rgba_row` kernel). The later `need_rgb_kernel` decode reuses the
+    // already-sized buffer.
+    if want_hsv && want_rgba && !want_rgb {
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     // Luma u8 — extract Y byte (offset 2 in each VUYA quadruple) directly.
     if let Some(buf) = luma.as_deref_mut() {
       vuya_to_luma_row(
@@ -357,9 +386,6 @@ impl<R> PixelSink for MixedSinker<'_, Vuya, R> {
     // for free and `need_rgb_kernel` keeps it alive. Resample row-stage
     // HSV-only is a #263 follow-up — HSV stays correct via the
     // convert-once path.
-    let want_rgb = rgb.is_some();
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
     let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
     let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
 
