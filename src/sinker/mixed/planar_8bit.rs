@@ -47,7 +47,11 @@ const YUV_PLANAR_8BIT_NATIVE_ELIGIBLE: bool = true;
 /// [`GeometryOverflow`]) and `try_reserve_exact` precedes the resize (→
 /// [`ResampleError::AllocationFailed`]), so the failure is a typed,
 /// recoverable error rather than an abort. `height` feeds the error payloads.
-fn reserve_420_chroma_full(
+///
+/// `pub(super)` because the semi-planar `Nv12` / `Nv21` centered-siting path
+/// (#302) reserves the SAME full-width chroma scratch — it de-interleaves the
+/// interleaved UV into half-width U / V, then reuses this staging buffer.
+pub(super) fn reserve_420_chroma_full(
   chroma_full: &mut std::vec::Vec<u8>,
   width: usize,
   height: usize,
@@ -95,7 +99,14 @@ fn reserve_420_chroma_full(
 /// so `chroma_full` is guaranteed `>= 2 * width` here and `2 * width` cannot
 /// overflow. Only the centered sitings reach here; the default
 /// left/unspecified path never touches this scratch.
-fn upsample_420_chroma_center_h<'s>(
+///
+/// `pub(super)` because the semi-planar `Nv12` / `Nv21` centered path (#302)
+/// feeds it the U / V it de-interleaved from the source's interleaved UV — so
+/// a centered NV decode is bit-identical to the planar twin of those planes on
+/// the shared matrix-tag path (NV resolves `ChromaDerivedNcl` via the BT.709
+/// fallback, not `Yuv420p`'s #316 primaries-derived path — a #302/#303
+/// follow-up).
+pub(super) fn upsample_420_chroma_center_h<'s>(
   chroma_full: &'s mut [u8],
   u_half: &[u8],
   v_half: &[u8],
