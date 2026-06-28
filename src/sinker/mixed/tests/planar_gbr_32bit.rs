@@ -371,3 +371,60 @@ fn gbrap32_luma_u16_neutral_grey() {
     );
   }
 }
+
+// ---- Atomicity (#308) -------------------------------------------------------
+//
+// The `Gbrap32` identity-path `process` must run the RGB-staging preflight
+// BEFORE any output row is written. The native-precision `luma_u16` row
+// (`gbr32_to_luma_u16_row`, no RGB staging) is written ahead of the RGB-staging
+// scratch whose allocating (`None`) arm is reachable via `need_rgb_staging &&
+// rgb.is_none()`, so an allocator refusal there must leave the output frame
+// untouched rather than partially mutated. This test attaches
+// `luma_u16 + HSV` (no RGB): HSV forces `need_rgb_staging`, the scratch has no
+// caller RGB buffer to borrow (so it takes its allocating arm), and luma_u16 is
+// the before-scratch sentinel. Reuses the crate's RGB-scratch failpoint
+// (`yuva`-gated, so this test is too).
+#[cfg(feature = "yuva")]
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn gbrap32_rgb_scratch_alloc_failure_leaves_outputs_untouched() {
+  use crate::resample::ResampleError;
+
+  let (w, h) = (16usize, 8usize);
+  let n = w * h;
+  let g = std::vec![0x1234_5678u32; n];
+  let b = std::vec![0x2345_6789u32; n];
+  let r = std::vec![0x3456_789Au32; n];
+  let a = std::vec![0xFFFF_FFFFu32; n];
+  let src = gbrap32_frame(&g, &b, &r, &a, w as u32, h as u32);
+  let mut luma_u16 = std::vec![0xABABu16; n];
+  let (mut hh, mut ss, mut vv) = (
+    std::vec![0xCDu8; n],
+    std::vec![0xCDu8; n],
+    std::vec![0xCDu8; n],
+  );
+  let mut sink = MixedSinker::<crate::source::Gbrap32>::new(w, h)
+    .with_luma_u16(&mut luma_u16)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
+
+  super::super::arm_rgb_scratch_alloc_failure();
+  let err = crate::source::gbrap32_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap_err();
+  drop(sink);
+
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "RGB-staging-scratch refusal must surface as a recoverable AllocationFailed, got {err:?}"
+  );
+  assert!(
+    luma_u16.iter().all(|&v| v == 0xABAB),
+    "native luma_u16 (written before the rgb-staging scratch) must be untouched on the alloc-failure path"
+  );
+}

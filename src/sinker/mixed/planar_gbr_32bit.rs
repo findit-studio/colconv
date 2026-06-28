@@ -452,6 +452,32 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Gbrap32<BE>, R> {
     let r_in = row.r();
     let a_in = row.a();
 
+    // Output-mode flags + atomicity preflight (#308, cf. the crate's #180
+    // resample fix and the gray / planar / packed-YUV siblings): the RGB-staging
+    // scratch's allocating (`None`) arm is reached whenever an RGB row must be
+    // staged but no caller RGB buffer is attached — `need_rgb_staging &&
+    // rgb.is_none()`. The native-precision luma_u16 row (`gbr32_to_luma_u16_row`,
+    // no RGB staging) and the u16 RGB/RGBA rows below are written before that
+    // scratch, so reserve it up front: an allocator refusal then returns a typed
+    // `AllocationFailed` leaving the output frame untouched rather than partially
+    // mutated. The later staging call reuses the already-sized buffer (default
+    // path byte-identical).
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_luma = luma.is_some();
+    let want_hsv = hsv.is_some();
+    let need_rgb_staging = want_rgb || want_luma || want_hsv;
+    if need_rgb_staging && rgb.is_none() {
+      rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?;
+    }
+
     // ---- u16 RGB / RGBA output (Strategy A+) -------------------------------
     let want_rgb_u16 = rgb_u16.is_some();
     let want_rgba_u16 = rgba_u16.is_some();
@@ -499,11 +525,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Gbrap32<BE>, R> {
     }
 
     // ---- u8 RGB / RGBA / luma / HSV output ---------------------------------
-    let want_rgb = rgb.is_some();
-    let want_rgba = rgba.is_some();
-    let want_luma = luma.is_some();
-    let want_hsv = hsv.is_some();
-    let need_rgb_staging = want_rgb || want_luma || want_hsv;
+    // (flags + RGB-scratch preflight hoisted above for #308 atomicity).
 
     // RGBA-only fast path — direct 4-channel kernel with real α.
     if want_rgba && !need_rgb_staging {
