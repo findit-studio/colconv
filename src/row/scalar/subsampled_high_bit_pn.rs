@@ -25,7 +25,7 @@ const fn depack_pn<const BITS: u32, const LOW_PACKED: bool>(value: u16) -> u16 {
 /// Chroma-siting-aware horizontal upsample for the **high-bit-packed
 /// semi-planar** 4:2:0 P-format family (P010 / P012 / P016, #302) — the
 /// MSB-aligned `u16` twin of
-/// [`chroma_upsample_420_center_h_u16`](super::yuv_planar_8bit::chroma_upsample_420_center_h_u16).
+/// [`chroma_upsample_2to1_center_h_u16`](super::yuv_planar_8bit::chroma_upsample_2to1_center_h_u16).
 ///
 /// Reconstructs **center-sited** chroma (MPEG-1 / JPEG horizontal phase,
 /// FFmpeg `AVCHROMA_LOC_CENTER` / `Top` / `Bottom`) with the standard

@@ -91,7 +91,7 @@ fn reserve_420_chroma_full_u16(
 /// `chroma_full` (#302), returning the two full-width chroma slices
 /// `(u_full, v_full)`. The buffer is split `[0..width]` = U,
 /// `[width..2*width]` = V; each half is filled by
-/// [`chroma_upsample_420_center_h_u16`](crate::row::scalar::chroma_upsample_420_center_h_u16)
+/// [`chroma_upsample_2to1_center_h_u16`](crate::row::scalar::chroma_upsample_2to1_center_h_u16)
 /// (the MPEG-1 / JPEG phase-0.5 reconstruction — masking each sample to the low
 /// `BITS` and operating in the source's wire byte order), then fed to the
 /// high-bit 4:4:4 (+ source-alpha) decode kernels with the same `big_endian`
@@ -115,8 +115,8 @@ fn upsample_420_chroma_center_h_u16<'s, const BITS: u32>(
     "chroma_full must be reserved via reserve_420_chroma_full_u16 first"
   );
   let (u_full, v_full) = chroma_full[..2 * width].split_at_mut(width);
-  crate::row::scalar::chroma_upsample_420_center_h_u16::<BITS>(u_half, u_full, width, big_endian);
-  crate::row::scalar::chroma_upsample_420_center_h_u16::<BITS>(v_half, v_full, width, big_endian);
+  crate::row::scalar::chroma_upsample_2to1_center_h_u16::<BITS>(u_half, u_full, width, big_endian);
+  crate::row::scalar::chroma_upsample_2to1_center_h_u16::<BITS>(v_half, v_full, width, big_endian);
   (u_full, v_full)
 }
 

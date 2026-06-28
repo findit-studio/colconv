@@ -1,9 +1,11 @@
 use super::super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, NativeRouteChanged,
   RowIndexOutOfRange, RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match,
-  deinterleave_y_high_bit, packed_yuv422_triple_filter_resample, packed_yuv422_triple_resample,
-  reset_high_bit_yuv_streams, rgb_row_buf_or_scratch, rgba_plane_row_slice,
-  rgba_u16_plane_row_slice, yuv_planar16_process_native,
+  chroma_422_center_sited_h, deinterleave_y_high_bit, packed_yuv422_triple_filter_resample,
+  packed_yuv422_triple_resample, reset_high_bit_yuv_streams, rgb_row_buf_or_scratch,
+  rgba_plane_row_slice, rgba_u16_plane_row_slice,
+  subsampled_4_2_0_high_bit::{reserve_420_chroma_full_u16, upsample_420_chroma_center_h_u16},
+  yuv_planar16_process_native,
 };
 use crate::{
   PixelSink,
@@ -152,6 +154,10 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p9<BE>, R> {
       ));
     }
 
+    // Chroma siting (#302): drives the identity-plan horizontal chroma phase.
+    // `Copy`, so read it out before the field split-borrow below.
+    let chroma_location = self.chroma_location;
+
     let Self {
       rgb,
       rgb_u16,
@@ -161,6 +167,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p9<BE>, R> {
       hsv,
       rgb_scratch,
       rgb_scratch_u16,
+      chroma_full_u16,
       luma_scratch_u16,
       rgb_stream,
       rgb_stream_u16,
@@ -338,30 +345,60 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p9<BE>, R> {
       }
     }
 
-    let one_plane_start = idx * w;
-    let one_plane_end = one_plane_start + w;
-
-    // Resolve the output set up front so the atomicity preflight below runs
-    // before any output row is written.
+    // Resolve the FULL output set up front so BOTH the no-output guard and the
+    // atomicity preflight below run before any row-offset arithmetic.
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
+    let want_rgb_u16 = rgb_u16.is_some();
+    let want_rgba_u16 = rgba_u16.is_some();
 
-    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
-    // high-bit 4:2:0 sibling): reserve the only growable row scratch this
-    // identity row can touch — the u8 RGB row buffer — BEFORE any output row
-    // is written (the luma plane below, then the u16 RGB / RGBA fan-out), so an
-    // allocator refusal returns a typed `AllocationFailed` leaving the output
-    // frame untouched rather than partially mutated. The u16 RGB / RGBA outputs
-    // need no preflight: they write straight into their caller buffers (the
-    // rgb_u16 plane itself stages the rgba_u16 expand) and never grow a scratch;
-    // this format exposes no luma_u16 output. `rgb_row_buf_or_scratch`'s
-    // allocating (rgb=None) arm is reached exactly when a colour decode needs an
-    // RGB row but no caller RGB buffer is borrowable — for this
-    // convert-once-then-derive path that is `want_hsv && want_rgba && !want_rgb`
-    // (HSV-only routes through a direct kernel that needs no RGB scratch). The
-    // later decode reuses the already-sized buffer, so the default path is
-    // byte-identical; only the failure-path ordering changes.
+    // Repo-wide no-output invariant: a `process` call carrying NO output runs
+    // NOTHING — no per-row offset arithmetic, no allocation, no state mutation.
+    // Returning HERE, before the `idx * w` offsets below, also keeps the invariant
+    // overflow-safe: a no-output call never ran an attach-time `w x h x 1`
+    // validation, so `idx * w` could overflow `usize` on a 32-bit target with
+    // absurd geometry; the guard skips that math (and the centered chroma
+    // reservation) entirely. Mirrors the 8-bit Yuv422p sibling. (The high-bit
+    // planar 4:2:2 family exposes no `luma_u16` output.)
+    let need_output =
+      want_rgb || want_rgba || want_hsv || want_rgb_u16 || want_rgba_u16 || luma.is_some();
+    if !need_output {
+      return Ok(());
+    }
+
+    let one_plane_start = idx * w;
+    let one_plane_end = one_plane_start + w;
+
+    // Chroma siting (#302): the centered horizontal sitings reconstruct chroma at
+    // the phase-0.5 position then decode via the 4:4:4 kernels; the default /
+    // co-sited path keeps the byte-identical decode (the fused high-bit 4:2:2
+    // kernels upsample chroma in-register). 4:2:2 is subsampled horizontally only
+    // — there is no vertical blend or chroma lookback (cf. the 4:2:0 sibling).
+    let center_sited = chroma_422_center_sited_h(chroma_location);
+
+    // Atomicity preflight (#302 / #308 / #314, cf. the crate's #180 resample fix
+    // and the high-bit 4:2:0 sibling): reserve EVERY fallible row scratch this
+    // identity row can touch BEFORE any output row is written (the luma plane
+    // below, then the u16 / u8 RGB / RGBA / HSV fan-out), so an allocator refusal
+    // returns a typed `AllocationFailed` leaving the output frame untouched rather
+    // than partially mutated. Two scratches can grow:
+    //  1. the centered-siting full-width `u16` chroma (`chroma_full_u16`), needed
+    //     by ANY colour output (u8 OR u16 RGB / RGBA / HSV); and
+    //  2. the u8 RGB row buffer, reached exactly when a colour decode needs an RGB
+    //     row but no caller RGB buffer is borrowable — `want_hsv && want_rgba &&
+    //     !want_rgb` (`rgb_row_buf_or_scratch`'s own scratch arm). The u16 RGB /
+    //     RGBA outputs write straight into their caller buffers (the rgb_u16 plane
+    //     itself stages the rgba_u16 expand) and never grow a scratch; this format
+    //     exposes no luma_u16 output.
+    // The later `upsample_420_chroma_center_h_u16` / `rgb_row_buf_or_scratch` calls
+    // reuse the already-sized buffers, so the default path is byte-identical; only
+    // the failure-path ordering changes.
+    let need_centered_chroma =
+      center_sited && (want_rgb || want_rgba || want_hsv || want_rgb_u16 || want_rgba_u16);
+    if need_centered_chroma {
+      reserve_420_chroma_full_u16(chroma_full_u16, w, h)?;
+    }
     if want_hsv && want_rgba && !want_rgb {
       rgb_row_buf_or_scratch(
         rgb.as_deref_mut(),
@@ -372,6 +409,23 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p9<BE>, R> {
         h,
       )?;
     }
+
+    // Centered full-width chroma (phase-0.5), reconstructed ONCE per row from the
+    // wire-format half-width U / V and reused by every colour decode (u16 and u8).
+    // Infallible — the scratch was reserved above. The default / co-sited siting
+    // leaves it `None`, so the fused 4:2:2 kernels upsample chroma in-register and
+    // the output stays byte-identical.
+    let centered = if need_centered_chroma {
+      Some(upsample_420_chroma_center_h_u16::<BITS>(
+        chroma_full_u16,
+        row.u_half(),
+        row.v_half(),
+        w,
+        BE,
+      ))
+    } else {
+      None
+    };
 
     if let Some(luma) = luma.as_deref_mut() {
       let dst = &mut luma[one_plane_start..one_plane_end];
@@ -384,24 +438,35 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p9<BE>, R> {
     }
 
     // ===== u16 RGB / RGBA path (Strategy A) =====
-    let want_rgb_u16 = rgb_u16.is_some();
-    let want_rgba_u16 = rgba_u16.is_some();
-
     if want_rgba_u16 && !want_rgb_u16 {
       let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
         rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-      yuv420p9_to_rgba_u16_row_endian(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        rgba_u16_row,
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-        BE,
-      );
+      if let Some((u_full, v_full)) = centered {
+        yuv444p9_to_rgba_u16_row_endian(
+          row.y(),
+          u_full,
+          v_full,
+          rgba_u16_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      } else {
+        yuv420p9_to_rgba_u16_row_endian(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          rgba_u16_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      }
     } else if want_rgb_u16 {
       let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
       let rgb_plane_end =
@@ -412,17 +477,31 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p9<BE>, R> {
           )))?;
       let rgb_plane_start = one_plane_start * 3;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-      yuv420p9_to_rgb_u16_row_endian(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        rgb_u16_row,
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-        BE,
-      );
+      if let Some((u_full, v_full)) = centered {
+        yuv444p9_to_rgb_u16_row_endian(
+          row.y(),
+          u_full,
+          v_full,
+          rgb_u16_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      } else {
+        yuv420p9_to_rgb_u16_row_endian(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          rgb_u16_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      }
       if want_rgba_u16 {
         let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
         let rgba_u16_row =
@@ -442,36 +521,66 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p9<BE>, R> {
     if want_hsv_direct {
       let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
       let (h, s, v) = hsv.hsv();
-      yuv420p9_to_hsv_row_endian(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        &mut h[one_plane_start..one_plane_end],
-        &mut s[one_plane_start..one_plane_end],
-        &mut v[one_plane_start..one_plane_end],
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-        BE,
-      );
+      if let Some((u_full, v_full)) = centered {
+        yuv444p9_to_hsv_row_endian(
+          row.y(),
+          u_full,
+          v_full,
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      } else {
+        yuv420p9_to_hsv_row_endian(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      }
       return Ok(());
     }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      yuv420p9_to_rgba_row_endian(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        rgba_row,
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-        BE,
-      );
+      if let Some((u_full, v_full)) = centered {
+        yuv444p9_to_rgba_row_endian(
+          row.y(),
+          u_full,
+          v_full,
+          rgba_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      } else {
+        yuv420p9_to_rgba_row_endian(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          rgba_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      }
       return Ok(());
     }
 
@@ -488,17 +597,31 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p9<BE>, R> {
       h,
     )?;
 
-    yuv420p9_to_rgb_row_endian(
-      row.y(),
-      row.u_half(),
-      row.v_half(),
-      rgb_row,
-      w,
-      row.matrix(),
-      row.full_range(),
-      use_simd,
-      BE,
-    );
+    if let Some((u_full, v_full)) = centered {
+      yuv444p9_to_rgb_row_endian(
+        row.y(),
+        u_full,
+        v_full,
+        rgb_row,
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+    } else {
+      yuv420p9_to_rgb_row_endian(
+        row.y(),
+        row.u_half(),
+        row.v_half(),
+        rgb_row,
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+    }
 
     if let Some(hsv) = hsv.as_mut() {
       let (h, s, v) = hsv.hsv();
@@ -651,6 +774,10 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p10<BE>, R> {
       ));
     }
 
+    // Chroma siting (#302): drives the identity-plan horizontal chroma phase.
+    // `Copy`, so read it out before the field split-borrow below.
+    let chroma_location = self.chroma_location;
+
     let Self {
       rgb,
       rgb_u16,
@@ -660,6 +787,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p10<BE>, R> {
       hsv,
       rgb_scratch,
       rgb_scratch_u16,
+      chroma_full_u16,
       luma_scratch_u16,
       rgb_stream,
       rgb_stream_u16,
@@ -843,30 +971,60 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p10<BE>, R> {
       }
     }
 
-    let one_plane_start = idx * w;
-    let one_plane_end = one_plane_start + w;
-
-    // Resolve the output set up front so the atomicity preflight below runs
-    // before any output row is written.
+    // Resolve the FULL output set up front so BOTH the no-output guard and the
+    // atomicity preflight below run before any row-offset arithmetic.
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
+    let want_rgb_u16 = rgb_u16.is_some();
+    let want_rgba_u16 = rgba_u16.is_some();
 
-    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
-    // high-bit 4:2:0 sibling): reserve the only growable row scratch this
-    // identity row can touch — the u8 RGB row buffer — BEFORE any output row
-    // is written (the luma plane below, then the u16 RGB / RGBA fan-out), so an
-    // allocator refusal returns a typed `AllocationFailed` leaving the output
-    // frame untouched rather than partially mutated. The u16 RGB / RGBA outputs
-    // need no preflight: they write straight into their caller buffers (the
-    // rgb_u16 plane itself stages the rgba_u16 expand) and never grow a scratch;
-    // this format exposes no luma_u16 output. `rgb_row_buf_or_scratch`'s
-    // allocating (rgb=None) arm is reached exactly when a colour decode needs an
-    // RGB row but no caller RGB buffer is borrowable — for this
-    // convert-once-then-derive path that is `want_hsv && want_rgba && !want_rgb`
-    // (HSV-only routes through a direct kernel that needs no RGB scratch). The
-    // later decode reuses the already-sized buffer, so the default path is
-    // byte-identical; only the failure-path ordering changes.
+    // Repo-wide no-output invariant: a `process` call carrying NO output runs
+    // NOTHING — no per-row offset arithmetic, no allocation, no state mutation.
+    // Returning HERE, before the `idx * w` offsets below, also keeps the invariant
+    // overflow-safe: a no-output call never ran an attach-time `w x h x 1`
+    // validation, so `idx * w` could overflow `usize` on a 32-bit target with
+    // absurd geometry; the guard skips that math (and the centered chroma
+    // reservation) entirely. Mirrors the 8-bit Yuv422p sibling. (The high-bit
+    // planar 4:2:2 family exposes no `luma_u16` output.)
+    let need_output =
+      want_rgb || want_rgba || want_hsv || want_rgb_u16 || want_rgba_u16 || luma.is_some();
+    if !need_output {
+      return Ok(());
+    }
+
+    let one_plane_start = idx * w;
+    let one_plane_end = one_plane_start + w;
+
+    // Chroma siting (#302): the centered horizontal sitings reconstruct chroma at
+    // the phase-0.5 position then decode via the 4:4:4 kernels; the default /
+    // co-sited path keeps the byte-identical decode (the fused high-bit 4:2:2
+    // kernels upsample chroma in-register). 4:2:2 is subsampled horizontally only
+    // — there is no vertical blend or chroma lookback (cf. the 4:2:0 sibling).
+    let center_sited = chroma_422_center_sited_h(chroma_location);
+
+    // Atomicity preflight (#302 / #308 / #314, cf. the crate's #180 resample fix
+    // and the high-bit 4:2:0 sibling): reserve EVERY fallible row scratch this
+    // identity row can touch BEFORE any output row is written (the luma plane
+    // below, then the u16 / u8 RGB / RGBA / HSV fan-out), so an allocator refusal
+    // returns a typed `AllocationFailed` leaving the output frame untouched rather
+    // than partially mutated. Two scratches can grow:
+    //  1. the centered-siting full-width `u16` chroma (`chroma_full_u16`), needed
+    //     by ANY colour output (u8 OR u16 RGB / RGBA / HSV); and
+    //  2. the u8 RGB row buffer, reached exactly when a colour decode needs an RGB
+    //     row but no caller RGB buffer is borrowable — `want_hsv && want_rgba &&
+    //     !want_rgb` (`rgb_row_buf_or_scratch`'s own scratch arm). The u16 RGB /
+    //     RGBA outputs write straight into their caller buffers (the rgb_u16 plane
+    //     itself stages the rgba_u16 expand) and never grow a scratch; this format
+    //     exposes no luma_u16 output.
+    // The later `upsample_420_chroma_center_h_u16` / `rgb_row_buf_or_scratch` calls
+    // reuse the already-sized buffers, so the default path is byte-identical; only
+    // the failure-path ordering changes.
+    let need_centered_chroma =
+      center_sited && (want_rgb || want_rgba || want_hsv || want_rgb_u16 || want_rgba_u16);
+    if need_centered_chroma {
+      reserve_420_chroma_full_u16(chroma_full_u16, w, h)?;
+    }
     if want_hsv && want_rgba && !want_rgb {
       rgb_row_buf_or_scratch(
         rgb.as_deref_mut(),
@@ -877,6 +1035,23 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p10<BE>, R> {
         h,
       )?;
     }
+
+    // Centered full-width chroma (phase-0.5), reconstructed ONCE per row from the
+    // wire-format half-width U / V and reused by every colour decode (u16 and u8).
+    // Infallible — the scratch was reserved above. The default / co-sited siting
+    // leaves it `None`, so the fused 4:2:2 kernels upsample chroma in-register and
+    // the output stays byte-identical.
+    let centered = if need_centered_chroma {
+      Some(upsample_420_chroma_center_h_u16::<BITS>(
+        chroma_full_u16,
+        row.u_half(),
+        row.v_half(),
+        w,
+        BE,
+      ))
+    } else {
+      None
+    };
 
     if let Some(luma) = luma.as_deref_mut() {
       let dst = &mut luma[one_plane_start..one_plane_end];
@@ -889,24 +1064,35 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p10<BE>, R> {
     }
 
     // ===== u16 RGB / RGBA path (Strategy A) =====
-    let want_rgb_u16 = rgb_u16.is_some();
-    let want_rgba_u16 = rgba_u16.is_some();
-
     if want_rgba_u16 && !want_rgb_u16 {
       let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
         rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-      yuv420p10_to_rgba_u16_row_endian(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        rgba_u16_row,
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-        BE,
-      );
+      if let Some((u_full, v_full)) = centered {
+        yuv444p10_to_rgba_u16_row_endian(
+          row.y(),
+          u_full,
+          v_full,
+          rgba_u16_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      } else {
+        yuv420p10_to_rgba_u16_row_endian(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          rgba_u16_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      }
     } else if want_rgb_u16 {
       let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
       let rgb_plane_end =
@@ -917,17 +1103,31 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p10<BE>, R> {
           )))?;
       let rgb_plane_start = one_plane_start * 3;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-      yuv420p10_to_rgb_u16_row_endian(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        rgb_u16_row,
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-        BE,
-      );
+      if let Some((u_full, v_full)) = centered {
+        yuv444p10_to_rgb_u16_row_endian(
+          row.y(),
+          u_full,
+          v_full,
+          rgb_u16_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      } else {
+        yuv420p10_to_rgb_u16_row_endian(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          rgb_u16_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      }
       if want_rgba_u16 {
         let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
         let rgba_u16_row =
@@ -947,36 +1147,66 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p10<BE>, R> {
     if want_hsv_direct {
       let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
       let (h, s, v) = hsv.hsv();
-      yuv420p10_to_hsv_row_endian(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        &mut h[one_plane_start..one_plane_end],
-        &mut s[one_plane_start..one_plane_end],
-        &mut v[one_plane_start..one_plane_end],
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-        BE,
-      );
+      if let Some((u_full, v_full)) = centered {
+        yuv444p10_to_hsv_row_endian(
+          row.y(),
+          u_full,
+          v_full,
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      } else {
+        yuv420p10_to_hsv_row_endian(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      }
       return Ok(());
     }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      yuv420p10_to_rgba_row_endian(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        rgba_row,
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-        BE,
-      );
+      if let Some((u_full, v_full)) = centered {
+        yuv444p10_to_rgba_row_endian(
+          row.y(),
+          u_full,
+          v_full,
+          rgba_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      } else {
+        yuv420p10_to_rgba_row_endian(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          rgba_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      }
       return Ok(());
     }
 
@@ -993,17 +1223,31 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p10<BE>, R> {
       h,
     )?;
 
-    yuv420p10_to_rgb_row_endian(
-      row.y(),
-      row.u_half(),
-      row.v_half(),
-      rgb_row,
-      w,
-      row.matrix(),
-      row.full_range(),
-      use_simd,
-      BE,
-    );
+    if let Some((u_full, v_full)) = centered {
+      yuv444p10_to_rgb_row_endian(
+        row.y(),
+        u_full,
+        v_full,
+        rgb_row,
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+    } else {
+      yuv420p10_to_rgb_row_endian(
+        row.y(),
+        row.u_half(),
+        row.v_half(),
+        rgb_row,
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+    }
 
     if let Some(hsv) = hsv.as_mut() {
       let (h, s, v) = hsv.hsv();
@@ -1147,6 +1391,10 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p12<BE>, R> {
       ));
     }
 
+    // Chroma siting (#302): drives the identity-plan horizontal chroma phase.
+    // `Copy`, so read it out before the field split-borrow below.
+    let chroma_location = self.chroma_location;
+
     let Self {
       rgb,
       rgb_u16,
@@ -1156,6 +1404,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p12<BE>, R> {
       hsv,
       rgb_scratch,
       rgb_scratch_u16,
+      chroma_full_u16,
       luma_scratch_u16,
       rgb_stream,
       rgb_stream_u16,
@@ -1333,30 +1582,60 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p12<BE>, R> {
       }
     }
 
-    let one_plane_start = idx * w;
-    let one_plane_end = one_plane_start + w;
-
-    // Resolve the output set up front so the atomicity preflight below runs
-    // before any output row is written.
+    // Resolve the FULL output set up front so BOTH the no-output guard and the
+    // atomicity preflight below run before any row-offset arithmetic.
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
+    let want_rgb_u16 = rgb_u16.is_some();
+    let want_rgba_u16 = rgba_u16.is_some();
 
-    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
-    // high-bit 4:2:0 sibling): reserve the only growable row scratch this
-    // identity row can touch — the u8 RGB row buffer — BEFORE any output row
-    // is written (the luma plane below, then the u16 RGB / RGBA fan-out), so an
-    // allocator refusal returns a typed `AllocationFailed` leaving the output
-    // frame untouched rather than partially mutated. The u16 RGB / RGBA outputs
-    // need no preflight: they write straight into their caller buffers (the
-    // rgb_u16 plane itself stages the rgba_u16 expand) and never grow a scratch;
-    // this format exposes no luma_u16 output. `rgb_row_buf_or_scratch`'s
-    // allocating (rgb=None) arm is reached exactly when a colour decode needs an
-    // RGB row but no caller RGB buffer is borrowable — for this
-    // convert-once-then-derive path that is `want_hsv && want_rgba && !want_rgb`
-    // (HSV-only routes through a direct kernel that needs no RGB scratch). The
-    // later decode reuses the already-sized buffer, so the default path is
-    // byte-identical; only the failure-path ordering changes.
+    // Repo-wide no-output invariant: a `process` call carrying NO output runs
+    // NOTHING — no per-row offset arithmetic, no allocation, no state mutation.
+    // Returning HERE, before the `idx * w` offsets below, also keeps the invariant
+    // overflow-safe: a no-output call never ran an attach-time `w x h x 1`
+    // validation, so `idx * w` could overflow `usize` on a 32-bit target with
+    // absurd geometry; the guard skips that math (and the centered chroma
+    // reservation) entirely. Mirrors the 8-bit Yuv422p sibling. (The high-bit
+    // planar 4:2:2 family exposes no `luma_u16` output.)
+    let need_output =
+      want_rgb || want_rgba || want_hsv || want_rgb_u16 || want_rgba_u16 || luma.is_some();
+    if !need_output {
+      return Ok(());
+    }
+
+    let one_plane_start = idx * w;
+    let one_plane_end = one_plane_start + w;
+
+    // Chroma siting (#302): the centered horizontal sitings reconstruct chroma at
+    // the phase-0.5 position then decode via the 4:4:4 kernels; the default /
+    // co-sited path keeps the byte-identical decode (the fused high-bit 4:2:2
+    // kernels upsample chroma in-register). 4:2:2 is subsampled horizontally only
+    // — there is no vertical blend or chroma lookback (cf. the 4:2:0 sibling).
+    let center_sited = chroma_422_center_sited_h(chroma_location);
+
+    // Atomicity preflight (#302 / #308 / #314, cf. the crate's #180 resample fix
+    // and the high-bit 4:2:0 sibling): reserve EVERY fallible row scratch this
+    // identity row can touch BEFORE any output row is written (the luma plane
+    // below, then the u16 / u8 RGB / RGBA / HSV fan-out), so an allocator refusal
+    // returns a typed `AllocationFailed` leaving the output frame untouched rather
+    // than partially mutated. Two scratches can grow:
+    //  1. the centered-siting full-width `u16` chroma (`chroma_full_u16`), needed
+    //     by ANY colour output (u8 OR u16 RGB / RGBA / HSV); and
+    //  2. the u8 RGB row buffer, reached exactly when a colour decode needs an RGB
+    //     row but no caller RGB buffer is borrowable — `want_hsv && want_rgba &&
+    //     !want_rgb` (`rgb_row_buf_or_scratch`'s own scratch arm). The u16 RGB /
+    //     RGBA outputs write straight into their caller buffers (the rgb_u16 plane
+    //     itself stages the rgba_u16 expand) and never grow a scratch; this format
+    //     exposes no luma_u16 output.
+    // The later `upsample_420_chroma_center_h_u16` / `rgb_row_buf_or_scratch` calls
+    // reuse the already-sized buffers, so the default path is byte-identical; only
+    // the failure-path ordering changes.
+    let need_centered_chroma =
+      center_sited && (want_rgb || want_rgba || want_hsv || want_rgb_u16 || want_rgba_u16);
+    if need_centered_chroma {
+      reserve_420_chroma_full_u16(chroma_full_u16, w, h)?;
+    }
     if want_hsv && want_rgba && !want_rgb {
       rgb_row_buf_or_scratch(
         rgb.as_deref_mut(),
@@ -1367,6 +1646,23 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p12<BE>, R> {
         h,
       )?;
     }
+
+    // Centered full-width chroma (phase-0.5), reconstructed ONCE per row from the
+    // wire-format half-width U / V and reused by every colour decode (u16 and u8).
+    // Infallible — the scratch was reserved above. The default / co-sited siting
+    // leaves it `None`, so the fused 4:2:2 kernels upsample chroma in-register and
+    // the output stays byte-identical.
+    let centered = if need_centered_chroma {
+      Some(upsample_420_chroma_center_h_u16::<BITS>(
+        chroma_full_u16,
+        row.u_half(),
+        row.v_half(),
+        w,
+        BE,
+      ))
+    } else {
+      None
+    };
 
     if let Some(luma) = luma.as_deref_mut() {
       let dst = &mut luma[one_plane_start..one_plane_end];
@@ -1379,24 +1675,35 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p12<BE>, R> {
     }
 
     // ===== u16 RGB / RGBA path (Strategy A) =====
-    let want_rgb_u16 = rgb_u16.is_some();
-    let want_rgba_u16 = rgba_u16.is_some();
-
     if want_rgba_u16 && !want_rgb_u16 {
       let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
         rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-      yuv420p12_to_rgba_u16_row_endian(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        rgba_u16_row,
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-        BE,
-      );
+      if let Some((u_full, v_full)) = centered {
+        yuv444p12_to_rgba_u16_row_endian(
+          row.y(),
+          u_full,
+          v_full,
+          rgba_u16_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      } else {
+        yuv420p12_to_rgba_u16_row_endian(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          rgba_u16_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      }
     } else if want_rgb_u16 {
       let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
       let rgb_plane_end =
@@ -1407,17 +1714,31 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p12<BE>, R> {
           )))?;
       let rgb_plane_start = one_plane_start * 3;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-      yuv420p12_to_rgb_u16_row_endian(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        rgb_u16_row,
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-        BE,
-      );
+      if let Some((u_full, v_full)) = centered {
+        yuv444p12_to_rgb_u16_row_endian(
+          row.y(),
+          u_full,
+          v_full,
+          rgb_u16_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      } else {
+        yuv420p12_to_rgb_u16_row_endian(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          rgb_u16_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      }
       if want_rgba_u16 {
         let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
         let rgba_u16_row =
@@ -1437,36 +1758,66 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p12<BE>, R> {
     if want_hsv_direct {
       let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
       let (h, s, v) = hsv.hsv();
-      yuv420p12_to_hsv_row_endian(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        &mut h[one_plane_start..one_plane_end],
-        &mut s[one_plane_start..one_plane_end],
-        &mut v[one_plane_start..one_plane_end],
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-        BE,
-      );
+      if let Some((u_full, v_full)) = centered {
+        yuv444p12_to_hsv_row_endian(
+          row.y(),
+          u_full,
+          v_full,
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      } else {
+        yuv420p12_to_hsv_row_endian(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      }
       return Ok(());
     }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      yuv420p12_to_rgba_row_endian(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        rgba_row,
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-        BE,
-      );
+      if let Some((u_full, v_full)) = centered {
+        yuv444p12_to_rgba_row_endian(
+          row.y(),
+          u_full,
+          v_full,
+          rgba_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      } else {
+        yuv420p12_to_rgba_row_endian(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          rgba_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      }
       return Ok(());
     }
 
@@ -1483,17 +1834,31 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p12<BE>, R> {
       h,
     )?;
 
-    yuv420p12_to_rgb_row_endian(
-      row.y(),
-      row.u_half(),
-      row.v_half(),
-      rgb_row,
-      w,
-      row.matrix(),
-      row.full_range(),
-      use_simd,
-      BE,
-    );
+    if let Some((u_full, v_full)) = centered {
+      yuv444p12_to_rgb_row_endian(
+        row.y(),
+        u_full,
+        v_full,
+        rgb_row,
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+    } else {
+      yuv420p12_to_rgb_row_endian(
+        row.y(),
+        row.u_half(),
+        row.v_half(),
+        rgb_row,
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+    }
 
     if let Some(hsv) = hsv.as_mut() {
       let (h, s, v) = hsv.hsv();
@@ -1637,6 +2002,10 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p14<BE>, R> {
       ));
     }
 
+    // Chroma siting (#302): drives the identity-plan horizontal chroma phase.
+    // `Copy`, so read it out before the field split-borrow below.
+    let chroma_location = self.chroma_location;
+
     let Self {
       rgb,
       rgb_u16,
@@ -1646,6 +2015,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p14<BE>, R> {
       hsv,
       rgb_scratch,
       rgb_scratch_u16,
+      chroma_full_u16,
       luma_scratch_u16,
       rgb_stream,
       rgb_stream_u16,
@@ -1823,30 +2193,60 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p14<BE>, R> {
       }
     }
 
-    let one_plane_start = idx * w;
-    let one_plane_end = one_plane_start + w;
-
-    // Resolve the output set up front so the atomicity preflight below runs
-    // before any output row is written.
+    // Resolve the FULL output set up front so BOTH the no-output guard and the
+    // atomicity preflight below run before any row-offset arithmetic.
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
+    let want_rgb_u16 = rgb_u16.is_some();
+    let want_rgba_u16 = rgba_u16.is_some();
 
-    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
-    // high-bit 4:2:0 sibling): reserve the only growable row scratch this
-    // identity row can touch — the u8 RGB row buffer — BEFORE any output row
-    // is written (the luma plane below, then the u16 RGB / RGBA fan-out), so an
-    // allocator refusal returns a typed `AllocationFailed` leaving the output
-    // frame untouched rather than partially mutated. The u16 RGB / RGBA outputs
-    // need no preflight: they write straight into their caller buffers (the
-    // rgb_u16 plane itself stages the rgba_u16 expand) and never grow a scratch;
-    // this format exposes no luma_u16 output. `rgb_row_buf_or_scratch`'s
-    // allocating (rgb=None) arm is reached exactly when a colour decode needs an
-    // RGB row but no caller RGB buffer is borrowable — for this
-    // convert-once-then-derive path that is `want_hsv && want_rgba && !want_rgb`
-    // (HSV-only routes through a direct kernel that needs no RGB scratch). The
-    // later decode reuses the already-sized buffer, so the default path is
-    // byte-identical; only the failure-path ordering changes.
+    // Repo-wide no-output invariant: a `process` call carrying NO output runs
+    // NOTHING — no per-row offset arithmetic, no allocation, no state mutation.
+    // Returning HERE, before the `idx * w` offsets below, also keeps the invariant
+    // overflow-safe: a no-output call never ran an attach-time `w x h x 1`
+    // validation, so `idx * w` could overflow `usize` on a 32-bit target with
+    // absurd geometry; the guard skips that math (and the centered chroma
+    // reservation) entirely. Mirrors the 8-bit Yuv422p sibling. (The high-bit
+    // planar 4:2:2 family exposes no `luma_u16` output.)
+    let need_output =
+      want_rgb || want_rgba || want_hsv || want_rgb_u16 || want_rgba_u16 || luma.is_some();
+    if !need_output {
+      return Ok(());
+    }
+
+    let one_plane_start = idx * w;
+    let one_plane_end = one_plane_start + w;
+
+    // Chroma siting (#302): the centered horizontal sitings reconstruct chroma at
+    // the phase-0.5 position then decode via the 4:4:4 kernels; the default /
+    // co-sited path keeps the byte-identical decode (the fused high-bit 4:2:2
+    // kernels upsample chroma in-register). 4:2:2 is subsampled horizontally only
+    // — there is no vertical blend or chroma lookback (cf. the 4:2:0 sibling).
+    let center_sited = chroma_422_center_sited_h(chroma_location);
+
+    // Atomicity preflight (#302 / #308 / #314, cf. the crate's #180 resample fix
+    // and the high-bit 4:2:0 sibling): reserve EVERY fallible row scratch this
+    // identity row can touch BEFORE any output row is written (the luma plane
+    // below, then the u16 / u8 RGB / RGBA / HSV fan-out), so an allocator refusal
+    // returns a typed `AllocationFailed` leaving the output frame untouched rather
+    // than partially mutated. Two scratches can grow:
+    //  1. the centered-siting full-width `u16` chroma (`chroma_full_u16`), needed
+    //     by ANY colour output (u8 OR u16 RGB / RGBA / HSV); and
+    //  2. the u8 RGB row buffer, reached exactly when a colour decode needs an RGB
+    //     row but no caller RGB buffer is borrowable — `want_hsv && want_rgba &&
+    //     !want_rgb` (`rgb_row_buf_or_scratch`'s own scratch arm). The u16 RGB /
+    //     RGBA outputs write straight into their caller buffers (the rgb_u16 plane
+    //     itself stages the rgba_u16 expand) and never grow a scratch; this format
+    //     exposes no luma_u16 output.
+    // The later `upsample_420_chroma_center_h_u16` / `rgb_row_buf_or_scratch` calls
+    // reuse the already-sized buffers, so the default path is byte-identical; only
+    // the failure-path ordering changes.
+    let need_centered_chroma =
+      center_sited && (want_rgb || want_rgba || want_hsv || want_rgb_u16 || want_rgba_u16);
+    if need_centered_chroma {
+      reserve_420_chroma_full_u16(chroma_full_u16, w, h)?;
+    }
     if want_hsv && want_rgba && !want_rgb {
       rgb_row_buf_or_scratch(
         rgb.as_deref_mut(),
@@ -1857,6 +2257,23 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p14<BE>, R> {
         h,
       )?;
     }
+
+    // Centered full-width chroma (phase-0.5), reconstructed ONCE per row from the
+    // wire-format half-width U / V and reused by every colour decode (u16 and u8).
+    // Infallible — the scratch was reserved above. The default / co-sited siting
+    // leaves it `None`, so the fused 4:2:2 kernels upsample chroma in-register and
+    // the output stays byte-identical.
+    let centered = if need_centered_chroma {
+      Some(upsample_420_chroma_center_h_u16::<BITS>(
+        chroma_full_u16,
+        row.u_half(),
+        row.v_half(),
+        w,
+        BE,
+      ))
+    } else {
+      None
+    };
 
     if let Some(luma) = luma.as_deref_mut() {
       let dst = &mut luma[one_plane_start..one_plane_end];
@@ -1869,24 +2286,35 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p14<BE>, R> {
     }
 
     // ===== u16 RGB / RGBA path (Strategy A) =====
-    let want_rgb_u16 = rgb_u16.is_some();
-    let want_rgba_u16 = rgba_u16.is_some();
-
     if want_rgba_u16 && !want_rgb_u16 {
       let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
         rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-      yuv420p14_to_rgba_u16_row_endian(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        rgba_u16_row,
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-        BE,
-      );
+      if let Some((u_full, v_full)) = centered {
+        yuv444p14_to_rgba_u16_row_endian(
+          row.y(),
+          u_full,
+          v_full,
+          rgba_u16_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      } else {
+        yuv420p14_to_rgba_u16_row_endian(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          rgba_u16_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      }
     } else if want_rgb_u16 {
       let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
       let rgb_plane_end =
@@ -1897,17 +2325,31 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p14<BE>, R> {
           )))?;
       let rgb_plane_start = one_plane_start * 3;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-      yuv420p14_to_rgb_u16_row_endian(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        rgb_u16_row,
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-        BE,
-      );
+      if let Some((u_full, v_full)) = centered {
+        yuv444p14_to_rgb_u16_row_endian(
+          row.y(),
+          u_full,
+          v_full,
+          rgb_u16_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      } else {
+        yuv420p14_to_rgb_u16_row_endian(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          rgb_u16_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      }
       if want_rgba_u16 {
         let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
         let rgba_u16_row =
@@ -1927,36 +2369,66 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p14<BE>, R> {
     if want_hsv_direct {
       let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
       let (h, s, v) = hsv.hsv();
-      yuv420p14_to_hsv_row_endian(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        &mut h[one_plane_start..one_plane_end],
-        &mut s[one_plane_start..one_plane_end],
-        &mut v[one_plane_start..one_plane_end],
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-        BE,
-      );
+      if let Some((u_full, v_full)) = centered {
+        yuv444p14_to_hsv_row_endian(
+          row.y(),
+          u_full,
+          v_full,
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      } else {
+        yuv420p14_to_hsv_row_endian(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      }
       return Ok(());
     }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      yuv420p14_to_rgba_row_endian(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        rgba_row,
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-        BE,
-      );
+      if let Some((u_full, v_full)) = centered {
+        yuv444p14_to_rgba_row_endian(
+          row.y(),
+          u_full,
+          v_full,
+          rgba_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      } else {
+        yuv420p14_to_rgba_row_endian(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          rgba_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      }
       return Ok(());
     }
 
@@ -1973,17 +2445,31 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p14<BE>, R> {
       h,
     )?;
 
-    yuv420p14_to_rgb_row_endian(
-      row.y(),
-      row.u_half(),
-      row.v_half(),
-      rgb_row,
-      w,
-      row.matrix(),
-      row.full_range(),
-      use_simd,
-      BE,
-    );
+    if let Some((u_full, v_full)) = centered {
+      yuv444p14_to_rgb_row_endian(
+        row.y(),
+        u_full,
+        v_full,
+        rgb_row,
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+    } else {
+      yuv420p14_to_rgb_row_endian(
+        row.y(),
+        row.u_half(),
+        row.v_half(),
+        rgb_row,
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+    }
 
     if let Some(hsv) = hsv.as_mut() {
       let (h, s, v) = hsv.hsv();
@@ -2134,6 +2620,10 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p16<BE>, R> {
       ));
     }
 
+    // Chroma siting (#302): drives the identity-plan horizontal chroma phase.
+    // `Copy`, so read it out before the field split-borrow below.
+    let chroma_location = self.chroma_location;
+
     let Self {
       rgb,
       rgb_u16,
@@ -2143,6 +2633,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p16<BE>, R> {
       hsv,
       rgb_scratch,
       rgb_scratch_u16,
+      chroma_full_u16,
       luma_scratch_u16,
       rgb_stream,
       rgb_stream_u16,
@@ -2320,30 +2811,60 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p16<BE>, R> {
       }
     }
 
-    let one_plane_start = idx * w;
-    let one_plane_end = one_plane_start + w;
-
-    // Resolve the output set up front so the atomicity preflight below runs
-    // before any output row is written.
+    // Resolve the FULL output set up front so BOTH the no-output guard and the
+    // atomicity preflight below run before any row-offset arithmetic.
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
+    let want_rgb_u16 = rgb_u16.is_some();
+    let want_rgba_u16 = rgba_u16.is_some();
 
-    // Atomicity preflight (#308, cf. the crate's #180 resample fix and the
-    // high-bit 4:2:0 sibling): reserve the only growable row scratch this
-    // identity row can touch — the u8 RGB row buffer — BEFORE any output row
-    // is written (the luma plane below, then the u16 RGB / RGBA fan-out), so an
-    // allocator refusal returns a typed `AllocationFailed` leaving the output
-    // frame untouched rather than partially mutated. The u16 RGB / RGBA outputs
-    // need no preflight: they write straight into their caller buffers (the
-    // rgb_u16 plane itself stages the rgba_u16 expand) and never grow a scratch;
-    // this format exposes no luma_u16 output. `rgb_row_buf_or_scratch`'s
-    // allocating (rgb=None) arm is reached exactly when a colour decode needs an
-    // RGB row but no caller RGB buffer is borrowable — for this
-    // convert-once-then-derive path that is `want_hsv && want_rgba && !want_rgb`
-    // (HSV-only routes through a direct kernel that needs no RGB scratch). The
-    // later decode reuses the already-sized buffer, so the default path is
-    // byte-identical; only the failure-path ordering changes.
+    // Repo-wide no-output invariant: a `process` call carrying NO output runs
+    // NOTHING — no per-row offset arithmetic, no allocation, no state mutation.
+    // Returning HERE, before the `idx * w` offsets below, also keeps the invariant
+    // overflow-safe: a no-output call never ran an attach-time `w x h x 1`
+    // validation, so `idx * w` could overflow `usize` on a 32-bit target with
+    // absurd geometry; the guard skips that math (and the centered chroma
+    // reservation) entirely. Mirrors the 8-bit Yuv422p sibling. (The high-bit
+    // planar 4:2:2 family exposes no `luma_u16` output.)
+    let need_output =
+      want_rgb || want_rgba || want_hsv || want_rgb_u16 || want_rgba_u16 || luma.is_some();
+    if !need_output {
+      return Ok(());
+    }
+
+    let one_plane_start = idx * w;
+    let one_plane_end = one_plane_start + w;
+
+    // Chroma siting (#302): the centered horizontal sitings reconstruct chroma at
+    // the phase-0.5 position then decode via the 4:4:4 kernels; the default /
+    // co-sited path keeps the byte-identical decode (the fused high-bit 4:2:2
+    // kernels upsample chroma in-register). 4:2:2 is subsampled horizontally only
+    // — there is no vertical blend or chroma lookback (cf. the 4:2:0 sibling).
+    let center_sited = chroma_422_center_sited_h(chroma_location);
+
+    // Atomicity preflight (#302 / #308 / #314, cf. the crate's #180 resample fix
+    // and the high-bit 4:2:0 sibling): reserve EVERY fallible row scratch this
+    // identity row can touch BEFORE any output row is written (the luma plane
+    // below, then the u16 / u8 RGB / RGBA / HSV fan-out), so an allocator refusal
+    // returns a typed `AllocationFailed` leaving the output frame untouched rather
+    // than partially mutated. Two scratches can grow:
+    //  1. the centered-siting full-width `u16` chroma (`chroma_full_u16`), needed
+    //     by ANY colour output (u8 OR u16 RGB / RGBA / HSV); and
+    //  2. the u8 RGB row buffer, reached exactly when a colour decode needs an RGB
+    //     row but no caller RGB buffer is borrowable — `want_hsv && want_rgba &&
+    //     !want_rgb` (`rgb_row_buf_or_scratch`'s own scratch arm). The u16 RGB /
+    //     RGBA outputs write straight into their caller buffers (the rgb_u16 plane
+    //     itself stages the rgba_u16 expand) and never grow a scratch; this format
+    //     exposes no luma_u16 output.
+    // The later `upsample_420_chroma_center_h_u16` / `rgb_row_buf_or_scratch` calls
+    // reuse the already-sized buffers, so the default path is byte-identical; only
+    // the failure-path ordering changes.
+    let need_centered_chroma =
+      center_sited && (want_rgb || want_rgba || want_hsv || want_rgb_u16 || want_rgba_u16);
+    if need_centered_chroma {
+      reserve_420_chroma_full_u16(chroma_full_u16, w, h)?;
+    }
     if want_hsv && want_rgba && !want_rgb {
       rgb_row_buf_or_scratch(
         rgb.as_deref_mut(),
@@ -2354,6 +2875,23 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p16<BE>, R> {
         h,
       )?;
     }
+
+    // Centered full-width chroma (phase-0.5), reconstructed ONCE per row from the
+    // wire-format half-width U / V and reused by every colour decode (u16 and u8).
+    // Infallible — the scratch was reserved above. The default / co-sited siting
+    // leaves it `None`, so the fused 4:2:2 kernels upsample chroma in-register and
+    // the output stays byte-identical.
+    let centered = if need_centered_chroma {
+      Some(upsample_420_chroma_center_h_u16::<BITS>(
+        chroma_full_u16,
+        row.u_half(),
+        row.v_half(),
+        w,
+        BE,
+      ))
+    } else {
+      None
+    };
 
     if let Some(luma) = luma.as_deref_mut() {
       let dst = &mut luma[one_plane_start..one_plane_end];
@@ -2368,24 +2906,35 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p16<BE>, R> {
     // ===== u16 RGB / RGBA path (Strategy A) =====
     // Reuses Yuv420p16's u16-output kernel — 4:2:2 per-row shape
     // matches 4:2:0's (half-width UV, one pair per Y pair).
-    let want_rgb_u16 = rgb_u16.is_some();
-    let want_rgba_u16 = rgba_u16.is_some();
-
     if want_rgba_u16 && !want_rgb_u16 {
       let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
         rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-      yuv420p16_to_rgba_u16_row_endian(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        rgba_u16_row,
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-        BE,
-      );
+      if let Some((u_full, v_full)) = centered {
+        yuv444p16_to_rgba_u16_row_endian(
+          row.y(),
+          u_full,
+          v_full,
+          rgba_u16_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      } else {
+        yuv420p16_to_rgba_u16_row_endian(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          rgba_u16_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      }
     } else if want_rgb_u16 {
       let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
       let rgb_plane_end =
@@ -2396,17 +2945,31 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p16<BE>, R> {
           )))?;
       let rgb_plane_start = one_plane_start * 3;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-      yuv420p16_to_rgb_u16_row_endian(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        rgb_u16_row,
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-        BE,
-      );
+      if let Some((u_full, v_full)) = centered {
+        yuv444p16_to_rgb_u16_row_endian(
+          row.y(),
+          u_full,
+          v_full,
+          rgb_u16_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      } else {
+        yuv420p16_to_rgb_u16_row_endian(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          rgb_u16_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      }
       if want_rgba_u16 {
         let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
         let rgba_u16_row =
@@ -2426,36 +2989,66 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p16<BE>, R> {
     if want_hsv_direct {
       let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
       let (h, s, v) = hsv.hsv();
-      yuv420p16_to_hsv_row_endian(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        &mut h[one_plane_start..one_plane_end],
-        &mut s[one_plane_start..one_plane_end],
-        &mut v[one_plane_start..one_plane_end],
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-        BE,
-      );
+      if let Some((u_full, v_full)) = centered {
+        yuv444p16_to_hsv_row_endian(
+          row.y(),
+          u_full,
+          v_full,
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      } else {
+        yuv420p16_to_hsv_row_endian(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      }
       return Ok(());
     }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      yuv420p16_to_rgba_row_endian(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        rgba_row,
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-        BE,
-      );
+      if let Some((u_full, v_full)) = centered {
+        yuv444p16_to_rgba_row_endian(
+          row.y(),
+          u_full,
+          v_full,
+          rgba_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      } else {
+        yuv420p16_to_rgba_row_endian(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          rgba_row,
+          w,
+          row.matrix(),
+          row.full_range(),
+          use_simd,
+          BE,
+        );
+      }
       return Ok(());
     }
 
@@ -2472,17 +3065,31 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p16<BE>, R> {
       h,
     )?;
 
-    yuv420p16_to_rgb_row_endian(
-      row.y(),
-      row.u_half(),
-      row.v_half(),
-      rgb_row,
-      w,
-      row.matrix(),
-      row.full_range(),
-      use_simd,
-      BE,
-    );
+    if let Some((u_full, v_full)) = centered {
+      yuv444p16_to_rgb_row_endian(
+        row.y(),
+        u_full,
+        v_full,
+        rgb_row,
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+    } else {
+      yuv420p16_to_rgb_row_endian(
+        row.y(),
+        row.u_half(),
+        row.v_half(),
+        rgb_row,
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+    }
 
     if let Some(hsv) = hsv.as_mut() {
       let (h, s, v) = hsv.hsv();
