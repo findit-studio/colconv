@@ -219,3 +219,65 @@ fn uyva_malformed_row_returns_row_shape_mismatch() {
     "unexpected error: {err:?}"
   );
 }
+
+// ---- Atomicity (#308) --------------------------------------------------
+//
+// The packed 4:4:4 identity-path `process` must run the up-front RGB-scratch
+// preflight BEFORE any output row (luma / luma_u16) is written, so an allocator
+// refusal returns a recoverable `AllocationFailed` leaving the output frame
+// untouched rather than partially mutated. The `luma + RGBA + HSV, no RGB`
+// combo is the identity-path shape that reaches `rgb_row_buf_or_scratch`'s
+// scratch arm (`want_hsv && want_rgba && !want_rgb`); standalone RGBA uses the
+// dedicated `uyva_to_rgba_row` kernel and never grows the scratch. Reuses the
+// crate's `yuva`-gated RGB-scratch failpoint, so this test is too (under
+// `--all-features` both `yuv-444-packed` and `yuva` are on).
+
+#[cfg(feature = "yuva")]
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn uyva_rgb_scratch_alloc_failure_leaves_outputs_untouched() {
+  use crate::resample::ResampleError;
+
+  let n = 16 * 8;
+  let (yp, up, vp, ap) = (
+    std::vec![128u8; n],
+    std::vec![128u8; n],
+    std::vec![128u8; n],
+    std::vec![200u8; n],
+  );
+  let buf = pack_uyva(&vp, &up, &yp, &ap, n);
+  let src = UyvaFrame::try_new(&buf, 16, 8, 16 * 4).unwrap();
+  let mut luma = std::vec![0xABu8; n];
+  let mut rgba = std::vec![0xCDu8; n * 4];
+  let (mut hh, mut ss, mut vv) = (
+    std::vec![0xCDu8; n],
+    std::vec![0xCDu8; n],
+    std::vec![0xCDu8; n],
+  );
+  let mut sink = MixedSinker::<Uyva>::new(16, 8)
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
+
+  super::super::arm_rgb_scratch_alloc_failure();
+  let err = uyva_to(&src, false, ColorMatrix::Bt601, &mut sink).unwrap_err();
+  drop(sink);
+
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "RGB-scratch refusal must surface as a recoverable AllocationFailed, got {err:?}"
+  );
+  assert!(
+    luma.iter().all(|&b| b == 0xAB),
+    "luma must be untouched on the rgb-scratch alloc-failure path"
+  );
+}

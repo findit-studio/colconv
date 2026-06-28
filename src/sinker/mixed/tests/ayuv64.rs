@@ -1034,3 +1034,111 @@ fn ayuv64_le_be_roundtrip_strategy_a_plus_byte_identical() {
     "AYUV64 A+ RGBA u16 LE/BE diverge"
   );
 }
+
+// ---- Atomicity (#308) --------------------------------------------------
+//
+// The packed 4:4:4 16-bit identity-path `process` must run the up-front
+// RGB-scratch preflight BEFORE any output row (luma / luma_u16) is written, so
+// an allocator refusal returns a recoverable `AllocationFailed` leaving the
+// output frame untouched rather than partially mutated. Unlike the 8-bit
+// packed siblings, `Ayuv64` also exposes u16 colour outputs, so the scratch
+// arm (the u8 RGB row staged for HSV) is reached whenever HSV is wanted
+// alongside ANY other colour output with no caller RGB buffer —
+// `want_hsv && !want_rgb && (want_rgba || want_rgb_u16 || want_rgba_u16)`. Two
+// tests pin both halves of that gate: the u8-colour combo and the
+// u16-colour-only combo (which the narrow 8-bit gate would have missed).
+// Reuses the crate's `yuva`-gated RGB-scratch failpoint, so these tests are
+// too (under `--all-features` both `yuv-444-packed` and `yuva` are on).
+
+#[cfg(feature = "yuva")]
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn ayuv64_rgb_scratch_alloc_failure_leaves_outputs_untouched() {
+  use crate::resample::ResampleError;
+
+  let n = 16 * 8;
+  let buf = solid_ayuv64_frame(16, 8, 0xC000, 32768, 32768, 32768);
+  let src = Ayuv64Frame::try_new(&buf, 16, 8, 16 * 4).unwrap();
+  let mut luma = std::vec![0xABu8; n];
+  let mut rgba = std::vec![0xCDu8; n * 4];
+  let (mut hh, mut ss, mut vv) = (
+    std::vec![0xCDu8; n],
+    std::vec![0xCDu8; n],
+    std::vec![0xCDu8; n],
+  );
+  let mut sink = MixedSinker::<Ayuv64>::new(16, 8)
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
+
+  super::super::arm_rgb_scratch_alloc_failure();
+  let err = ayuv64_to(&src, false, ColorMatrix::Bt601, &mut sink).unwrap_err();
+  drop(sink);
+
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "RGB-scratch refusal must surface as a recoverable AllocationFailed, got {err:?}"
+  );
+  assert!(
+    luma.iter().all(|&b| b == 0xAB),
+    "luma must be untouched on the rgb-scratch alloc-failure path"
+  );
+}
+
+// u16-colour-only variant: `with_hsv` + `with_rgba_u16` (no u8 RGB/RGBA, no
+// RGB u16) still stages the u8 RGB scratch for the HSV derive, so it reaches
+// `rgb_row_buf_or_scratch`'s scratch arm. This is the case the narrow 8-bit
+// gate (`want_hsv && want_rgba && !want_rgb`) would have skipped — proving the
+// preflight gate must include the u16 colour outputs. Sentinel is luma_u16.
+#[cfg(feature = "yuva")]
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn ayuv64_rgb_scratch_alloc_failure_u16_color_leaves_outputs_untouched() {
+  use crate::resample::ResampleError;
+
+  let n = 16 * 8;
+  let buf = solid_ayuv64_frame(16, 8, 0xC000, 32768, 32768, 32768);
+  let src = Ayuv64Frame::try_new(&buf, 16, 8, 16 * 4).unwrap();
+  let mut luma_u16 = std::vec![0xABABu16; n];
+  let mut rgba_u16 = std::vec![0xCDCDu16; n * 4];
+  let (mut hh, mut ss, mut vv) = (
+    std::vec![0xCDu8; n],
+    std::vec![0xCDu8; n],
+    std::vec![0xCDu8; n],
+  );
+  let mut sink = MixedSinker::<Ayuv64>::new(16, 8)
+    .with_luma_u16(&mut luma_u16)
+    .unwrap()
+    .with_rgba_u16(&mut rgba_u16)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
+
+  super::super::arm_rgb_scratch_alloc_failure();
+  let err = ayuv64_to(&src, false, ColorMatrix::Bt601, &mut sink).unwrap_err();
+  drop(sink);
+
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "RGB-scratch refusal must surface as a recoverable AllocationFailed, got {err:?}"
+  );
+  assert!(
+    luma_u16.iter().all(|&b| b == 0xABAB),
+    "luma_u16 must be untouched on the rgb-scratch alloc-failure path"
+  );
+}
