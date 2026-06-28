@@ -88,7 +88,10 @@ fn powf32(x: f32, y: f32) -> f32 {
 /// Python library; the reference-anchor tests in `tests.rs`
 /// (`transfer_function_pq_matches_st2084_reference` /
 /// `transfer_function_hlg_matches_bt2100_reference`) pin every constant.
-#[allow(dead_code)] // consumed by the deferred ICtCp matrix-wiring (#303)
+// Consumed by the ICtCp non-affine decode (`row::scalar::ictcp`, #303) via
+// the `crate::resample::pq_hlg` re-export; dead only in feature configs that
+// build neither `yuv-planar` nor the transcendental tier it needs.
+#[allow(dead_code)]
 pub(crate) mod pq_hlg {
   use super::powf32;
 

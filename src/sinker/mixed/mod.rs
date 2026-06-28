@@ -2942,6 +2942,21 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// tiers keep the matrix-tag coefficients until wired in.
   #[cfg(feature = "yuv-planar")]
   primaries: crate::Primaries,
+  /// Source [`Transfer`](crate::Transfer) characteristics — **sink-consumed**,
+  /// like [`primaries`](Self::primaries): mediaframe's YUV row carries only
+  /// range + matrix, not the transfer, so the
+  /// [`ColorMatrix::Ictcp`](crate::ColorMatrix::Ictcp) non-affine decode
+  /// (H.273 `MatrixCoefficients = 14`, BT.2100 ICtCp), which selects its
+  /// inverse matrix + per-channel EOTF from the PQ/HLG transfer, reads it
+  /// here. Defaults to [`Transfer::Unspecified`](crate::Transfer::Unspecified)
+  /// (no PQ/HLG transfer → the affine matrix-tag fallback, byte-identical to
+  /// the pre-#303 behaviour). Set via [`Self::with_color_spec`] /
+  /// [`Self::set_color_spec`]. Currently consulted by the planar 12-bit
+  /// `Yuv444p12` identity RGB / RGBA path (the representative #303 wiring);
+  /// other families and the resampling tiers keep the affine path until
+  /// wired in.
+  #[cfg(feature = "yuv-planar")]
+  transfer: crate::Transfer,
   /// Per-frame accumulator for the RFC #238 [`AveragingDomain::Linear`]
   /// linear-light tail (planar 8-bit YUV family). Lazily created on the
   /// first output-bearing row of a linear-domain frame; reset to `None` per
@@ -3730,6 +3745,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       #[cfg(feature = "yuv-planar")]
       primaries: crate::Primaries::Unspecified,
       #[cfg(feature = "yuv-planar")]
+      transfer: crate::Transfer::Unspecified,
+      #[cfg(feature = "yuv-planar")]
       linear_mode: LinearMode::DisplayReferred,
       #[cfg(all(feature = "yuv-planar", feature = "rgb"))]
       linear_light_frame: None,
@@ -4409,6 +4426,17 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
     self.primaries
   }
 
+  /// The source [`Transfer`](crate::Transfer) carried via
+  /// [`Self::with_color_spec`] — the PQ/HLG selector for the
+  /// [`ColorMatrix::Ictcp`](crate::ColorMatrix::Ictcp) non-affine decode
+  /// (#303). Defaults to
+  /// [`Transfer::Unspecified`](crate::Transfer::Unspecified).
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn transfer(&self) -> crate::Transfer {
+    self.transfer
+  }
+
   /// Sets the chroma sample location in place. See
   /// [`Self::with_chroma_location`] for the consuming builder variant.
   #[cfg(feature = "yuv-planar")]
@@ -4450,6 +4478,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   pub const fn set_color_spec(&mut self, spec: crate::ColorSpec) -> &mut Self {
     self.chroma_location = spec.chroma_location();
     self.primaries = spec.primaries();
+    self.transfer = spec.transfer();
     self
   }
 

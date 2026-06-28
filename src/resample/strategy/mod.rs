@@ -26,7 +26,7 @@
 #[cfg(test)]
 mod tests;
 
-mod transfer;
+pub(crate) mod transfer;
 pub use transfer::TransferFunction;
 
 /// The colour domain an RFC #238 area downscale averages in.
