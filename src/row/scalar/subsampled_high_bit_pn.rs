@@ -22,6 +22,106 @@ const fn depack_pn<const BITS: u32, const LOW_PACKED: bool>(value: u16) -> u16 {
   }
 }
 
+/// Chroma-siting-aware horizontal upsample for the **high-bit-packed
+/// semi-planar** 4:2:0 P-format family (P010 / P012 / P016, #302) — the
+/// MSB-aligned `u16` twin of
+/// [`chroma_upsample_420_center_h_u16`](super::yuv_planar_8bit::chroma_upsample_420_center_h_u16).
+///
+/// Reconstructs **center-sited** chroma (MPEG-1 / JPEG horizontal phase,
+/// FFmpeg `AVCHROMA_LOC_CENTER` / `Top` / `Bottom`) with the standard
+/// `1/4`–`3/4` phase-0.5 weights and edge clamp, then **re-interleaves**
+/// the result so the output is a single full-width `U, V, U, V…` plane the
+/// existing P-format 4:4:4 decode kernels
+/// ([`p_n_444_to_rgb_row`] / [`p_n_444_16_to_rgb_row`] and siblings)
+/// consume directly — so the centered path reuses their full SIMD backends
+/// and stays bit-identical per tier.
+///
+/// **Packing seam (the difference from the planar `_u16` kernel).** P010 /
+/// P012 / P016 are **MSB-aligned**: the active value sits in the **high**
+/// `BITS` of each wire `u16`, the low `16 - BITS` bits ignored
+/// (`depack_pn::<BITS, false>` = `>> (16 - BITS)`). The interleaved
+/// half-row `uv_half` and the full-row output therefore both carry samples
+/// in that MSB-aligned wire convention (and in the source `big_endian`
+/// order). Each input is normalized wire → host-native then **de-packed**
+/// by `>> (16 - BITS)` — discarding the ignored low bits, the SIMD-matching
+/// sanitization the fused decode performs — BEFORE the blend; without it a
+/// malformed sample's dirty low bits would leak into a neighbour through
+/// the `1/4`–`3/4` blend, decoding the centered path differently from the
+/// default. The blend runs in the logical domain (a `BITS`-bit value, so
+/// `left + 3 * mid` ≤ `4 * 65535` never overflows the `u32` accumulator),
+/// then each output is **re-packed** `<< (16 - BITS)` back to MSB-aligned
+/// and re-encoded to the same wire order — so the 4:4:4 kernel's own
+/// `>> (16 - BITS)` de-pack round-trips it exactly. At `BITS = 16` both
+/// shifts are `>> 0` / `<< 0` (no-ops): the 16-bit sample already is its
+/// logical value.
+///
+/// `uv_half` is the half-width interleaved chroma (`U` at even element);
+/// `uv_full` receives `2 * width` `u16` (`U, V` per pixel). The
+/// de-interleave, the phase-0.5 upsample, and the re-interleave all fuse
+/// into this single pass — there is no separate planar U / V scratch
+/// (unlike the NV 8-bit path's de-interleave-then-`chroma_upsample`
+/// staging), because the P-format 4:4:4 kernels want the interleaved form.
+///
+/// # Panics (debug builds)
+///
+/// - `width` must be even (4:2:0 pairs pixel columns).
+/// - `uv_half.len() >= width` (a half-row is `width` `u16`: `width / 2`
+///   `U, V` pairs), `uv_full.len() >= 2 * width`.
+// Reachable only through the high-bit P-format sink's centered path, which
+// stages the full-width chroma in a `Vec` scratch — so the kernel is live
+// exactly where the sink (hence heap allocation) is. The centered path is
+// `all(yuv-semi-planar, yuv-planar)` (its `chroma_420_center_sited_h` predicate
+// + the 4:4:4 P-format decode kernels need `yuv-planar`); this module already
+// requires `yuv-semi-planar`, so gating the kernel on `yuv-planar` matches its
+// sole caller and keeps it from being dead code in a semi-planar-only build.
+#[cfg(all(any(feature = "std", feature = "alloc"), feature = "yuv-planar"))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn chroma_upsample_420_center_h_p0xx<const BITS: u32>(
+  uv_half: &[u16],
+  uv_full: &mut [u16],
+  width: usize,
+  big_endian: bool,
+) {
+  debug_assert_eq!(width & 1, 0, "P-format 4:2:0 requires even width");
+  debug_assert!(uv_half.len() >= width, "uv_half row too short");
+  debug_assert!(uv_full.len() >= 2 * width, "uv_full row too short");
+
+  let shift = 16 - BITS;
+  // De-pack MSB-aligned wire → logical (discarding the ignored low bits;
+  // `>> 0` at BITS = 16). `c` indexes the chroma sample, `comp ∈ {0, 1}`
+  // selects U (even) / V (odd) within the interleaved pair.
+  let load = |c: usize, comp: usize| -> u32 {
+    let raw = uv_half[2 * c + comp];
+    (if big_endian {
+      u16::from_be(raw)
+    } else {
+      u16::from_le(raw)
+    } >> shift) as u32
+  };
+  // Re-pack logical → MSB-aligned wire (`<< 0` at BITS = 16) + re-encode.
+  let store = |logical: u32| -> u16 {
+    let v = (logical as u16) << shift;
+    if big_endian { v.to_be() } else { v.to_le() }
+  };
+
+  let half = width / 2;
+  for j in 0..half {
+    // `c[j-1]` clamps to `c[0]` at the left edge; `c[j+1]` clamps to the
+    // last sample at the right edge — boundary replication, so the edge
+    // columns collapse to `c[0]` / `c[half-1]` exactly. U and V each get
+    // the independent phase-0.5 blend, then interleave back into uv_full.
+    let lj = j.saturating_sub(1);
+    let rj = if j + 1 < half { j + 1 } else { j };
+    let (ul, um, ur) = (load(lj, 0), load(j, 0), load(rj, 0));
+    let (vl, vm, vr) = (load(lj, 1), load(j, 1), load(rj, 1));
+    // even column 2j → 1/4 left + 3/4 mid; odd column 2j+1 → 3/4 mid + 1/4 right.
+    uv_full[2 * (2 * j)] = store((ul + 3 * um + 2) >> 2);
+    uv_full[2 * (2 * j) + 1] = store((vl + 3 * vm + 2) >> 2);
+    uv_full[2 * (2 * j + 1)] = store((3 * um + ur + 2) >> 2);
+    uv_full[2 * (2 * j + 1) + 1] = store((3 * vm + vr + 2) >> 2);
+  }
+}
+
 // ---- P010 (semi-planar 10-bit, high-bit-packed) → RGB ------------------
 
 /// Converts one row of P010 (semi‑planar 4:2:0 with UV interleaved,

@@ -84,6 +84,8 @@ mod chroma_siting_420;
 mod chroma_siting_hibit_420;
 #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
 mod chroma_siting_nv;
+#[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+mod chroma_siting_p0xx;
 #[cfg(feature = "gray")]
 mod gray;
 #[cfg(feature = "rgb-legacy")]
