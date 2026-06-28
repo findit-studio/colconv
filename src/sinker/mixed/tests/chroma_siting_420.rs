@@ -216,13 +216,23 @@ fn center_grows_chroma_scratch_to_full_width() {
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
-fn top_and_bottom_route_like_center_horizontally() {
-  // Top / Bottom share Center's horizontal (centered) phase; the vertical
-  // phase is not yet consumed (#302 horizontal-only), so all three produce
-  // the same RGB here.
+fn top_routes_like_center_bottom_adds_vertical() {
+  // Top shares Center's horizontal (centered) phase and its vertical phase is
+  // not yet consumed (the odd output row needs the *next* chroma row, deferred),
+  // so Top == Center. Bottom (v=1) additionally vertically box-blends the even
+  // output row with the previous chroma row, so on a fixture whose chroma varies
+  // across rows it must DIFFER from Center.
   let center = convert_rgb(ChromaLocation::Center, true);
-  assert_eq!(convert_rgb(ChromaLocation::Top, true), center);
-  assert_eq!(convert_rgb(ChromaLocation::Bottom, true), center);
+  assert_eq!(
+    convert_rgb(ChromaLocation::Top, true),
+    center,
+    "Top keeps Center's horizontal phase (vertical deferred)"
+  );
+  assert_ne!(
+    convert_rgb(ChromaLocation::Bottom, true),
+    center,
+    "Bottom's vertical box blend must differ from Center on a vertically-varying chroma ramp"
+  );
 }
 
 #[test]
@@ -620,5 +630,798 @@ fn rgb_scratch_alloc_failure_leaves_outputs_untouched() {
   assert!(
     luma.iter().all(|&b| b == 0xAB),
     "luma must be untouched on the rgb-scratch alloc-failure path"
+  );
+}
+
+// ---- bottom-sited VERTICAL phase (#302 deferred vertical part) --------------
+
+/// A `Yuv420p` frame with flat luma and a per-ROW chroma ramp, so the vertical
+/// chroma phase is observable in isolation (constant within each chroma row,
+/// stepped between rows — a horizontal-only siting leaves it untouched, while a
+/// vertical blend visibly moves it).
+fn vramp_yuv420p() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+  let w = W as usize;
+  let h = H as usize;
+  let cw = w / 2;
+  let ch = h / 2;
+  let y = std::vec![128u8; w * h];
+  let mut u = std::vec![0u8; cw * ch];
+  let mut v = std::vec![0u8; cw * ch];
+  for r in 0..ch {
+    for c in 0..cw {
+      // Flat across columns, a strong step between chroma rows: only a VERTICAL
+      // reconstruction changes these, so Bottom != the horizontal-only sitings.
+      u[r * cw + c] = (20 + r * 40).min(240) as u8;
+      v[r * cw + c] = (220 - r * 40).max(16) as u8;
+    }
+  }
+  (y, u, v)
+}
+
+/// Independent reference for the bottom-sited (`v = 1`) full reconstruction: per
+/// luma row `r`, the EVEN rows take the vertical box average of chroma rows
+/// `r/2 - 1` (clamped to `r/2` at the top edge) and `r/2`; the ODD rows take
+/// chroma row `r/2` directly. Each resulting half-row is then horizontally
+/// upsampled with the SAME centered `1/4`–`3/4` weights as Center (Bottom is
+/// `h = 0.5`). Written separately from the production kernels so it is a true
+/// oracle.
+fn ref_full_chroma_bottom(u420: &[u8], v420: &[u8]) -> (Vec<u8>, Vec<u8>) {
+  let w = W as usize;
+  let h = H as usize;
+  let cw = w / 2;
+  let ch = h / 2;
+  let mut u444 = std::vec![0u8; w * h];
+  let mut v444 = std::vec![0u8; w * h];
+  let vblend = |plane: &[u8], cr: usize, prev: usize| -> Vec<u8> {
+    (0..cw)
+      .map(|c| {
+        let a = plane[prev * cw + c] as u32;
+        let b = plane[cr * cw + c] as u32;
+        ((a + b + 1) >> 1) as u8
+      })
+      .collect::<Vec<u8>>()
+  };
+  for r in 0..h {
+    let cr = r / 2;
+    let (uhalf, vhalf) = if r & 1 == 0 {
+      // Even row: vertical box blend of chroma rows cr-1 (clamp to cr) and cr.
+      let prev = cr.saturating_sub(1);
+      (vblend(u420, cr, prev), vblend(v420, cr, prev))
+    } else {
+      // Odd row: co-sited with chroma row cr (no vertical blend).
+      let _ = ch;
+      (
+        u420[cr * cw..cr * cw + cw].to_vec(),
+        v420[cr * cw..cr * cw + cw].to_vec(),
+      )
+    };
+    let urow = ref_upsample_center_h(&uhalf, w);
+    let vrow = ref_upsample_center_h(&vhalf, w);
+    u444[r * w..r * w + w].copy_from_slice(&urow);
+    v444[r * w..r * w + w].copy_from_slice(&vrow);
+  }
+  (u444, v444)
+}
+
+fn convert_rgb_with(loc: ChromaLocation, simd: bool, yp: &[u8], up: &[u8], vp: &[u8]) -> Vec<u8> {
+  let src = Yuv420pFrame::new(yp, up, vp, W, H, W, W / 2, W / 2);
+  let mut rgb = std::vec![0u8; (W * H * 3) as usize];
+  let mut sink = MixedSinker::<Yuv420p>::new(W as usize, H as usize)
+    .with_rgb(&mut rgb)
+    .unwrap()
+    .with_chroma_location(loc)
+    .with_simd(simd);
+  yuv420p_to(&src, false, ColorMatrix::Bt601, &mut sink).unwrap();
+  rgb
+}
+
+// ---- bottom-sited vertical kernel oracle -----------------------------------
+
+#[test]
+fn bottom_even_kernel_matches_hand_computed() {
+  // prev = [0, 0, 100, 100], cur = [40, 40, 60, 60] (half = 4, width = 8).
+  // Vertical box blend e = (prev + cur + 1) >> 1 = [20, 20, 80, 80], then the
+  // centered horizontal 1/4-3/4 reconstruction with edge clamp:
+  //   2j   = (e[j-1] + 3 e[j] + 2) >> 2,  2j+1 = (3 e[j] + e[j+1] + 2) >> 2.
+  let prev = [0u8, 0, 100, 100];
+  let cur = [40u8, 40, 60, 60];
+  let mut out = [0u8; 8];
+  crate::row::scalar::chroma_upsample_420_bottom_even_h(&prev, &cur, &mut out, 8);
+  // e = [20,20,80,80] -> [20, 20, 20, 35, 65, 80, 80, 80].
+  assert_eq!(out, [20, 20, 20, 35, 65, 80, 80, 80]);
+}
+
+#[test]
+fn bottom_even_kernel_equals_center_when_rows_match() {
+  // When prev == cur the vertical box blend is a no-op, so the bottom-even
+  // kernel must reproduce the plain horizontal centered upsample exactly.
+  let cur = [10u8, 40, 90, 30];
+  let mut bottom = [0u8; 8];
+  let mut center = [0u8; 8];
+  crate::row::scalar::chroma_upsample_420_bottom_even_h(&cur, &cur, &mut bottom, 8);
+  crate::row::scalar::chroma_upsample_420_center_h(&cur, &mut center, 8);
+  assert_eq!(
+    bottom, center,
+    "prev == cur must collapse the vertical blend to the horizontal centered path"
+  );
+}
+
+// ---- bottom-sited end-to-end correctness -----------------------------------
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn bottom_rgb_matches_vblend_then_444_reference() {
+  let (yp, up, vp) = vramp_yuv420p();
+
+  // Reference: vertical-box-blend (even rows) + horizontal centered upsample to
+  // full resolution, then the ordinary 4:4:4 decode.
+  let (u444, v444) = ref_full_chroma_bottom(&up, &vp);
+  let ref_src = Yuv444pFrame::new(&yp, &u444, &v444, W, H, W, W, W);
+  let mut rgb_ref = std::vec![0u8; (W * H * 3) as usize];
+  let mut ref_sink = MixedSinker::<Yuv444p>::new(W as usize, H as usize)
+    .with_rgb(&mut rgb_ref)
+    .unwrap();
+  yuv444p_to(&ref_src, false, ColorMatrix::Bt601, &mut ref_sink).unwrap();
+
+  assert_eq!(
+    convert_rgb_with(ChromaLocation::Bottom, true, &yp, &up, &vp),
+    rgb_ref,
+    "bottom-sited 4:2:0 RGB must equal vertical-blend + horizontal-upsample then 4:4:4"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn bottom_differs_from_center_and_default_vertically() {
+  // On a purely-vertical chroma ramp, Bottom's even-row vertical blend must
+  // move chroma both vs the horizontal-only Center (same horizontal phase, no
+  // vertical) and vs the replicate default.
+  let (yp, up, vp) = vramp_yuv420p();
+  let bottom = convert_rgb_with(ChromaLocation::Bottom, true, &yp, &up, &vp);
+  assert_ne!(
+    bottom,
+    convert_rgb_with(ChromaLocation::Center, true, &yp, &up, &vp),
+    "Bottom (v=1) must differ from Center (horizontal-only) on a vertical chroma ramp"
+  );
+  assert_ne!(
+    bottom,
+    convert_rgb_with(ChromaLocation::Left, true, &yp, &up, &vp),
+    "Bottom must differ from the vertical-replicate default"
+  );
+  // Top keeps Center's decode (vertical deferred), so it must NOT vertically
+  // blend — distinct from Bottom on this ramp.
+  assert_ne!(
+    bottom,
+    convert_rgb_with(ChromaLocation::Top, true, &yp, &up, &vp),
+    "Top (vertical deferred) must differ from Bottom's vertical blend"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn bottom_rgba_and_hsv_match_vblend_then_444_reference() {
+  let (yp, up, vp) = vramp_yuv420p();
+  let (u444, v444) = ref_full_chroma_bottom(&up, &vp);
+
+  // RGBA-only path.
+  {
+    let src = Yuv420pFrame::new(&yp, &up, &vp, W, H, W, W / 2, W / 2);
+    let mut rgba = std::vec![0u8; (W * H * 4) as usize];
+    let mut sink = MixedSinker::<Yuv420p>::new(W as usize, H as usize)
+      .with_rgba(&mut rgba)
+      .unwrap()
+      .with_chroma_location(ChromaLocation::Bottom);
+    yuv420p_to(&src, false, ColorMatrix::Bt601, &mut sink).unwrap();
+
+    let ref_src = Yuv444pFrame::new(&yp, &u444, &v444, W, H, W, W, W);
+    let mut rgba_ref = std::vec![0u8; (W * H * 4) as usize];
+    let mut ref_sink = MixedSinker::<Yuv444p>::new(W as usize, H as usize)
+      .with_rgba(&mut rgba_ref)
+      .unwrap();
+    yuv444p_to(&ref_src, false, ColorMatrix::Bt601, &mut ref_sink).unwrap();
+    assert_eq!(rgba, rgba_ref, "bottom RGBA must equal vblend-then-4:4:4");
+  }
+
+  // HSV-direct path (no RGB / RGBA attached).
+  {
+    let src = Yuv420pFrame::new(&yp, &up, &vp, W, H, W, W / 2, W / 2);
+    let (mut h, mut s, mut v) = (
+      std::vec![0u8; (W * H) as usize],
+      std::vec![0u8; (W * H) as usize],
+      std::vec![0u8; (W * H) as usize],
+    );
+    let mut sink = MixedSinker::<Yuv420p>::new(W as usize, H as usize)
+      .with_hsv(&mut h, &mut s, &mut v)
+      .unwrap()
+      .with_chroma_location(ChromaLocation::Bottom);
+    yuv420p_to(&src, false, ColorMatrix::Bt601, &mut sink).unwrap();
+
+    let ref_src = Yuv444pFrame::new(&yp, &u444, &v444, W, H, W, W, W);
+    let (mut hr, mut sr, mut vr) = (
+      std::vec![0u8; (W * H) as usize],
+      std::vec![0u8; (W * H) as usize],
+      std::vec![0u8; (W * H) as usize],
+    );
+    let mut ref_sink = MixedSinker::<Yuv444p>::new(W as usize, H as usize)
+      .with_hsv(&mut hr, &mut sr, &mut vr)
+      .unwrap();
+    yuv444p_to(&ref_src, false, ColorMatrix::Bt601, &mut ref_sink).unwrap();
+    assert_eq!(
+      (h, s, v),
+      (hr, sr, vr),
+      "bottom HSV must equal vblend-then-4:4:4"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn bottom_path_simd_matches_scalar() {
+  let (yp, up, vp) = vramp_yuv420p();
+  assert_eq!(
+    convert_rgb_with(ChromaLocation::Bottom, true, &yp, &up, &vp),
+    convert_rgb_with(ChromaLocation::Bottom, false, &yp, &up, &vp),
+    "bottom path must be bit-identical across the SIMD and scalar tiers"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn bottom_grows_chroma_prev_lookback() {
+  let (yp, up, vp) = vramp_yuv420p();
+  let src = Yuv420pFrame::new(&yp, &up, &vp, W, H, W, W / 2, W / 2);
+  let mut rgb = std::vec![0u8; (W * H * 3) as usize];
+  let mut sink = MixedSinker::<Yuv420p>::new(W as usize, H as usize)
+    .with_rgb(&mut rgb)
+    .unwrap()
+    .with_chroma_location(ChromaLocation::Bottom);
+  yuv420p_to(&src, false, ColorMatrix::Bt601, &mut sink).unwrap();
+  let prev_len = sink.chroma_prev.len();
+  drop(sink);
+  assert_eq!(
+    prev_len, W as usize,
+    "bottom-sited path stages a width-byte (half-width U+V) chroma lookback"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn non_bottom_sitings_do_not_grow_chroma_prev() {
+  // Center / Top / Left never touch the vertical lookback.
+  for loc in [
+    ChromaLocation::Center,
+    ChromaLocation::Top,
+    ChromaLocation::Left,
+    ChromaLocation::Unspecified,
+  ] {
+    let (yp, up, vp) = vramp_yuv420p();
+    let src = Yuv420pFrame::new(&yp, &up, &vp, W, H, W, W / 2, W / 2);
+    let mut rgb = std::vec![0u8; (W * H * 3) as usize];
+    let mut sink = MixedSinker::<Yuv420p>::new(W as usize, H as usize)
+      .with_rgb(&mut rgb)
+      .unwrap()
+      .with_chroma_location(loc);
+    yuv420p_to(&src, false, ColorMatrix::Bt601, &mut sink).unwrap();
+    let prev_len = sink.chroma_prev.len();
+    drop(sink);
+    assert_eq!(
+      prev_len, 0,
+      "siting {loc:?} must not grow the vertical chroma lookback"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn bottom_chroma_prev_alloc_failure_leaves_outputs_untouched() {
+  use crate::resample::ResampleError;
+
+  // A bottom-sited decode whose vertical-lookback allocation fails must leave
+  // EVERY output buffer — luma included — untouched: the lookback is reserved
+  // (fallibly) BEFORE any output row is written.
+  let (yp, up, vp) = vramp_yuv420p();
+  let src = Yuv420pFrame::new(&yp, &up, &vp, W, H, W, W / 2, W / 2);
+  let mut luma = std::vec![0xABu8; (W * H) as usize];
+  let mut rgb = std::vec![0xCDu8; (W * H * 3) as usize];
+  let mut sink = MixedSinker::<Yuv420p>::new(W as usize, H as usize)
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_rgb(&mut rgb)
+    .unwrap()
+    .with_chroma_location(ChromaLocation::Bottom);
+
+  super::super::arm_chroma_prev_alloc_failure();
+  let err = yuv420p_to(&src, false, ColorMatrix::Bt601, &mut sink).unwrap_err();
+  drop(sink);
+
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "bottom chroma-lookback refusal must surface as a recoverable AllocationFailed, got {err:?}"
+  );
+  assert!(
+    luma.iter().all(|&b| b == 0xAB),
+    "luma must be untouched on the bottom lookback alloc-failure path"
+  );
+  assert!(
+    rgb.iter().all(|&b| b == 0xCD),
+    "rgb must be untouched on the bottom lookback alloc-failure path"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn bottom_luma_only_chroma_prev_alloc_failure_leaves_luma_untouched() {
+  use crate::resample::ResampleError;
+
+  // A LUMA-ONLY bottom-sited row also stages the vertical lookback (the
+  // always-maintain path), and its `reserve_420_chroma_prev` must run BEFORE the
+  // luma write — so a lookback alloc refusal on a luma-only frame leaves luma
+  // untouched (no partial write), exactly like the colour path.
+  let (yp, up, vp) = vramp_yuv420p();
+  let src = Yuv420pFrame::new(&yp, &up, &vp, W, H, W, W / 2, W / 2);
+  let mut luma = std::vec![0xABu8; (W * H) as usize];
+  let mut sink = MixedSinker::<Yuv420p>::new(W as usize, H as usize)
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_chroma_location(ChromaLocation::Bottom);
+
+  super::super::arm_chroma_prev_alloc_failure();
+  let err = yuv420p_to(&src, false, ColorMatrix::Bt601, &mut sink).unwrap_err();
+  drop(sink);
+
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "luma-only bottom lookback refusal must surface as a recoverable AllocationFailed, got {err:?}"
+  );
+  assert!(
+    luma.iter().all(|&b| b == 0xAB),
+    "luma must be untouched when the luma-only bottom lookback reservation fails"
+  );
+}
+
+// ---- bottom-sited lookback is row-order-safe (no STALE blend) ---------------
+
+/// The RGB a `Yuv444p` decode produces for ONE row built from the centered
+/// (horizontal-only, NO vertical) upsample of a given chroma row — the
+/// well-defined "clamp" result a bottom-sited EVEN row must fall back to when
+/// its vertical predecessor is not provably available. A genuine vertical blend
+/// (with whatever stale data) would diverge from this on a vertically-varying
+/// ramp.
+fn ref_centered_row_rgb(
+  yp: &[u8],
+  up: &[u8],
+  vp: &[u8],
+  chroma_row: usize,
+  out_row: usize,
+) -> Vec<u8> {
+  let w = W as usize;
+  let cw = w / 2;
+  let urow = ref_upsample_center_h(&up[chroma_row * cw..chroma_row * cw + cw], w);
+  let vrow = ref_upsample_center_h(&vp[chroma_row * cw..chroma_row * cw + cw], w);
+  // Decode just that one full-width 4:4:4 row.
+  let mut rgb = std::vec![0u8; w * 3];
+  crate::row::yuv_444_to_rgb_row(
+    &yp[out_row * w..out_row * w + w],
+    &urow,
+    &vrow,
+    &mut rgb,
+    w,
+    ColorMatrix::Bt601,
+    false,
+    true,
+  );
+  rgb
+}
+
+/// Drives a bottom-sited `Yuv420p` RGB decode by feeding an EXPLICIT sequence of
+/// row indices through the public `process` API (no walker), so out-of-order /
+/// skipped / replayed delivery can be exercised. Returns the full RGB plane;
+/// rows never fed stay zero. `begin_frame` is called first (resetting the
+/// vertical lookback).
+fn drive_bottom_rows(yp: &[u8], up: &[u8], vp: &[u8], rows: &[usize]) -> Vec<u8> {
+  let w = W as usize;
+  let h = H as usize;
+  let cw = w / 2;
+  let mut rgb = std::vec![0u8; w * h * 3];
+  let mut sink = MixedSinker::<Yuv420p>::new(w, h)
+    .with_rgb(&mut rgb)
+    .unwrap()
+    .with_chroma_location(ChromaLocation::Bottom);
+  crate::PixelSink::begin_frame(&mut sink, W, H).unwrap();
+  for &r in rows {
+    let cr = r / 2;
+    let row = Yuv420pRow::new(
+      &yp[r * w..r * w + w],
+      &up[cr * cw..cr * cw + cw],
+      &vp[cr * cw..cr * cw + cw],
+      r,
+      ColorMatrix::Bt601,
+      false,
+    );
+    crate::PixelSink::process(&mut sink, row).unwrap();
+  }
+  drop(sink);
+  rgb
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn bottom_even_row_without_valid_prev_clamps_not_stale() {
+  // Feed ONLY row 2 (an even row, pair 1) — its vertical predecessor (chroma row
+  // 0) was never staged, so the blend must CLAMP to the centered upsample of the
+  // current chroma row (row 1), not blend with whatever happens to be in the
+  // lookback buffer.
+  let (yp, up, vp) = vramp_yuv420p();
+  let w = W as usize;
+  let rgb = drive_bottom_rows(&yp, &up, &vp, &[2]);
+  let got_row2 = &rgb[2 * w * 3..3 * w * 3];
+  let want = ref_centered_row_rgb(&yp, &up, &vp, 1, 2);
+  assert_eq!(
+    got_row2,
+    &want[..],
+    "an even row with no valid vertical predecessor must clamp to the centered \
+     (horizontal-only) decode, never blend stale data"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn bottom_even_row_after_skip_clamps_not_stale() {
+  // Feed rows 0, 1 (pair 0 → lookback now holds chroma row 0), then JUMP to row
+  // 4 (even, pair 2) skipping pair 1. Row 4's predecessor is chroma row 1, but
+  // the lookback holds the STALE chroma row 0; the validity tag (Some(0) !=
+  // Some(2-1)) must force the clamp to the centered upsample of chroma row 2.
+  let (yp, up, vp) = vramp_yuv420p();
+  let w = W as usize;
+  let rgb = drive_bottom_rows(&yp, &up, &vp, &[0, 1, 4]);
+  let got_row4 = &rgb[4 * w * 3..5 * w * 3];
+  let want = ref_centered_row_rgb(&yp, &up, &vp, 2, 4);
+  assert_eq!(
+    got_row4,
+    &want[..],
+    "an even row whose lookback holds a non-adjacent (stale) chroma row must \
+     clamp, never blend the stale row"
+  );
+  // Sanity: the stale blend (chroma row 0 vs row 2) would be a DIFFERENT value,
+  // so the clamp is observably not a coincidence on this vertical ramp.
+  let stale = {
+    let cw = w / 2;
+    let mut e_u = std::vec![0u8; cw];
+    let mut e_v = std::vec![0u8; cw];
+    for c in 0..cw {
+      e_u[c] = (((up[c] as u32) + (up[2 * cw + c] as u32) + 1) >> 1) as u8;
+      e_v[c] = (((vp[c] as u32) + (vp[2 * cw + c] as u32) + 1) >> 1) as u8;
+    }
+    let urow = ref_upsample_center_h(&e_u, w);
+    let vrow = ref_upsample_center_h(&e_v, w);
+    let mut rgb = std::vec![0u8; w * 3];
+    crate::row::yuv_444_to_rgb_row(
+      &yp[4 * w..4 * w + w],
+      &urow,
+      &vrow,
+      &mut rgb,
+      w,
+      ColorMatrix::Bt601,
+      false,
+      true,
+    );
+    rgb
+  };
+  assert_ne!(
+    got_row4,
+    &stale[..],
+    "guard: the clamp must NOT coincide with the stale (row0xrow2) blend"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn bottom_two_frames_no_cross_frame_stale_blend() {
+  // Frame 1 decoded fully in order (chroma plane A) leaves chroma row A[last] in
+  // the lookback. After `begin_frame`, frame 2's row 0 (even, pair 0) has NO
+  // predecessor and must clamp to the centered upsample of plane B's row 0 — it
+  // must NOT box-blend B's row 0 with frame 1's last chroma row.
+  let w = W as usize;
+  let h = H as usize;
+  let cw = w / 2;
+  let ch = h / 2;
+  let (ya, ua, va) = vramp_yuv420p();
+  // Plane B: a distinct vertical ramp so a cross-frame blend would be visible.
+  let yb = std::vec![128u8; w * h];
+  let mut ub = std::vec![0u8; cw * ch];
+  let mut vb = std::vec![0u8; cw * ch];
+  for r in 0..ch {
+    for c in 0..cw {
+      ub[r * cw + c] = (200 - r * 30).max(16) as u8;
+      vb[r * cw + c] = (30 + r * 30).min(240) as u8;
+    }
+  }
+
+  let mut rgb = std::vec![0u8; w * h * 3];
+  let mut sink = MixedSinker::<Yuv420p>::new(w, h)
+    .with_rgb(&mut rgb)
+    .unwrap()
+    .with_chroma_location(ChromaLocation::Bottom);
+  // Frame 1, in order.
+  crate::PixelSink::begin_frame(&mut sink, W, H).unwrap();
+  for r in 0..h {
+    let cr = r / 2;
+    let row = Yuv420pRow::new(
+      &ya[r * w..r * w + w],
+      &ua[cr * cw..cr * cw + cw],
+      &va[cr * cw..cr * cw + cw],
+      r,
+      ColorMatrix::Bt601,
+      false,
+    );
+    crate::PixelSink::process(&mut sink, row).unwrap();
+  }
+  // Frame 2: begin_frame resets the lookback; feed only row 0 (plane B).
+  crate::PixelSink::begin_frame(&mut sink, W, H).unwrap();
+  let row0 = Yuv420pRow::new(
+    &yb[0..w],
+    &ub[0..cw],
+    &vb[0..cw],
+    0,
+    ColorMatrix::Bt601,
+    false,
+  );
+  crate::PixelSink::process(&mut sink, row0).unwrap();
+  drop(sink);
+
+  let got_row0 = &rgb[0..w * 3];
+  let want = ref_centered_row_rgb(&yb, &ub, &vb, 0, 0);
+  assert_eq!(
+    got_row0,
+    &want[..],
+    "frame 2 row 0 must clamp to plane B's centered decode, never blend frame 1's chroma"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn bottom_luma_only_then_late_color_box_blends() {
+  // The always-maintain lookback: rows 0, 1 are processed LUMA-ONLY (no colour
+  // attached), so the colour upsample helper never runs — yet the bottom-sited
+  // lookback must still be staged through them. After attaching RGB via
+  // `set_rgb`, row 2 (Bottom even, pair 1) must correctly box-blend chroma rows
+  // 0 and 1 (== the all-output reference), NOT clamp to chroma row 1.
+  let (yp, up, vp) = vramp_yuv420p();
+  let w = W as usize;
+  let h = H as usize;
+  let cw = w / 2;
+
+  // All-output reference: the full Bottom reconstruction decoded via Yuv444p.
+  let (u444, v444) = ref_full_chroma_bottom(&up, &vp);
+  let ref_src = Yuv444pFrame::new(&yp, &u444, &v444, W, H, W, W, W);
+  let mut rgb_ref = std::vec![0u8; w * h * 3];
+  let mut ref_sink = MixedSinker::<Yuv444p>::new(w, h)
+    .with_rgb(&mut rgb_ref)
+    .unwrap();
+  yuv444p_to(&ref_src, false, ColorMatrix::Bt601, &mut ref_sink).unwrap();
+  drop(ref_sink);
+
+  // Luma-only rows 0, 1, then attach RGB and decode rows 2, 3.
+  let mut luma = std::vec![0u8; w * h];
+  let mut rgb = std::vec![0u8; w * h * 3];
+  {
+    let mut sink = MixedSinker::<Yuv420p>::new(w, h)
+      .with_luma(&mut luma)
+      .unwrap()
+      .with_chroma_location(ChromaLocation::Bottom);
+    crate::PixelSink::begin_frame(&mut sink, W, H).unwrap();
+    let feed = |sink: &mut MixedSinker<'_, Yuv420p>, r: usize| {
+      let cr = r / 2;
+      let row = Yuv420pRow::new(
+        &yp[r * w..r * w + w],
+        &up[cr * cw..cr * cw + cw],
+        &vp[cr * cw..cr * cw + cw],
+        r,
+        ColorMatrix::Bt601,
+        false,
+      );
+      crate::PixelSink::process(sink, row).unwrap();
+    };
+    feed(&mut sink, 0);
+    feed(&mut sink, 1);
+    // Late colour attach.
+    sink.set_rgb(&mut rgb).unwrap();
+    feed(&mut sink, 2);
+    feed(&mut sink, 3);
+  }
+
+  // Row 2 (Bottom even) must equal the all-output reference's row 2 — proving
+  // the lookback (staged through the luma-only rows 0, 1) drove the box blend.
+  let got_row2 = &rgb[2 * w * 3..3 * w * 3];
+  assert_eq!(
+    got_row2,
+    &rgb_ref[2 * w * 3..3 * w * 3],
+    "a luma-only-then-late-colour row 2 must box-blend chroma rows 0,1 (all-output reference)"
+  );
+  // And it must NOT be the clamp (centered upsample of chroma row 1 only) — the
+  // clamp is what an unmaintained lookback would have produced.
+  let clamp = ref_centered_row_rgb(&yp, &up, &vp, 1, 2);
+  assert_ne!(
+    got_row2,
+    &clamp[..],
+    "row 2 must NOT clamp — the lookback was maintained through the luma-only rows"
+  );
+}
+
+// ---- no-output rows are invisible to the lookback (no-output invariant) ------
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn bottom_no_output_row_does_not_grow_chroma_prev() {
+  // A bottom-sited sink with NO outputs attached must honour the repo-wide
+  // no-output invariant: every `process` call returns before the preflight, so
+  // the vertical lookback is NEVER reserved (a no-output row must allocate
+  // nothing — not even the lookback).
+  let (yp, up, vp) = vramp_yuv420p();
+  let src = Yuv420pFrame::new(&yp, &up, &vp, W, H, W, W / 2, W / 2);
+  let mut sink = MixedSinker::<Yuv420p>::new(W as usize, H as usize)
+    .with_chroma_location(ChromaLocation::Bottom);
+  yuv420p_to(&src, false, ColorMatrix::Bt601, &mut sink).unwrap();
+  let prev_len = sink.chroma_prev.len();
+  drop(sink);
+  assert_eq!(
+    prev_len, 0,
+    "a no-output bottom-sited row must not reserve the vertical lookback"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn bottom_no_output_rows_do_not_enable_late_color_blend() {
+  // The no-output invariant's correctness twin: rows 0, 1 are processed with NO
+  // outputs (invisible — they must not prime the lookback). After attaching RGB
+  // via `set_rgb`, row 2 (Bottom even, pair 1) must NOT box-blend through those
+  // invisible rows; with no legitimately-output predecessor staged, it CLAMPS to
+  // the centered upsample of the current chroma row. (Contrast
+  // `bottom_luma_only_then_late_color_box_blends`, where rows 0,1 ARE outputs —
+  // luma — and so DO prime the lookback and the later row box-blends.)
+  let (yp, up, vp) = vramp_yuv420p();
+  let w = W as usize;
+  let cw = w / 2;
+
+  let mut rgb = std::vec![0u8; w * H as usize * 3];
+  {
+    let mut sink =
+      MixedSinker::<Yuv420p>::new(w, H as usize).with_chroma_location(ChromaLocation::Bottom);
+    crate::PixelSink::begin_frame(&mut sink, W, H).unwrap();
+    let feed = |sink: &mut MixedSinker<'_, Yuv420p>, r: usize| {
+      let cr = r / 2;
+      let row = Yuv420pRow::new(
+        &yp[r * w..r * w + w],
+        &up[cr * cw..cr * cw + cw],
+        &vp[cr * cw..cr * cw + cw],
+        r,
+        ColorMatrix::Bt601,
+        false,
+      );
+      crate::PixelSink::process(sink, row).unwrap();
+    };
+    // Rows 0, 1: NO output attached — invisible, must not prime the lookback.
+    feed(&mut sink, 0);
+    feed(&mut sink, 1);
+    // Late colour attach, then decode rows 2, 3.
+    sink.set_rgb(&mut rgb).unwrap();
+    feed(&mut sink, 2);
+    feed(&mut sink, 3);
+  }
+
+  // Row 2 must CLAMP (centered upsample of chroma row 1), NOT box-blend chroma
+  // rows 0,1 — because the predecessor (chroma row 0) only ever arrived through
+  // invisible no-output rows that left the lookback unprimed.
+  let got_row2 = &rgb[2 * w * 3..3 * w * 3];
+  let clamp = ref_centered_row_rgb(&yp, &up, &vp, 1, 2);
+  assert_eq!(
+    got_row2,
+    &clamp[..],
+    "a no-output predecessor row must not enable a later colour even row to box-blend through it"
+  );
+  // Guard: the box-blend (the all-output reconstruction) is a DIFFERENT value,
+  // so the clamp is observably the no-output-invisible behaviour, not a fluke.
+  let (u444, v444) = ref_full_chroma_bottom(&up, &vp);
+  let ref_src = Yuv444pFrame::new(&yp, &u444, &v444, W, H, W, W, W);
+  let mut rgb_ref = std::vec![0u8; w * H as usize * 3];
+  let mut ref_sink = MixedSinker::<Yuv444p>::new(w, H as usize)
+    .with_rgb(&mut rgb_ref)
+    .unwrap();
+  yuv444p_to(&ref_src, false, ColorMatrix::Bt601, &mut ref_sink).unwrap();
+  drop(ref_sink);
+  assert_ne!(
+    got_row2,
+    &rgb_ref[2 * w * 3..3 * w * 3],
+    "guard: the clamp must differ from the box-blend, so the no-output rows were truly invisible"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "constructs an absurd geometry; the no-op contract is the point, not Miri"
+)]
+fn bottom_no_output_row_large_geometry_does_not_overflow() {
+  // The no-output guard must run BEFORE the `idx * w` single-plane offset
+  // arithmetic. A no-output `process` call never ran an attach-time
+  // `w x h x 1` validation (nothing was attached), so on a 32-bit target
+  // (`usize == u32`) an absurd geometry where `idx * w` exceeds `u32::MAX`
+  // would overflow that offset and panic under overflow checks. With no outputs
+  // attached, `process` must return `Ok(())` having done NO row math and NO
+  // allocation. On 64-bit (`idx * w` fits `u64`) this documents the
+  // no-output-is-a-pure-no-op contract and trivially passes; on the i686 /
+  // overflow-check CI it catches a regression if the guard ever moves back below
+  // the arithmetic.
+  //
+  // w = 4, idx = 2^30 → idx * w = 2^32 = u32::MAX + 1 (overflows u32).
+  let w: usize = 4;
+  let idx: usize = 1 << 30; // 1_073_741_824
+  let h: usize = idx + 1; // idx < height so the row-index check passes
+  assert!(
+    (idx as u64) * (w as u64) > u32::MAX as u64,
+    "test geometry must exceed u32::MAX to exercise the 32-bit offset overflow"
+  );
+
+  let y = std::vec![128u8; w];
+  let c = std::vec![128u8; w / 2];
+  let mut sink = MixedSinker::<Yuv420p>::new(w, h).with_chroma_location(ChromaLocation::Bottom);
+  // No outputs attached: the guard returns before `idx * w` (no overflow panic)
+  // and before the bottom preflight (no allocation).
+  let row = Yuv420pRow::new(&y, &c, &c, idx, ColorMatrix::Bt601, false);
+  crate::PixelSink::process(&mut sink, row).unwrap();
+  let prev_len = sink.chroma_prev.len();
+  drop(sink);
+  assert_eq!(
+    prev_len, 0,
+    "a no-output large-geometry row must allocate nothing (lookback included)"
   );
 }

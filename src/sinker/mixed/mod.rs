@@ -158,13 +158,11 @@ pub use mediaframe::{
 /// decode already places chroma at the left-column (phase-0) position, so
 /// they need no new interpolation.
 ///
-/// The **vertical** phase (top / center / bottom) is intentionally not
-/// consumed here: mediaframe's 4:2:0 walker feeds the sink one chroma row
-/// per luma row (`chroma_row = row / 2`), so vertical-phase interpolation
-/// would need two chroma rows (a mediaframe-side change or a stateful
-/// row buffer). It is deferred to a follow-up; this PR corrects the
-/// horizontal axis, which is where the common MPEG-2-vs-MPEG-1 chroma shift
-/// lives.
+/// This predicate consumes only the **horizontal** axis; the **vertical** phase
+/// is a separate concern (see [`chroma_420_bottom_sited_v`]) because mediaframe's
+/// 4:2:0 walker streams the sink one chroma row per luma row
+/// (`chroma_row = row / 2`), so a vertical blend needs an adjacent chroma row the
+/// single-row `process` call does not directly hold.
 #[cfg(feature = "yuv-planar")]
 #[inline]
 pub(super) const fn chroma_420_center_sited_h(loc: crate::ChromaLocation) -> bool {
@@ -172,6 +170,39 @@ pub(super) const fn chroma_420_center_sited_h(loc: crate::ChromaLocation) -> boo
     loc,
     crate::ChromaLocation::Center | crate::ChromaLocation::Top | crate::ChromaLocation::Bottom
   )
+}
+
+/// Whether `loc` is the FFmpeg `AVCHROMA_LOC_BOTTOM` (`Bottom`) siting — chroma
+/// co-sited with the **bottom** luma row of each vertical pair (`v = 1`) AND
+/// horizontally centered (`h = 0.5`); the full
+/// [`ChromaLocation`](crate::ChromaLocation) → sample-phase map is in
+/// [`chroma_420_center_sited_h`]'s table. At `v = 1` the chroma sample sits on
+/// the lower luma row, so:
+///
+/// - the **even** luma row `2i` lies halfway between chroma rows `i-1` and `i`,
+///   and its reconstructed chroma is the vertical box average of those two
+///   rows, fused with the `h = 0.5` horizontal phase by
+///   [`chroma_upsample_420_bottom_even_h`](crate::row::scalar::chroma_upsample_420_bottom_even_h);
+/// - the **odd** luma row `2i+1` is co-sited with chroma row `i`, so it needs no
+///   vertical blend and keeps the plain horizontal centered upsample.
+///
+/// `Bottom` is the one siting whose **vertical** phase the streaming sink can
+/// reconstruct with a **backward** one-row chroma lookback: the even row's
+/// `c[i-1]` is the *previous* chroma row (already streamed), so the blend is
+/// causal, and because `Bottom` is also horizontally centered it rides the same
+/// full-width staging the `h = 0.5` identity path already uses. The `v = 0`
+/// (`Top` / `TopLeft`) and `v = 0.5` (`Center` / `Left`) phases instead need the
+/// *next* chroma row for the odd output row — which the row-at-a-time `process`
+/// cannot see without a forward delay line — and `BottomLeft` (`h = 0`, `v = 1`)
+/// would need a horizontal co-sited full-width staging the identity path does
+/// not have; those are tracked as a follow-up and keep their current decode
+/// (`Center` / `Top` still apply their horizontal phase via
+/// [`chroma_420_center_sited_h`]). `Left` (the `yuv420p` default, `v = 0.5`) and
+/// every unspecified siting keep the byte-identical vertical-replicate decode.
+#[cfg(feature = "yuv-planar")]
+#[inline]
+pub(super) const fn chroma_420_bottom_sited_v(loc: crate::ChromaLocation) -> bool {
+  matches!(loc, crate::ChromaLocation::Bottom)
 }
 
 /// Frame dimensions handed to `begin_frame` don't match the sinker's
@@ -2618,6 +2649,36 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// `yuv-semi-planar`).
   #[cfg(feature = "yuv-planar")]
   chroma_full: Vec<u8>,
+  /// One-row chroma **lookback** for the bottom-sited (`AVCHROMA_LOC_BOTTOM`)
+  /// vertical-phase 4:2:0 upsample (#302). Holds a copy of a chroma row's
+  /// half-width U then V back-to-back (`width` `u8`: `[0..width/2]` = `U`,
+  /// `[width/2..width]` = `V`), so an *even* output luma row `2i` can vertically
+  /// box-blend chroma rows `i-1` (here) and `i` (the current row) before the
+  /// horizontal centered upsample. WHICH chroma row this buffer currently holds
+  /// is tracked by [`Self::chroma_prev_row`]; the blend only trusts it when it
+  /// holds exactly the wanted predecessor `i-1`, otherwise it falls back to the
+  /// top-edge clamp (current row as its own predecessor) — so a direct
+  /// `process` caller that replays / skips / reorders rows or attaches colour
+  /// late can never blend STALE chroma from an older pair or a previous frame.
+  /// Lazily grown to `width` `u8` on the first bottom-sited chroma row; empty
+  /// otherwise (only `ChromaLocation::Bottom` touches it — every other siting,
+  /// the default included, keeps the vertical-replicate decode). Gated to
+  /// `yuv-planar`, like [`Self::chroma_full`] which it feeds.
+  #[cfg(feature = "yuv-planar")]
+  chroma_prev: Vec<u8>,
+  /// Which chroma row [`Self::chroma_prev`] currently holds, or `None` when it
+  /// holds nothing trustworthy (`MixedSinker::new`, after every
+  /// [`begin_frame`](crate::PixelSink::begin_frame), and before the first
+  /// bottom-sited row) — the validity tag that makes the bottom-sited
+  /// vertical-phase lookback row-order-safe (#302). The walker feeds rows in
+  /// order so it tracks `idx / 2`, but a direct `process` caller can break that
+  /// sequence; the bottom even-row blend at pair `k` checks this equals
+  /// `Some(k - 1)` and clamps (current row as its own predecessor) when it does
+  /// not, never blending stale data. Reset to `None` in `begin_frame` so no
+  /// stale row leaks across frames. Gated to `yuv-planar`, like
+  /// [`Self::chroma_prev`].
+  #[cfg(feature = "yuv-planar")]
+  chroma_prev_row: Option<usize>,
   /// Full-width `u16` chroma staging for the **high-bit** planar 4:2:0
   /// siting-aware upsample (`Yuv420p9` … `Yuv420p16`, #302) — the `u16` twin of
   /// [`Self::chroma_full`]. Holds the horizontally upsampled U then V planes
@@ -3699,6 +3760,10 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       rgb_scratch: Vec::new(),
       #[cfg(feature = "yuv-planar")]
       chroma_full: Vec::new(),
+      #[cfg(feature = "yuv-planar")]
+      chroma_prev: Vec::new(),
+      #[cfg(feature = "yuv-planar")]
+      chroma_prev_row: None,
       #[cfg(feature = "yuv-planar")]
       chroma_full_u16: Vec::new(),
       #[cfg(any(feature = "yuv-packed", feature = "gray"))]
@@ -5108,6 +5173,27 @@ std::thread_local! {
 #[cfg(all(test, feature = "std", feature = "yuv-planar"))]
 pub(crate) fn arm_chroma_full_alloc_failure() {
   FORCE_CHROMA_FULL_ALLOC_FAILURE.with(|f| f.set(true));
+}
+
+// Test-only failpoint for the bottom-sited vertical-phase 4:2:0 chroma lookback
+// grow (#302), mirroring `FORCE_CHROMA_FULL_ALLOC_FAILURE`. Gated on `std` +
+// `yuv-planar` to match its consumer — the `chroma_siting_420` bottom-sited
+// atomicity test. `reserve_420_chroma_prev` (in `planar_8bit`) reads it via
+// `super::`.
+#[cfg(all(test, feature = "std", feature = "yuv-planar"))]
+std::thread_local! {
+  static FORCE_CHROMA_PREV_ALLOC_FAILURE: core::cell::Cell<bool> =
+    const { core::cell::Cell::new(false) };
+}
+
+/// Arms the `reserve_420_chroma_prev` (in `planar_8bit`) allocation failpoint
+/// for the **next** call on the current thread, simulating a recoverable
+/// allocator refusal of the bottom-sited vertical-phase chroma-lookback grow.
+/// Consumed (take-on-read) by that call so it fires exactly once and never leaks
+/// across tests. Test-only.
+#[cfg(all(test, feature = "std", feature = "yuv-planar"))]
+pub(crate) fn arm_chroma_prev_alloc_failure() {
+  FORCE_CHROMA_PREV_ALLOC_FAILURE.with(|f| f.set(true));
 }
 
 /// Pick an RGB row buffer for the kernel to write into: caller's RGB

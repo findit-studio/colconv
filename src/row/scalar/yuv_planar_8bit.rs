@@ -338,6 +338,73 @@ pub(crate) fn chroma_upsample_420_center_h(c_half: &[u8], c_full: &mut [u8], wid
   }
 }
 
+/// Vertically-blended twin of [`chroma_upsample_420_center_h`] for the
+/// **bottom-sited** vertical phase of an *even* output luma row (#302): the
+/// FFmpeg `AVCHROMA_LOC_BOTTOM` (`Bottom`) vertical position `v = 1`, where the
+/// chroma sample is co-sited with the *bottom* luma row of each pair. The even
+/// luma row `2i` then sits halfway between chroma rows `i-1` and `i`, so its
+/// reconstructed chroma is the **vertical box average** of the previous and
+/// current half-width chroma rows
+///
+/// ```text
+///   e[j] = (prev[j] + cur[j] + 1) >> 1      (top edge: prev clamped to cur)
+/// ```
+///
+/// fed into the **same** horizontal center phase as
+/// [`chroma_upsample_420_center_h`] (so `Bottom` keeps its `h = 0.5` centered
+/// horizontal reconstruction):
+///
+/// ```text
+///   even col 2j   → (e[j-1] + 3·e[j] + 2) >> 2   (e[-1]    clamped to e[0])
+///   odd  col 2j+1 → (3·e[j] + e[j+1] + 2) >> 2   (e[half]  clamped to e[half-1])
+/// ```
+///
+/// The vertical blend and the horizontal `1/4`–`3/4` reconstruction are fused
+/// into one pass, so no half-width vertical-blend scratch is needed — only the
+/// caller's one-row chroma lookback (`prev_half`). The **odd** luma row `2i+1`
+/// is co-sited with chroma row `i` (`v = 1`), so it needs no vertical blend and
+/// reuses [`chroma_upsample_420_center_h`] on `cur_half` directly. The result is
+/// a full-width chroma row the caller feeds to the existing 4:4:4 decode, so the
+/// bottom-sited path reuses the fully-SIMD 4:4:4 kernels and stays bit-identical
+/// per tier.
+///
+/// # Panics (debug builds)
+///
+/// - `width` must be even (4:2:0 pairs pixel columns).
+/// - `prev_half.len() >= width / 2`, `cur_half.len() >= width / 2`,
+///   `c_full.len() >= width`.
+// Gated like [`chroma_upsample_420_center_h`]: reachable only through the
+// bottom-sited `Yuv420p` identity path, which stages the full-width chroma in a
+// `Vec` scratch (so heap allocation is available).
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn chroma_upsample_420_bottom_even_h(
+  prev_half: &[u8],
+  cur_half: &[u8],
+  c_full: &mut [u8],
+  width: usize,
+) {
+  debug_assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
+  debug_assert!(prev_half.len() >= width / 2, "prev_half row too short");
+  debug_assert!(cur_half.len() >= width / 2, "cur_half row too short");
+  debug_assert!(c_full.len() >= width, "c_full row too short");
+
+  // Vertical box blend of the previous and current chroma rows, evaluated
+  // per chroma column (`e[j]`), then the horizontal center phase across it.
+  let half = width / 2;
+  let vblend = |j: usize| -> u32 { ((prev_half[j] as u32) + (cur_half[j] as u32) + 1) >> 1 };
+  for j in 0..half {
+    // `e[j-1]` clamps to `e[0]` at the left edge; `e[j+1]` clamps to the last
+    // sample at the right edge — boundary replication, matching the horizontal
+    // sibling.
+    let left = vblend(j.saturating_sub(1));
+    let mid = vblend(j);
+    let right = vblend(if j + 1 < half { j + 1 } else { j });
+    c_full[2 * j] = ((left + 3 * mid + 2) >> 2) as u8;
+    c_full[2 * j + 1] = ((3 * mid + right + 2) >> 2) as u8;
+  }
+}
+
 /// `u16` twin of [`chroma_upsample_420_center_h`] for the **high-bit** planar
 /// 4:2:0 formats (`Yuv420p9` … `Yuv420p16`, #302). Same MPEG-1 / JPEG
 /// phase-0.5 `1/4`–`3/4` reconstruction with edge clamp, but on `u16` chroma.
