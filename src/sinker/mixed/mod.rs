@@ -2911,6 +2911,19 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// until the #302 rollout wires them in.
   #[cfg(feature = "yuv-planar")]
   chroma_location: crate::ChromaLocation,
+  /// Source colour [`Primaries`](crate::Primaries) — **sink-consumed**, like
+  /// [`chroma_location`](Self::chroma_location): mediaframe's YUV row carries
+  /// only range + matrix, not the primaries, so the
+  /// [`ColorMatrix::ChromaDerivedNcl`](crate::ColorMatrix::ChromaDerivedNcl)
+  /// decode (whose `Kr` / `Kb` are *derived* from the primaries) reads them
+  /// here. Defaults to [`Primaries::Unspecified`](crate::Primaries::Unspecified)
+  /// (no chromaticities → the prior BT.709 fallback, byte-identical to the
+  /// pre-#303 behaviour). Set via [`Self::with_color_spec`] /
+  /// [`Self::set_color_spec`]. Currently consulted by the planar 8-bit
+  /// `Yuv420p` identity RGB / RGBA path; other families and the resampling
+  /// tiers keep the matrix-tag coefficients until wired in.
+  #[cfg(feature = "yuv-planar")]
+  primaries: crate::Primaries,
   /// Per-frame accumulator for the RFC #238 [`AveragingDomain::Linear`]
   /// linear-light tail (planar 8-bit YUV family). Lazily created on the
   /// first output-bearing row of a linear-domain frame; reset to `None` per
@@ -3695,6 +3708,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       #[cfg(feature = "yuv-planar")]
       chroma_location: crate::ChromaLocation::Unspecified,
       #[cfg(feature = "yuv-planar")]
+      primaries: crate::Primaries::Unspecified,
+      #[cfg(feature = "yuv-planar")]
       linear_mode: LinearMode::DisplayReferred,
       #[cfg(all(feature = "yuv-planar", feature = "rgb"))]
       linear_light_frame: None,
@@ -4363,6 +4378,17 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
     self.chroma_location
   }
 
+  /// The source colour [`Primaries`](crate::Primaries) carried via
+  /// [`Self::with_color_spec`] — the coefficient source for the
+  /// [`ColorMatrix::ChromaDerivedNcl`](crate::ColorMatrix::ChromaDerivedNcl)
+  /// decode (#303). Defaults to
+  /// [`Primaries::Unspecified`](crate::Primaries::Unspecified).
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn primaries(&self) -> crate::Primaries {
+    self.primaries
+  }
+
   /// Sets the chroma sample location in place. See
   /// [`Self::with_chroma_location`] for the consuming builder variant.
   #[cfg(feature = "yuv-planar")]
@@ -4403,21 +4429,25 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn set_color_spec(&mut self, spec: crate::ColorSpec) -> &mut Self {
     self.chroma_location = spec.chroma_location();
+    self.primaries = spec.primaries();
     self
   }
 
   /// Configures the sink from a resolved [`ColorSpec`](crate::ColorSpec),
-  /// completing the **end-to-end ColorSpec decode path** (#301 / #302).
+  /// completing the **end-to-end ColorSpec decode path** (#301 / #302 / #303).
   ///
   /// A `ColorSpec` splits across two consumers: its
   /// [`matrix`](crate::ColorSpec::matrix) and
   /// [`full_range`](crate::ColorSpec::full_range) are **walker-consumed** —
   /// route them via [`YuvOptions::from_color_spec`](crate::YuvOptions::from_color_spec)
   /// to the `*_to` walk — while its
-  /// [`chroma_location`](crate::ColorSpec::chroma_location) is
-  /// **sink-consumed** (mediaframe's YUV row carries only range + matrix, not
-  /// the siting). This builder threads the latter so the **same `spec`**
-  /// drives both halves:
+  /// [`chroma_location`](crate::ColorSpec::chroma_location) and
+  /// [`primaries`](crate::ColorSpec::primaries) are **sink-consumed**
+  /// (mediaframe's YUV row carries only range + matrix, neither the siting nor
+  /// the primaries). This builder threads the latter pair so the **same
+  /// `spec`** drives both halves — the `primaries` feed the
+  /// [`ColorMatrix::ChromaDerivedNcl`](crate::ColorMatrix::ChromaDerivedNcl)
+  /// decode (#303), whose `Kr` / `Kb` are derived from them:
   ///
   /// ```
   /// # #[cfg(all(feature = "yuv-planar", feature = "rgb"))] {

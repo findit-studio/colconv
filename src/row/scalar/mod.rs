@@ -30,6 +30,8 @@
 //! per-arch SIMD-vs-scalar parity tests.
 
 use crate::ColorMatrix;
+#[cfg(feature = "yuv-planar")]
+use crate::Primaries;
 
 // Per-conversion-family submodules. Each holds a self-contained
 // cluster of scalar reference kernels; `mod.rs` retains only the
@@ -570,7 +572,7 @@ pub(super) const fn range_params_n<const BITS: u32, const OUT_BITS: u32>(
   feature = "yuv-semi-planar",
   feature = "yuva",
 ))]
-pub(super) struct Coefficients {
+pub(crate) struct Coefficients {
   r_u: i32,
   r_v: i32,
   g_u: i32,
@@ -691,6 +693,138 @@ impl Coefficients {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub(super) const fn b_v(&self) -> i32 {
     self.b_v
+  }
+}
+
+// ---- Chromaticity-derived (H.273 MatrixCoefficients = 12) ----------------
+
+/// Chromaticity-derived **non-constant-luminance** luma weights
+/// `(Kr, Kg, Kb)` for a set of colour [`Primaries`], per ITU-T H.273
+/// `MatrixCoefficients = 12` ([`ColorMatrix::ChromaDerivedNcl`]).
+///
+/// The weights are the **Y row** of the RGB→XYZ matrix built from the
+/// primaries' CIE 1931 `xy` chromaticities and reference white point — the
+/// standard primary-scaling construction (ITU-R BT.709-6 §3 / BT.2020-2;
+/// identical math to `examples/derive_xyz_matrices.rs`). Solving
+/// `M · S = W_xyz` (with the unscaled primary `XYZ` vectors as the columns
+/// of `M` and the white point's luminance normalised to 1) yields
+/// `S = (Kr, Kg, Kb)`, which therefore sums to 1.
+///
+/// Returns [`None`] for primaries that carry no chromaticities / white point
+/// ([`Primaries::Unspecified`] / [`Primaries::Unknown`]), or in the singular
+/// case (unreachable for any real, non-degenerate primary set).
+///
+/// All arithmetic is `f64` using only `+ - * /` — no transcendental
+/// functions — so it stays `no_std` / `libm`-free. It is evaluated once per
+/// frame at coefficient-resolution time, never per pixel.
+#[cfg(feature = "yuv-planar")]
+pub(crate) fn chroma_derived_luma_weights(primaries: Primaries) -> Option<(f64, f64, f64)> {
+  let rgb = primaries.chromaticities()?;
+  let white = primaries.white_point()?;
+  // ST 2086 raw units → CIE `xy` (raw / 50000.0), then the unscaled primary
+  // `XYZ` at unit luminance: `(x/y, 1, (1 - x - y) / y)`.
+  let xyz = |raw_x: u32, raw_y: u32| {
+    let x = raw_x as f64 / 50_000.0;
+    let y = raw_y as f64 / 50_000.0;
+    [x / y, 1.0, (1.0 - x - y) / y]
+  };
+  let r = xyz(rgb[0].x(), rgb[0].y());
+  let g = xyz(rgb[1].x(), rgb[1].y());
+  let b = xyz(rgb[2].x(), rgb[2].y());
+  let w = xyz(white.x(), white.y());
+
+  // `M` has the unscaled primary `XYZ` vectors as columns; solve
+  // `M · S = W_xyz` for `S = (Kr, Kg, Kb)` via the cofactor inverse.
+  let m = [[r[0], g[0], b[0]], [r[1], g[1], b[1]], [r[2], g[2], b[2]]];
+  let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+    - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+    + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+  let det_abs = if det < 0.0 { -det } else { det };
+  if det_abs < 1e-30 {
+    return None;
+  }
+  let inv_det = 1.0 / det;
+  // Rows of `M^-1` (adjugate / det), then `S = M^-1 · W_xyz`.
+  let i00 = (m[1][1] * m[2][2] - m[1][2] * m[2][1]) * inv_det;
+  let i01 = -(m[0][1] * m[2][2] - m[0][2] * m[2][1]) * inv_det;
+  let i02 = (m[0][1] * m[1][2] - m[0][2] * m[1][1]) * inv_det;
+  let i10 = -(m[1][0] * m[2][2] - m[1][2] * m[2][0]) * inv_det;
+  let i11 = (m[0][0] * m[2][2] - m[0][2] * m[2][0]) * inv_det;
+  let i12 = -(m[0][0] * m[1][2] - m[0][2] * m[1][0]) * inv_det;
+  let i20 = (m[1][0] * m[2][1] - m[1][1] * m[2][0]) * inv_det;
+  let i21 = -(m[0][0] * m[2][1] - m[0][1] * m[2][0]) * inv_det;
+  let i22 = (m[0][0] * m[1][1] - m[0][1] * m[1][0]) * inv_det;
+  let kr = i00 * w[0] + i01 * w[1] + i02 * w[2];
+  let kg = i10 * w[0] + i11 * w[1] + i12 * w[2];
+  let kb = i20 * w[0] + i21 * w[1] + i22 * w[2];
+  Some((kr, kg, kb))
+}
+
+#[cfg(feature = "yuv-planar")]
+impl Coefficients {
+  /// Q15 round-half-away-from-zero of a real coefficient `c` (i.e.
+  /// `round(c · 32768)`). Avoids `f64::round` so the derivation needs no
+  /// `libm` under `no_std`.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn q15(c: f64) -> i32 {
+    if c < 0.0 {
+      (c * 32768.0 - 0.5) as i32
+    } else {
+      (c * 32768.0 + 0.5) as i32
+    }
+  }
+
+  /// Builds the YCbCr→RGB affine [`Coefficients`] from non-constant-
+  /// luminance luma weights `(kr, kg, kb)` using the standard BT.601 /
+  /// BT.709-form relations:
+  ///
+  /// ```text
+  ///   r_u = 0          r_v = 2·(1 - kr)
+  ///   g_u = -2·(1 - kb)·kb / kg     g_v = -2·(1 - kr)·kr / kg
+  ///   b_u = 2·(1 - kb)             b_v = 0
+  /// ```
+  ///
+  /// Each entry is rounded to Q15. `kg` is non-zero for every real primary
+  /// set, so the division is well-defined.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(crate) fn from_luma_weights(kr: f64, kg: f64, kb: f64) -> Self {
+    Self {
+      r_u: 0,
+      r_v: Self::q15(2.0 * (1.0 - kr)),
+      g_u: Self::q15(-2.0 * (1.0 - kb) * kb / kg),
+      g_v: Self::q15(-2.0 * (1.0 - kr) * kr / kg),
+      b_u: Self::q15(2.0 * (1.0 - kb)),
+      b_v: 0,
+    }
+  }
+
+  /// [`for_matrix`](Self::for_matrix), extended to resolve
+  /// [`ColorMatrix::ChromaDerivedNcl`] (ITU-T H.273 `MatrixCoefficients =
+  /// 12`) from the signalled colour [`Primaries`].
+  ///
+  /// `ChromaDerivedNcl` is **affine**: its `Kr` / `Kb` are *derived* from
+  /// the primaries' chromaticities ([`chroma_derived_luma_weights`]) and
+  /// then drive the same standard YCbCr formula as the hard-coded matrices
+  /// (via [`from_luma_weights`](Self::from_luma_weights)). Every other
+  /// matrix ignores `primaries` and resolves byte-identically to
+  /// [`for_matrix`](Self::for_matrix).
+  ///
+  /// `ChromaDerivedNcl` with primaries that carry no chromaticities
+  /// (`Unspecified` / `Unknown`) falls back to the BT.709 coefficients
+  /// [`for_matrix`](Self::for_matrix) already returns for that matrix,
+  /// preserving the prior behaviour.
+  ///
+  /// Cost is one 3×3 solve per call — resolved per row/frame, never per
+  /// pixel — so it is negligible against the conversion itself.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(crate) fn for_matrix_with_primaries(matrix: ColorMatrix, primaries: Primaries) -> Self {
+    match matrix {
+      ColorMatrix::ChromaDerivedNcl => match chroma_derived_luma_weights(primaries) {
+        Some((kr, kg, kb)) => Self::from_luma_weights(kr, kg, kb),
+        None => Self::for_matrix(ColorMatrix::Bt709),
+      },
+      other => Self::for_matrix(other),
+    }
   }
 }
 

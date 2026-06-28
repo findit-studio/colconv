@@ -251,6 +251,10 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
     // Chroma siting (#302): drives the identity-plan horizontal chroma
     // phase. `Copy`, so read it out before the field split-borrow below.
     let chroma_location = self.chroma_location;
+    // Source primaries (#303): the `ChromaDerivedNcl` decode derives its
+    // Kr/Kb from these. `Copy`, read before the split-borrow; consumed by the
+    // identity-plan RGB / RGBA path (non-`ChromaDerivedNcl` matrices ignore it).
+    let primaries = self.primaries;
 
     // Defense in depth: `begin_frame` already validated frame‑level
     // dimensions, so these checks are unreachable from the walker.
@@ -772,24 +776,26 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
       if center_sited {
         let (u_full, v_full) =
           upsample_420_chroma_center_h(chroma_full, row.u_half(), row.v_half(), w);
-        yuv_444_to_rgba_row(
+        yuv_444_to_rgba_row_primaries(
           row.y(),
           u_full,
           v_full,
           rgba_row,
           w,
           row.matrix(),
+          primaries,
           row.full_range(),
           use_simd,
         );
       } else {
-        yuv_420_to_rgba_row(
+        yuv_420_to_rgba_row_primaries(
           row.y(),
           row.u_half(),
           row.v_half(),
           rgba_row,
           w,
           row.matrix(),
+          primaries,
           row.full_range(),
           use_simd,
         );
@@ -828,24 +834,26 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
     if center_sited {
       let (u_full, v_full) =
         upsample_420_chroma_center_h(chroma_full, row.u_half(), row.v_half(), w);
-      yuv_444_to_rgb_row(
+      yuv_444_to_rgb_row_primaries(
         row.y(),
         u_full,
         v_full,
         rgb_row,
         w,
         row.matrix(),
+        primaries,
         row.full_range(),
         use_simd,
       );
     } else {
-      yuv_420_to_rgb_row(
+      yuv_420_to_rgb_row_primaries(
         row.y(),
         row.u_half(),
         row.v_half(),
         rgb_row,
         w,
         row.matrix(),
+        primaries,
         row.full_range(),
         use_simd,
       );

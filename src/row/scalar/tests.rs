@@ -1309,3 +1309,248 @@ fn yuv420_smpte170m_decodes_identically_to_bt601() {
   assert_eq!(rgb_170m, rgb_601, "Smpte170M must match BT.601");
   assert_ne!(rgb_170m, rgb_709, "Smpte170M must differ from BT.709");
 }
+
+// ---- ChromaDerivedNcl primaries-derived coefficients (#303) -----------
+
+/// Asserts every Q15 entry of `got` is within `tol` of `want`.
+#[cfg(feature = "yuv-planar")]
+fn assert_coeffs_within(got: &Coefficients, want: &Coefficients, tol: i32, ctx: &str) {
+  for (name, g, w) in [
+    ("r_u", got.r_u(), want.r_u()),
+    ("r_v", got.r_v(), want.r_v()),
+    ("g_u", got.g_u(), want.g_u()),
+    ("g_v", got.g_v(), want.g_v()),
+    ("b_u", got.b_u(), want.b_u()),
+    ("b_v", got.b_v(), want.b_v()),
+  ] {
+    assert!(
+      (g - w).abs() <= tol,
+      "{ctx}: {name} got {g} want {w} (tol {tol})"
+    );
+  }
+}
+
+/// THE GATE (BT.709): `ChromaDerivedNcl` with BT.709 primaries must
+/// reproduce the hard-coded `Bt709` affine arm within Q15 rounding. The
+/// stored arm uses published/rounded coefficients, so a pure chromaticity
+/// derivation lands within ~6 LSB — a wrong derivation (or a BT.709 *vs*
+/// BT.2020 mix-up) is off by thousands, which `tol = 8` cleanly rejects.
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn chroma_derived_ncl_bt709_matches_hardcoded_bt709() {
+  let derived =
+    Coefficients::for_matrix_with_primaries(ColorMatrix::ChromaDerivedNcl, Primaries::Bt709);
+  let bt709 = Coefficients::for_matrix(ColorMatrix::Bt709);
+  assert_coeffs_within(&derived, &bt709, 8, "ChromaDerivedNcl(Bt709) vs Bt709");
+  // Discrimination: it consulted the primaries, not a fixed fallback — it
+  // must NOT equal the BT.2020 set (r_v differs by >3000 LSB).
+  let bt2020 = Coefficients::for_matrix(ColorMatrix::Bt2020Ncl);
+  assert!(
+    (derived.r_v() - bt2020.r_v()).abs() > 100,
+    "ChromaDerivedNcl(Bt709) must differ from Bt2020Ncl"
+  );
+}
+
+/// THE GATE (BT.2020): `ChromaDerivedNcl` with BT.2020 primaries must
+/// reproduce the hard-coded `Bt2020Ncl` arm within Q15 rounding (~5 LSB),
+/// and be clearly distinct from BT.709.
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn chroma_derived_ncl_bt2020_matches_hardcoded_bt2020ncl() {
+  let derived =
+    Coefficients::for_matrix_with_primaries(ColorMatrix::ChromaDerivedNcl, Primaries::Bt2020);
+  let bt2020 = Coefficients::for_matrix(ColorMatrix::Bt2020Ncl);
+  assert_coeffs_within(
+    &derived,
+    &bt2020,
+    8,
+    "ChromaDerivedNcl(Bt2020) vs Bt2020Ncl",
+  );
+  let bt709 = Coefficients::for_matrix(ColorMatrix::Bt709);
+  assert!(
+    (derived.r_v() - bt709.r_v()).abs() > 100,
+    "ChromaDerivedNcl(Bt2020) must differ from Bt709"
+  );
+}
+
+/// THE GATE (BT.601 lineage): BT.601's `Kr = 0.299 / Kb = 0.114` originate
+/// from the **NTSC-1953** primaries (mediaframe [`Primaries::Bt470M`], white
+/// C), so `ChromaDerivedNcl` with those primaries reproduces the BT.601 luma
+/// weights. (Note: SMPTE-170M primaries are SMPTE-C and derive to
+/// ~0.212/0.087 instead — see the guard test below; the issue's
+/// "Smpte170M → Bt601" assumption attributes the coefficients to the wrong
+/// primary set.)
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn chroma_derived_ncl_bt470m_weights_are_bt601() {
+  let (kr, kg, kb) =
+    chroma_derived_luma_weights(Primaries::Bt470M).expect("Bt470M carries primaries");
+  assert!((kr - 0.299).abs() < 1.5e-3, "Kr {kr} (want ~0.299)");
+  assert!((kg - 0.587).abs() < 1.5e-3, "Kg {kg} (want ~0.587)");
+  assert!((kb - 0.114).abs() < 1.5e-3, "Kb {kb} (want ~0.114)");
+}
+
+/// Guards the corrected premise: SMPTE-170M primaries (SMPTE-C) derive to
+/// the SMPTE-240M-class weights (~0.2124 / 0.0866), NOT BT.601's
+/// 0.299 / 0.114.
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn chroma_derived_ncl_smpte170m_primaries_are_smpte_c_not_bt601() {
+  let (kr, _kg, kb) =
+    chroma_derived_luma_weights(Primaries::Smpte170M).expect("Smpte170M carries primaries");
+  assert!(
+    (kr - 0.2124).abs() < 1e-3 && (kb - 0.0866).abs() < 1e-3,
+    "SMPTE-C weights expected, got Kr={kr} Kb={kb}"
+  );
+  assert!((kr - 0.299).abs() > 0.05, "must NOT be BT.601 Kr=0.299");
+}
+
+/// Independent consistency (no hard-coded coefficient table): the derived
+/// weights `S = (Kr, Kg, Kb)` must sum to 1 and satisfy the *defining*
+/// linear system `M · S = W_xyz` for every primary set — i.e. they
+/// reconstruct the white point's XYZ.
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn chroma_derived_weights_reconstruct_white_point() {
+  for p in [
+    Primaries::Bt709,
+    Primaries::Bt2020,
+    Primaries::Smpte170M,
+    Primaries::Bt470M,
+    Primaries::Bt470Bg,
+    Primaries::SmpteRp431,
+    Primaries::Film,
+  ] {
+    let (kr, kg, kb) = chroma_derived_luma_weights(p).expect("carries primaries");
+    assert!(
+      (kr + kg + kb - 1.0).abs() < 1e-9,
+      "{p:?}: weights sum {} != 1",
+      kr + kg + kb
+    );
+    let rgb = p.chromaticities().unwrap();
+    let white = p.white_point().unwrap();
+    let xyz = |rx: u32, ry: u32| {
+      let x = rx as f64 / 50_000.0;
+      let y = ry as f64 / 50_000.0;
+      [x / y, 1.0, (1.0 - x - y) / y]
+    };
+    let r = xyz(rgb[0].x(), rgb[0].y());
+    let g = xyz(rgb[1].x(), rgb[1].y());
+    let b = xyz(rgb[2].x(), rgb[2].y());
+    let w = xyz(white.x(), white.y());
+    for axis in 0..3 {
+      let recon = r[axis] * kr + g[axis] * kg + b[axis] * kb;
+      assert!(
+        (recon - w[axis]).abs() < 1e-9,
+        "{p:?} axis {axis}: reconstructed {recon} != white {}",
+        w[axis]
+      );
+    }
+  }
+}
+
+/// `ChromaDerivedNcl` without usable primaries (`Unspecified`) falls back to
+/// exactly the BT.709 coefficients, preserving the pre-#303 behaviour.
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn chroma_derived_ncl_without_primaries_falls_back_to_bt709() {
+  let fallback =
+    Coefficients::for_matrix_with_primaries(ColorMatrix::ChromaDerivedNcl, Primaries::Unspecified);
+  let bt709 = Coefficients::for_matrix(ColorMatrix::Bt709);
+  assert_coeffs_within(
+    &fallback,
+    &bt709,
+    0,
+    "ChromaDerivedNcl(Unspecified) == Bt709",
+  );
+}
+
+/// Every fixed matrix resolves byte-identically through
+/// `for_matrix_with_primaries` regardless of the primaries — the BT.601 /
+/// BT.709 grouping (and all others) is unaffected by the new parameter.
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn for_matrix_with_primaries_ignores_primaries_for_fixed_matrices() {
+  for m in [
+    ColorMatrix::Bt601,
+    ColorMatrix::Bt709,
+    ColorMatrix::Bt2020Ncl,
+    ColorMatrix::Smpte240m,
+    ColorMatrix::YCgCo,
+    ColorMatrix::Fcc,
+    ColorMatrix::Smpte170M,
+    ColorMatrix::Bt470Bg,
+  ] {
+    let base = Coefficients::for_matrix(m);
+    for p in [
+      Primaries::Bt709,
+      Primaries::Bt2020,
+      Primaries::Unspecified,
+      Primaries::Smpte170M,
+    ] {
+      let with = Coefficients::for_matrix_with_primaries(m, p);
+      assert_coeffs_within(&with, &base, 0, "fixed matrix must ignore primaries");
+    }
+  }
+}
+
+/// End-to-end YUV→RGB row through the wired `ChromaDerivedNcl` dispatcher
+/// ([`yuv_420_to_rgb_row_primaries`]) for a **non-standard** primaries set
+/// (BT.470BG / PAL), compared against an *independent* `f64` derivation of
+/// the same affine. Also pins the derived weights to externally-computed
+/// values so the match is not self-referential.
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn chroma_derived_ncl_bt470bg_row_matches_independent_derivation() {
+  use crate::row::yuv_420_to_rgb_row_primaries;
+
+  let (kr, kg, kb) =
+    chroma_derived_luma_weights(Primaries::Bt470Bg).expect("Bt470Bg carries primaries");
+  // Pin to the values computed offline from the BT.470BG chromaticities
+  // (EBU/PAL-class, distinct from BT.601/709/2020): an external anchor.
+  assert!((kr - 0.222_004).abs() < 1e-5, "Kr {kr}");
+  assert!((kg - 0.706_655).abs() < 1e-5, "Kg {kg}");
+  assert!((kb - 0.071_341).abs() < 1e-5, "Kb {kb}");
+
+  // Independent continuous-domain affine (NOT via `Coefficients` / Q15).
+  let r_v = 2.0 * (1.0 - kr);
+  let b_u = 2.0 * (1.0 - kb);
+  let g_u = -2.0 * (1.0 - kb) * kb / kg;
+  let g_v = -2.0 * (1.0 - kr) * kr / kg;
+
+  // Full-range pixels (no Y offset/scale): two chroma-bearing pairs.
+  let y = [128u8, 60, 200, 130];
+  let u = [160u8, 90];
+  let v = [96u8, 210];
+  let mut got = [0u8; 12];
+  yuv_420_to_rgb_row_primaries(
+    &y,
+    &u,
+    &v,
+    &mut got,
+    4,
+    ColorMatrix::ChromaDerivedNcl,
+    Primaries::Bt470Bg,
+    true,
+    true,
+  );
+  let clamp = |x: f64| x.round().clamp(0.0, 255.0) as i32;
+  for px in 0..4 {
+    let yv = y[px] as f64;
+    let ud = u[px / 2] as f64 - 128.0;
+    let vd = v[px / 2] as f64 - 128.0;
+    let want = [
+      clamp(yv + r_v * vd),
+      clamp(yv + g_u * ud + g_v * vd),
+      clamp(yv + b_u * ud),
+    ];
+    for ch in 0..3 {
+      assert!(
+        (got[px * 3 + ch] as i32 - want[ch]).abs() <= 1,
+        "px{px} ch{ch}: kernel {} vs independent {}",
+        got[px * 3 + ch],
+        want[ch]
+      );
+    }
+  }
+}
