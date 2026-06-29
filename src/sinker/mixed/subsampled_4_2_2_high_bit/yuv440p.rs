@@ -266,7 +266,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv440p10<BE>, R> {
             h,
             2,
             w,
-            || ResamplePlan::area_chroma_440(w, h, plan.out_w(), plan.out_h()),
+            || ResamplePlan::area_chroma_440(w, h, plan.out_w(), plan.out_h(), 0.0, 0.0),
             use_simd,
           )?;
           if frozen_native_route.is_none() && need_output {
@@ -742,7 +742,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv440p12<BE>, R> {
             h,
             2,
             w,
-            || ResamplePlan::area_chroma_440(w, h, plan.out_w(), plan.out_h()),
+            || ResamplePlan::area_chroma_440(w, h, plan.out_w(), plan.out_h(), 0.0, 0.0),
             use_simd,
           )?;
           if frozen_native_route.is_none() && need_output {
