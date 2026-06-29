@@ -1,12 +1,12 @@
 //! 8-bit planar YUV `MixedSinker` impls: Yuv410p / Yuv420p / Yuv422p / Yuv444p / Yuv440p.
 
 use super::{
-  AveragingDomainChanged, GeometryOverflow, HsvFrameMut, InsufficientBuffer, MixedSinker,
+  AveragingDomainChanged, ChromaU8, GeometryOverflow, HsvFrameMut, InsufficientBuffer, MixedSinker,
   MixedSinkerError, NativeRouteChanged, RowIndexOutOfRange, RowShapeMismatch, RowSlice,
   WidthAlignment, check_dimensions_match, chroma_420_bottom_sited_v, chroma_420_center_sited_h,
   chroma_422_center_sited_h, frozen_outputs_check,
   planar_resample::{planar_dual_filter_resample, planar_dual_resample},
-  rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  reconstruct_chroma, rgb_row_buf_or_scratch, rgba_plane_row_slice,
 };
 use crate::{
   ColorMatrix, PixelSink,
@@ -3963,7 +3963,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
     //     row but no caller RGB buffer is borrowable — `want_hsv && want_rgba &&
     //     !want_rgb` (`rgb_row_buf_or_scratch`'s own scratch arm; an attached RGB
     //     buffer is borrowed instead and never allocates).
-    // The later `upsample_420_chroma_center_h` / `rgb_row_buf_or_scratch` calls
+    // The later `reconstruct_chroma` / `rgb_row_buf_or_scratch` calls
     // reuse the already-sized buffers, so the default path is byte-identical;
     // only the failure-path ordering changes.
     if center_sited && want_color {
@@ -4005,7 +4005,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
       let (h, s, v) = hsv.hsv();
       if center_sited {
         let (u_full, v_full) =
-          upsample_420_chroma_center_h(chroma_full, row.u_half(), row.v_half(), w);
+          reconstruct_chroma(ChromaU8, chroma_full, row.u_half(), row.v_half(), w);
         yuv_444_to_hsv_row(
           row.y(),
           u_full,
@@ -4040,7 +4040,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
       if center_sited {
         let (u_full, v_full) =
-          upsample_420_chroma_center_h(chroma_full, row.u_half(), row.v_half(), w);
+          reconstruct_chroma(ChromaU8, chroma_full, row.u_half(), row.v_half(), w);
         yuv_444_to_rgba_row(
           row.y(),
           u_full,
@@ -4085,7 +4085,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
     // pair per Y pair).
     if center_sited {
       let (u_full, v_full) =
-        upsample_420_chroma_center_h(chroma_full, row.u_half(), row.v_half(), w);
+        reconstruct_chroma(ChromaU8, chroma_full, row.u_half(), row.v_half(), w);
       yuv_444_to_rgb_row(
         row.y(),
         u_full,

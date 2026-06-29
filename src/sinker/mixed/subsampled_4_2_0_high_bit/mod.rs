@@ -37,4 +37,11 @@ pub(crate) use p0xx::{
   upsample_420_chroma_center_h_p0xx as upsample_pn_chroma_center_h,
 };
 #[cfg(feature = "yuv-planar")]
-pub(crate) use yuv420p::{reserve_420_chroma_full_u16, upsample_420_chroma_center_h_u16};
+pub(crate) use yuv420p::reserve_420_chroma_full_u16;
+// `upsample_420_chroma_center_h_u16`'s only remaining external consumer is the
+// YUVA 4:2:2 centered path: the planar `Yuv422p` twin now routes through the
+// shared L2 `reconstruct_chroma` stage (RFC #238 PR-F2), so gate the re-export
+// to that sole consumer — a `yuv-planar`-without-`yuva` build would otherwise
+// see it as unused. (PR-S7 repoints YUVA too and retires this re-export.)
+#[cfg(feature = "yuva")]
+pub(crate) use yuv420p::upsample_420_chroma_center_h_u16;

@@ -230,6 +230,13 @@ pub(super) const fn chroma_422_center_sited_h(loc: crate::ChromaLocation) -> boo
   )
 }
 
+// L2 shared chroma-reconstruction stage (RFC #238): the element-generic
+// centered-siting reconstruction the `Yuv422p` identity decode funnels through.
+// Re-exported here alongside the siting predicates above so the per-format sink
+// modules reach it on the same `super` path as `chroma_422_center_sited_h`.
+#[cfg(feature = "yuv-planar")]
+pub(super) use chroma_reconstruct::{ChromaU8, ChromaU16, reconstruct_chroma};
+
 /// Frame dimensions handed to `begin_frame` don't match the sinker's
 /// configured size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15426,6 +15433,8 @@ mod ayuv;
 mod ayuv64;
 #[cfg(feature = "bayer")]
 mod bayer;
+#[cfg(feature = "yuv-planar")]
+mod chroma_reconstruct;
 #[cfg(feature = "gray")]
 mod gray;
 #[cfg(feature = "rgb-legacy")]
