@@ -31,13 +31,15 @@
 //!   path uses, then fan to rgba / hsv.
 //!
 //! The staged Y / U / V are HOST-NATIVE (the wire row is de-interleaved to
-//! host-native u16 via [`deinterleave_y_high_bit`] into private
+//! host-native u16 via [`deinterleave_y_high_bit_masked`] into private
 //! source-width scratch BEFORE the [`AreaStream`] bins it — matching the
 //! row-stage path), so every convert kernel runs with
 //! `BE = HOST_NATIVE_BE` (= `from_ne`, a no-op load on every host)
 //! regardless of the source wire endianness.
 
-use super::super::{GeometryOverflow, HsvFrameMut, MixedSinkerError, deinterleave_y_high_bit};
+use super::super::{
+  GeometryOverflow, HsvFrameMut, MixedSinkerError, deinterleave_y_high_bit_masked,
+};
 use crate::{
   ColorMatrix,
   resample::{AreaStream, PlanGeometry, ResampleError, ResamplePlan, try_box, try_zeroed},
@@ -52,7 +54,7 @@ use crate::{
 };
 
 // The staged Y / U / V the `AreaStream` produces are HOST-NATIVE u16 — the
-// wire was decoded to native by `deinterleave_y_high_bit` BEFORE binning —
+// wire was decoded to native by `deinterleave_y_high_bit_masked` BEFORE binning —
 // so every `*_to_*_row_endian` convert below must read them with
 // `BE = HOST_NATIVE_BE` to keep the kernel's `from_le` / `from_be` load a
 // no-op on EVERY host. A hard-coded `false` (`from_le`) would byte-swap the
@@ -92,7 +94,7 @@ pub(crate) fn arm_native_u16_alloc_failure() {
 pub(crate) struct NativeYuv420U16 {
   y: AreaStream<u16>,
   /// Source-width host-native Y de-interleave scratch (the wire Y plane
-  /// normalized via [`deinterleave_y_high_bit`] before [`Self::y`] bins
+  /// normalized via [`deinterleave_y_high_bit_masked`] before [`Self::y`] bins
   /// it). Lazily grown to `src_w` `u16` on the first output-bearing row;
   /// empty otherwise.
   y_src: std::vec::Vec<u16>,
@@ -445,11 +447,15 @@ pub(crate) fn yuv420p16_process_native<const BITS: u32, const BE: bool>(
 
   // De-interleave the wire planes into host-native scratch. Everything
   // past this point is infallible.
-  deinterleave_y_high_bit::<BE>(y_row, &mut join.y_src, w);
+  deinterleave_y_high_bit_masked::<BITS, BE>(y_row, &mut join.y_src, w);
   if feed_chroma {
     let chroma = join.chroma.as_mut().expect("feed_chroma implies Some");
-    deinterleave_y_high_bit::<BE>(u_half, &mut chroma.u_src, cw);
-    deinterleave_y_high_bit::<BE>(v_half, &mut chroma.v_src, cw);
+    // Mask BEFORE the AreaStream bins these: the native tier averages the
+    // source chroma, so the colour kernel's per-pixel extract_hb would mask
+    // only the binned result. `avg(dirty) & mask` can differ from
+    // `avg(dirty & mask)`, so dirty bits must be cleared per source sample.
+    deinterleave_y_high_bit_masked::<BITS, BE>(u_half, &mut chroma.u_src, cw);
+    deinterleave_y_high_bit_masked::<BITS, BE>(v_half, &mut chroma.v_src, cw);
   }
 
   // Feed the planes into their streams. The Y plane bins every row; the

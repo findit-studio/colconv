@@ -22,7 +22,7 @@
 use crate::{
   ColorMatrix, PixelSink,
   frame::*,
-  resample::{AreaResampler, ResampleError},
+  resample::{AreaResampler, FilteredResampler, ResampleError, Triangle},
   sinker::{MixedSinker, MixedSinkerError},
 };
 
@@ -118,6 +118,92 @@ macro_rules! yuv422p_high_bit_resample_suite {
 
       const MASK: u16 = ((1u32 << $bits) - 1) as u16;
       const MID: u16 = (1u16 << ($bits - 1));
+
+      /// #334: a geometry-only `*Frame::try_new` accepts an out-of-range Y
+      /// sample — here a uniform plane carrying the first bit ABOVE the native
+      /// depth (`MASK + 1`; a no-op at 16-bit, where no such bit exists). The
+      /// luma resample feeds must publish the DEPTH-MASKED Y (`& MASK`), like
+      /// the colour kernels, across all three tiers (native fast / row-stage /
+      /// filter) and both wire endiannesses — NOT bin the dirty Y and clamp the
+      /// overrange bin to the native max (the pre-fix path narrows that to
+      /// `0xFF`). A constant survives every resampler, so the area-mean /
+      /// filtered output of the uniform plane is that same in-range value.
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn luma_masks_dirty_high_bit_y() {
+        let clean: u16 = (MASK / 3) & MASK;
+        let dirty: u16 = clean | MASK.wrapping_add(1);
+        let want = std::vec![(clean >> ($bits - 8)) as u8; OUT * OUT];
+        // Chroma is unread by a luma-only sink; reuse the neutral-gray planes
+        // for their correct per-format dimensions and overwrite Y.
+        let (_, u, v) = uniform_gray(clean);
+        let yp = std::vec![dirty; SRC * SRC];
+        let (y_le, u_le, v_le) = (as_le_u16(&yp), as_le_u16(&u), as_le_u16(&v));
+        let (y_be, u_be, v_be) = (as_be_u16(&yp), as_be_u16(&u), as_be_u16(&v));
+
+        for native in [true, false] {
+          let mut luma = std::vec![0u8; OUT * OUT];
+          {
+            let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
+              SRC,
+              SRC,
+              AreaResampler::to(OUT, OUT),
+            )
+            .unwrap()
+            .with_native(native)
+            .with_luma(&mut luma)
+            .unwrap();
+            $walker(&frame(&y_le, &u_le, &v_le), FR, M, &mut sink).unwrap();
+          }
+          assert_eq!(luma, want, "LE area luma not depth-masked (native={native})");
+
+          let mut be_luma = std::vec![0u8; OUT * OUT];
+          {
+            let mut sink = MixedSinker::<$marker<true>, AreaResampler>::with_resampler(
+              SRC,
+              SRC,
+              AreaResampler::to(OUT, OUT),
+            )
+            .unwrap()
+            .with_native(native)
+            .with_luma(&mut be_luma)
+            .unwrap();
+            $walker_be::<_, true>(&frame_be(&y_be, &u_be, &v_be), FR, M, &mut sink).unwrap();
+          }
+          assert_eq!(be_luma, want, "BE area luma not depth-masked (native={native})");
+        }
+
+        let mut luma = std::vec![0u8; OUT * OUT];
+        {
+          let mut sink = MixedSinker::<$marker, FilteredResampler<Triangle>>::with_resampler(
+            SRC,
+            SRC,
+            FilteredResampler::new(OUT, OUT, Triangle),
+          )
+          .unwrap()
+          .with_luma(&mut luma)
+          .unwrap();
+          $walker(&frame(&y_le, &u_le, &v_le), FR, M, &mut sink).unwrap();
+        }
+        assert_eq!(luma, want, "LE filter luma not depth-masked");
+
+        let mut be_luma = std::vec![0u8; OUT * OUT];
+        {
+          let mut sink = MixedSinker::<$marker<true>, FilteredResampler<Triangle>>::with_resampler(
+            SRC,
+            SRC,
+            FilteredResampler::new(OUT, OUT, Triangle),
+          )
+          .unwrap()
+          .with_luma(&mut be_luma)
+          .unwrap();
+          $walker_be::<_, true>(&frame_be(&y_be, &u_be, &v_be), FR, M, &mut sink).unwrap();
+        }
+        assert_eq!(be_luma, want, "BE filter luma not depth-masked");
+      }
 
       /// Per-pixel `(Y)` ramp + per-chroma-pair `(U, V)` ramp into an
       /// `SRC`-grid Y plane and half-width U / V planes (4:2:2, low-packed

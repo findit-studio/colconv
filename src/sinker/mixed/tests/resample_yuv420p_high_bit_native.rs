@@ -402,27 +402,26 @@ macro_rules! yuv420p_high_bit_native_suite {
         miri,
         ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
       )]
-      fn native_luma_clamps_overrange_y() {
-        // A binned Y above the native max must SATURATE through the
-        // `>> (BITS - 8)` narrowing, never wrap modulo 256 (the sub-16-bit
-        // luma clamp). Chroma stays legal.
+      fn native_luma_masks_overrange_y() {
+        // #334: an out-of-range Y (a legal payload plus the first bit ABOVE the
+        // native depth; a no-op at 16-bit) must be DEPTH-MASKED (`& MASK`) like
+        // the colour kernels, NOT binned dirty then CLAMPED to native-max (the
+        // pre-fix path saturated every overrange luma to 255). Chroma stays legal.
         let (_, u, v) = ramp();
-        let ovr = ((1u32 << $bits).min(0xFFFF)) as u16;
+        let ovr = ((MASK / 3) & MASK) | MASK.wrapping_add(1);
         let y = vec![ovr; SRC * SRC];
         let (_, _, n_luma) = native_run(&y, &u, &v);
-        let y_ref = block_mean_2x2_u16(&y);
-        let luma_ref: Vec<u8> = y_ref
-          .iter()
-          .map(|&c| (c.min(MASK) >> ($bits - 8)) as u8)
-          .collect();
+        let masked: Vec<u16> = y.iter().map(|&c| c & MASK).collect();
+        let y_ref = block_mean_2x2_u16(&masked);
+        let luma_ref: Vec<u8> = y_ref.iter().map(|&c| (c >> ($bits - 8)) as u8).collect();
         assert_eq!(
           n_luma, luma_ref,
-          "overrange binned Y must clamp to native-max before narrowing, not wrap"
+          "overrange binned Y must be depth-masked before narrowing, not clamped"
         );
-        let sat = (MASK >> ($bits - 8)) as u8;
+        let masked_narrow = (((MASK / 3) & MASK) >> ($bits - 8)) as u8;
         assert!(
-          n_luma.iter().all(|&l| l == sat),
-          "all overrange luma must saturate to {sat}"
+          n_luma.iter().all(|&l| l == masked_narrow),
+          "all overrange luma must narrow the masked payload to {masked_narrow}"
         );
       }
 
@@ -431,28 +430,205 @@ macro_rules! yuv420p_high_bit_native_suite {
         miri,
         ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
       )]
-      fn rowstage_luma_clamps_overrange_y() {
-        // Same clamp on the ROW-STAGE (with_native(false)) path: the shared
-        // packed_yuv422_triple_resample luma emitter must clamp the binned Y to
-        // native-max before the `>> (BITS - 8)` narrow, never wrap.
+      fn rowstage_luma_masks_overrange_y() {
+        // Same depth-mask on the ROW-STAGE (with_native(false)) path: the shared
+        // packed_yuv422_triple_resample luma emitter masks the de-interleaved Y
+        // to `& MASK` before the `>> (BITS - 8)` narrow (#334), not clamp.
         let (_, u, v) = ramp();
-        let ovr = ((1u32 << $bits).min(0xFFFF)) as u16;
+        let ovr = ((MASK / 3) & MASK) | MASK.wrapping_add(1);
         let y = vec![ovr; SRC * SRC];
         let (_, _, r_luma) = rowstage_run(&y, &u, &v);
-        let y_ref = block_mean_2x2_u16(&y);
-        let luma_ref: Vec<u8> = y_ref
-          .iter()
-          .map(|&c| (c.min(MASK) >> ($bits - 8)) as u8)
-          .collect();
+        let masked: Vec<u16> = y.iter().map(|&c| c & MASK).collect();
+        let y_ref = block_mean_2x2_u16(&masked);
+        let luma_ref: Vec<u8> = y_ref.iter().map(|&c| (c >> ($bits - 8)) as u8).collect();
         assert_eq!(
           r_luma, luma_ref,
-          "row-stage overrange luma must clamp to native-max before narrowing, not wrap"
+          "row-stage overrange luma must be depth-masked before narrowing, not clamped"
         );
-        let sat = (MASK >> ($bits - 8)) as u8;
+        let masked_narrow = (((MASK / 3) & MASK) >> ($bits - 8)) as u8;
         assert!(
-          r_luma.iter().all(|&l| l == sat),
-          "all row-stage overrange luma must saturate to {sat}"
+          r_luma.iter().all(|&l| l == masked_narrow),
+          "all row-stage overrange luma must narrow the masked payload to {masked_narrow}"
         );
+      }
+
+      /// Drive the native tier (LE) at a 2x-further downscale to `OUT2 x OUT2`,
+      /// where the 4:2:0 chroma plane (`CW x CH`) is GENUINELY area-binned 2x2
+      /// -> 1. At the suite's default `OUT` the 4:2:0 chroma is a 1:1
+      /// passthrough (chroma `CW == OUT`) and never averaged, so it cannot
+      /// exercise the dirty-chroma fix; only once the AreaStream averages
+      /// DISTINCT chroma samples does `avg(dirty) & mask` diverge from
+      /// `avg(dirty & mask)` (#334).
+      fn native_run_2x2(y: &[u16], u: &[u16], v: &[u16]) -> (Vec<u8>, Vec<u16>) {
+        const OUT2: usize = 2;
+        let (yl, ul, vl) = (as_le(y), as_le(u), as_le(v));
+        let mut rgb = vec![0u8; OUT2 * OUT2 * 3];
+        let mut rgb_u16 = vec![0u16; OUT2 * OUT2 * 3];
+        {
+          let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
+            SRC,
+            SRC,
+            AreaResampler::to(OUT2, OUT2),
+          )
+          .unwrap()
+          .with_native(true)
+          .with_rgb(&mut rgb)
+          .unwrap()
+          .with_rgb_u16(&mut rgb_u16)
+          .unwrap();
+          $walker(&frame(&yl, &ul, &vl), FR, M, &mut sink).unwrap();
+        }
+        (rgb, rgb_u16)
+      }
+
+      /// BE twin of [`native_run_2x2`]. The native tier de-interleaves AND (with
+      /// the fix) masks the wire to host-native BEFORE binning, so a correct fix
+      /// makes this byte-identical to the LE run.
+      fn native_be_run_2x2(y: &[u16], u: &[u16], v: &[u16]) -> (Vec<u8>, Vec<u16>) {
+        const OUT2: usize = 2;
+        let (yb, ub, vb) = (as_be(y), as_be(u), as_be(v));
+        let mut rgb = vec![0u8; OUT2 * OUT2 * 3];
+        let mut rgb_u16 = vec![0u16; OUT2 * OUT2 * 3];
+        {
+          let mut sink = MixedSinker::<$marker<true>, AreaResampler>::with_resampler(
+            SRC,
+            SRC,
+            AreaResampler::to(OUT2, OUT2),
+          )
+          .unwrap()
+          .with_native(true)
+          .with_rgb(&mut rgb)
+          .unwrap()
+          .with_rgb_u16(&mut rgb_u16)
+          .unwrap();
+          $walker_be(&frame_be(&yb, &ub, &vb), FR, M, &mut sink).unwrap();
+        }
+        (rgb, rgb_u16)
+      }
+
+      /// A `CW x CH` chroma plane of a `0` / `MASK + 1` checkerboard. Each 2x2
+      /// area-bin (at `OUT2`) then holds two `0`s and two `MASK + 1`s, so the
+      /// bin AVERAGE is `(MASK + 1) / 2 == MID` — a LEGAL code that SURVIVES the
+      /// depth mask — whereas masking each source sample FIRST gives all-`0`.
+      /// The two orders disagree, so the binned colour reveals whether the tier
+      /// masks before or after binning. (`MASK + 1` wraps to `0` at 16-bit,
+      /// where no over-range bit exists; the checkerboard collapses to all-`0`
+      /// and the equality below degenerates to a legal-input no-op.)
+      fn dirty_chroma_checkerboard() -> Vec<u16> {
+        let mut c = vec![0u16; CW * CH];
+        for yy in 0..CH {
+          for xx in 0..CW {
+            c[yy * CW + xx] = if (xx + yy) % 2 == 0 {
+              0
+            } else {
+              MASK.wrapping_add(1)
+            };
+          }
+        }
+        c
+      }
+
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn native_chroma_u_masks_overrange_before_bin() {
+        // #334: a dirty (over-range) U sample must be DEPTH-MASKED per SOURCE
+        // sample BEFORE the AreaStream bins it. With a 0 / MASK+1 chroma
+        // checkerboard, bin-then-mask (the pre-fix order) survives as MID
+        // (neutral), while mask-then-bin is 0 — the native tier must decode the
+        // mask-then-bin (chroma 0) colour, on BOTH the LE and BE wire.
+        let (y, _, _) = ramp();
+        let u = dirty_chroma_checkerboard();
+        let v = vec![MID & MASK; CW * CH]; // legal neutral V (isolate U)
+        let u_masked: Vec<u16> = u.iter().map(|&c| c & MASK).collect();
+
+        // Per-sample-masked reference: feed the already-masked (all-0) U. With
+        // the fix the native tier decodes the dirty U identically — it masks
+        // each sample to 0 before binning.
+        let (ref_rgb, ref_rgb16) = native_run_2x2(&y, &u_masked, &v);
+
+        let (le_rgb, le_rgb16) = native_run_2x2(&y, &u, &v);
+        assert_eq!(
+          le_rgb, ref_rgb,
+          "LE U: native colour must equal the per-sample-masked (chroma 0) \
+           reference, not the avg-then-mask (chroma MID) value"
+        );
+        assert_eq!(
+          le_rgb16, ref_rgb16,
+          "LE U: u16 colour must equal the per-sample-masked reference"
+        );
+
+        let (be_rgb, be_rgb16) = native_be_run_2x2(&y, &u, &v);
+        assert_eq!(
+          be_rgb, ref_rgb,
+          "BE U: native colour must equal the per-sample-masked reference"
+        );
+        assert_eq!(
+          be_rgb16, ref_rgb16,
+          "BE U: u16 colour must equal the per-sample-masked reference"
+        );
+
+        // Non-vacuous below 16-bit: the avg-then-mask (pre-fix) colour decodes
+        // the neutral MID a 0/(MASK+1) bin averages to; it must DIFFER from the
+        // masked-0 result, proving the dirty bits actually move the binned code.
+        if MASK != u16::MAX {
+          let u_avgmask = vec![MID & MASK; CW * CH];
+          let (bug_rgb, _) = native_run_2x2(&y, &u_avgmask, &v);
+          assert_ne!(
+            le_rgb, bug_rgb,
+            "LE U: the fixed (masked-0) colour must NOT equal the avg-then-mask \
+             (chroma MID) colour — else the test could not distinguish the bug"
+          );
+        }
+      }
+
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn native_chroma_v_masks_overrange_before_bin() {
+        // The V twin of `native_chroma_u_masks_overrange_before_bin` — the fix
+        // masks the V de-interleave feed independently of U.
+        let (y, _, _) = ramp();
+        let u = vec![MID & MASK; CW * CH]; // legal neutral U (isolate V)
+        let v = dirty_chroma_checkerboard();
+        let v_masked: Vec<u16> = v.iter().map(|&c| c & MASK).collect();
+
+        let (ref_rgb, ref_rgb16) = native_run_2x2(&y, &u, &v_masked);
+
+        let (le_rgb, le_rgb16) = native_run_2x2(&y, &u, &v);
+        assert_eq!(
+          le_rgb, ref_rgb,
+          "LE V: native colour must equal the per-sample-masked (chroma 0) \
+           reference, not the avg-then-mask (chroma MID) value"
+        );
+        assert_eq!(
+          le_rgb16, ref_rgb16,
+          "LE V: u16 colour must equal the per-sample-masked reference"
+        );
+
+        let (be_rgb, be_rgb16) = native_be_run_2x2(&y, &u, &v);
+        assert_eq!(
+          be_rgb, ref_rgb,
+          "BE V: native colour must equal the per-sample-masked reference"
+        );
+        assert_eq!(
+          be_rgb16, ref_rgb16,
+          "BE V: u16 colour must equal the per-sample-masked reference"
+        );
+
+        if MASK != u16::MAX {
+          let v_avgmask = vec![MID & MASK; CW * CH];
+          let (bug_rgb, _) = native_run_2x2(&y, &u, &v_avgmask);
+          assert_ne!(
+            le_rgb, bug_rgb,
+            "LE V: the fixed (masked-0) colour must NOT equal the avg-then-mask \
+             (chroma MID) colour — else the test could not distinguish the bug"
+          );
+        }
       }
 
       /// Crafted VARYING illegal-chroma fixture: extreme alternating chroma

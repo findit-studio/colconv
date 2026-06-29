@@ -259,8 +259,9 @@ macro_rules! planar_yuva_hb_filter_suite {
       }
 
       /// Host-native Y of the source planes (`SRC x SRC`) — the exact input the
-      /// filter path's `deinterleave_y_high_bit::<false>` produces from the
-      /// `*LeFrame` Y plane (`from_le` per element), so applying `from_le` here
+      /// filter path's `deinterleave_y_high_bit_masked::<BITS, false>` produces
+      /// from the `*LeFrame` Y plane (`from_le` per element, then a depth-mask
+      /// that is a no-op on these in-range samples), so applying `from_le` here
       /// makes the single-channel oracle byte-identical to the sink's native Y
       /// on any host (identity on a LE host).
       fn direct_luma_u16(y: &[u16]) -> std::vec::Vec<u16> {

@@ -34,7 +34,7 @@
 
 use crate::{
   ColorMatrix, PixelSink,
-  resample::{AreaResampler, ResampleError},
+  resample::{AreaResampler, FilteredResampler, ResampleError, Triangle},
   sinker::{AlphaMode, MixedSinker, MixedSinkerError},
 };
 
@@ -205,6 +205,106 @@ macro_rules! yuva444p_high_bit_resample_suite {
 
       const MASK: u16 = ((1u32 << $bits) - 1) as u16;
       const MAXV: u32 = (1u32 << $bits) - 1;
+
+      /// #334: the masked-Y twin missed this YUVA 4:4:4 arm, so its `luma` /
+      /// `luma_u16` feeds de-interleaved the native Y UNMASKED — an
+      /// out-of-range sample (`MASK + 1`; a no-op at 16-bit) escaped CLAMPED to
+      /// the native max instead of DEPTH-MASKED (`& MASK`). A uniform dirty Y
+      /// must publish `luma_u16 == clean & MASK` and `luma == that >> (BITS -
+      /// 8)` on the area AND filter tiers, both wire endiannesses.
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn luma_u16_masks_dirty_high_bit_y() {
+        let clean: u16 = (MASK / 3) & MASK;
+        let dirty: u16 = clean | MASK.wrapping_add(1);
+        let want_u16 = std::vec![clean; OUT * OUT];
+        let want_u8 = std::vec![(clean >> ($bits - 8)) as u8; OUT * OUT];
+        let mid = MASK / 2;
+        // Chroma / alpha are unread by a luma-only sink; keep them neutral.
+        let yp = std::vec![dirty; SRC * SRC];
+        let u = std::vec![mid; SRC * SRC];
+        let v = std::vec![mid; SRC * SRC];
+        let a = std::vec![MASK; SRC * SRC];
+        let (y_le, u_le, v_le, a_le) =
+          (as_le_u16(&yp), as_le_u16(&u), as_le_u16(&v), as_le_u16(&a));
+        let (y_be, u_be, v_be, a_be) =
+          (as_be_u16(&yp), as_be_u16(&u), as_be_u16(&v), as_be_u16(&a));
+
+        let mut luma = std::vec![0u8; OUT * OUT];
+        let mut lu16 = std::vec![0u16; OUT * OUT];
+        {
+          let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
+            SRC,
+            SRC,
+            AreaResampler::to(OUT, OUT),
+          )
+          .unwrap()
+          .with_luma(&mut luma)
+          .unwrap()
+          .with_luma_u16(&mut lu16)
+          .unwrap();
+          $walker(&frame(&y_le, &u_le, &v_le, &a_le), FR, M, &mut sink).unwrap();
+        }
+        assert_eq!(lu16, want_u16, "LE area luma_u16 not depth-masked");
+        assert_eq!(luma, want_u8, "LE area luma not depth-masked");
+
+        let mut be_luma = std::vec![0u8; OUT * OUT];
+        let mut be_lu16 = std::vec![0u16; OUT * OUT];
+        {
+          let mut sink = MixedSinker::<$marker<true>, AreaResampler>::with_resampler(
+            SRC,
+            SRC,
+            AreaResampler::to(OUT, OUT),
+          )
+          .unwrap()
+          .with_luma(&mut be_luma)
+          .unwrap()
+          .with_luma_u16(&mut be_lu16)
+          .unwrap();
+          $walker_be::<_, true>(&frame_be(&y_be, &u_be, &v_be, &a_be), FR, M, &mut sink).unwrap();
+        }
+        assert_eq!(be_lu16, want_u16, "BE area luma_u16 not depth-masked");
+        assert_eq!(be_luma, want_u8, "BE area luma not depth-masked");
+
+        let mut luma = std::vec![0u8; OUT * OUT];
+        let mut lu16 = std::vec![0u16; OUT * OUT];
+        {
+          let mut sink = MixedSinker::<$marker, FilteredResampler<Triangle>>::with_resampler(
+            SRC,
+            SRC,
+            FilteredResampler::new(OUT, OUT, Triangle),
+          )
+          .unwrap()
+          .with_luma(&mut luma)
+          .unwrap()
+          .with_luma_u16(&mut lu16)
+          .unwrap();
+          $walker(&frame(&y_le, &u_le, &v_le, &a_le), FR, M, &mut sink).unwrap();
+        }
+        assert_eq!(lu16, want_u16, "LE filter luma_u16 not depth-masked");
+        assert_eq!(luma, want_u8, "LE filter luma not depth-masked");
+
+        let mut be_luma = std::vec![0u8; OUT * OUT];
+        let mut be_lu16 = std::vec![0u16; OUT * OUT];
+        {
+          let mut sink = MixedSinker::<$marker<true>, FilteredResampler<Triangle>>::with_resampler(
+            SRC,
+            SRC,
+            FilteredResampler::new(OUT, OUT, Triangle),
+          )
+          .unwrap()
+          .with_luma(&mut be_luma)
+          .unwrap()
+          .with_luma_u16(&mut be_lu16)
+          .unwrap();
+          $walker_be::<_, true>(&frame_be(&y_be, &u_be, &v_be, &a_be), FR, M, &mut sink).unwrap();
+        }
+        assert_eq!(be_lu16, want_u16, "BE filter luma_u16 not depth-masked");
+        assert_eq!(be_luma, want_u8, "BE filter luma not depth-masked");
+      }
 
       /// Pseudo-random Y / U / V / A planes (all full-resolution in 4:4:4,
       /// low-packed at `$bits`). Alpha varies (not all-opaque).
@@ -969,6 +1069,64 @@ macro_rules! yuva444p_high_bit_resample_suite {
         assert_eq!(lu16, y, "direct luma_u16 == native logical Y");
         let luma_ref: Vec<u8> = y.iter().map(|&p| (p >> ($bits - 8)) as u8).collect();
         assert_eq!(luma, luma_ref, "direct luma == Y >> (BITS - 8)");
+      }
+
+      /// #334 R2 (identity tier): the direct (NoopResampler)
+      /// `yuva444p_high_bit_process` luma path de-interleaved the native Y into
+      /// `luma_u16` / 8-bit `luma` WITHOUT the `(1 << BITS) - 1` depth mask, so a
+      /// geometry-only-accepted frame carrying out-of-range Y (bits above BITS; a
+      /// no-op at 16-bit) published the raw dirty value to `luma_u16` while the
+      /// RGB/RGBA kernels masked the same sample via `extract_hb`. A uniform dirty
+      /// Y must publish `luma_u16 == clean & MASK` and `luma == that >> (BITS -
+      /// 8)`, both wire endiannesses. Mirrors the resample-tier
+      /// `luma_u16_masks_dirty_high_bit_y` for the no-resampler path.
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn direct_identity_luma_masks_dirty_high_bit_y() {
+        let clean: u16 = (MASK / 3) & MASK;
+        let dirty: u16 = clean | MASK.wrapping_add(1);
+        let want_u16 = std::vec![clean; SRC * SRC];
+        let want_u8 = std::vec![(clean >> ($bits - 8)) as u8; SRC * SRC];
+        let mid = MASK / 2;
+        // Chroma / alpha are unread by a luma-only sink; keep them in-range so
+        // ONLY the dirty Y exercises the masked luma path.
+        let yp = std::vec![dirty; SRC * SRC];
+        let u = std::vec![mid; SRC * SRC];
+        let v = std::vec![mid; SRC * SRC];
+        let a = std::vec![MASK; SRC * SRC];
+        let (y_le, u_le, v_le, a_le) =
+          (as_le_u16(&yp), as_le_u16(&u), as_le_u16(&v), as_le_u16(&a));
+        let (y_be, u_be, v_be, a_be) =
+          (as_be_u16(&yp), as_be_u16(&u), as_be_u16(&v), as_be_u16(&a));
+
+        let mut luma = std::vec![0u8; SRC * SRC];
+        let mut lu16 = std::vec![0u16; SRC * SRC];
+        {
+          let mut sink = MixedSinker::<$marker>::new(SRC, SRC)
+            .with_luma(&mut luma)
+            .unwrap()
+            .with_luma_u16(&mut lu16)
+            .unwrap();
+          $walker(&frame(&y_le, &u_le, &v_le, &a_le), FR, M, &mut sink).unwrap();
+        }
+        assert_eq!(lu16, want_u16, "LE direct luma_u16 not depth-masked");
+        assert_eq!(luma, want_u8, "LE direct luma not depth-masked");
+
+        let mut be_luma = std::vec![0u8; SRC * SRC];
+        let mut be_lu16 = std::vec![0u16; SRC * SRC];
+        {
+          let mut sink = MixedSinker::<$marker<true>>::new(SRC, SRC)
+            .with_luma(&mut be_luma)
+            .unwrap()
+            .with_luma_u16(&mut be_lu16)
+            .unwrap();
+          $walker_be::<_, true>(&frame_be(&y_be, &u_be, &v_be, &a_be), FR, M, &mut sink).unwrap();
+        }
+        assert_eq!(be_lu16, want_u16, "BE direct luma_u16 not depth-masked");
+        assert_eq!(be_luma, want_u8, "BE direct luma not depth-masked");
       }
 
       #[test]

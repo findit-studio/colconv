@@ -29,7 +29,7 @@
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
   RowShapeMismatch, RowSlice, check_dimensions_match, check_frozen_alpha_mode,
-  deinterleave_y_high_bit, packed_yuva444_filter_resample, packed_yuva444_resample,
+  deinterleave_y_high_bit_masked, packed_yuva444_filter_resample, packed_yuva444_resample,
   reset_high_bit_yuva_streams, rgb_row_buf_or_scratch, rgba_plane_row_slice,
   rgba_u16_plane_row_slice,
 };
@@ -1335,8 +1335,17 @@ fn yuva444p_high_bit_process<
     let mut luma_u16_row = luma_u16
       .as_deref_mut()
       .map(|b| &mut b[one_plane_start..one_plane_end]);
+    // Mask each decoded Y to the source's native depth `(1 << BITS) - 1` (a
+    // no-op at `BITS = 16`). `Yuva444p*Frame::try_new` is geometry-only, so a
+    // malformed-but-accepted frame can carry out-of-range Y (e.g. `0x1000` at
+    // 12-bit); without this mask `luma_u16` would publish that raw value (and the
+    // 8-bit luma shift the wrapped value), inconsistent with the
+    // `(1 << BITS) - 1`-masked Y the RGB/RGBA row kernels decode from the same
+    // row. Mirrors the high-bit `Yuva420p` / `Yuva422p` siblings — dirty-upper-bit
+    // sanitization covers EVERY high-bit output (luma_u16 + 8-bit luma + chroma).
+    let sample_mask = ((1u32 << BITS) - 1) as u16;
     for (i, &s) in y_row.iter().enumerate().take(w) {
-      let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+      let logical = (if BE { u16::from_be(s) } else { u16::from_le(s) }) & sample_mask;
       if let Some(row) = luma_row.as_deref_mut() {
         row[i] = (logical >> (BITS - 8)) as u8;
       }
@@ -1480,7 +1489,7 @@ fn yuva444p_high_bit_process<
 // through the shared packed-YUVA area tail with THREE independent binnings:
 // u8 colour, the **independent** native u16 colour (never a narrowing of the
 // u8 bin — the u8 / u16 `YUV→RGB` kernels round independently), and the
-// **low-packed** native-Y luma (`deinterleave_y_high_bit`, a raw host-native
+// **low-packed** native-Y luma (`deinterleave_y_high_bit_masked`, a depth-masked host-native
 // copy — planar YUVA Y stores logical values directly, so luma is
 // `binned_Y >> (BITS - 8)`, NOT the semi-planar `>> (16 - BITS)` de-pack).
 // The `Filter` arm routes the SAME converted RGBA / native-Y through the
@@ -1639,7 +1648,7 @@ fn yuva444p_high_bit_resample<const BITS: u32, const BE: bool>(
           y_row, u_row, v_row, a_row, dst, w, matrix, full_range, use_simd, BE,
         )
       },
-      |dst| deinterleave_y_high_bit::<BE>(y_row, dst, w),
+      |dst| deinterleave_y_high_bit_masked::<BITS, BE>(y_row, dst, w),
     ),
     crate::resample::SpanKind::Filter if alpha_mode.is_premultiplied() => {
       // Premultiplied + filter has no analogue: route to the area tail with
@@ -1676,7 +1685,7 @@ fn yuva444p_high_bit_resample<const BITS: u32, const BE: bool>(
             y_row, u_row, v_row, a_row, dst, w, matrix, full_range, use_simd, BE,
           )
         },
-        |dst| deinterleave_y_high_bit::<BE>(y_row, dst, w),
+        |dst| deinterleave_y_high_bit_masked::<BITS, BE>(y_row, dst, w),
       )
     }
     crate::resample::SpanKind::Filter => packed_yuva444_filter_resample::<BITS, false, false>(
@@ -1717,7 +1726,7 @@ fn yuva444p_high_bit_resample<const BITS: u32, const BE: bool>(
           y_row, u_row, v_row, a_row, dst, w, matrix, full_range, use_simd, BE,
         )
       },
-      |dst| deinterleave_y_high_bit::<BE>(y_row, dst, w),
+      |dst| deinterleave_y_high_bit_masked::<BITS, BE>(y_row, dst, w),
       |_dst: &mut [u8]| {},
     ),
   }
