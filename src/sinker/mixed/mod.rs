@@ -8784,39 +8784,26 @@ pub(super) fn reset_high_bit_yuv_streams<F: SourceFormat, R>(sink: &mut MixedSin
   sink.resample_outputs = None;
 }
 
-/// Decodes a wire-endian high-bit planar Y plane into a host-native
-/// `u16` source-width scratch (the de-interleaved native Y the luma
-/// stream bins). `BE` is the source's wire endianness; the result is
-/// host-native so the area stream and the `luma = binned_Y >> (BITS - 8)`
-/// narrowing operate on logical values — matching the direct planar
-/// `luma` path's `if BE { from_be } else { from_le }` normalization.
-/// (The 4:4:4 and 4:2:2 Y planes are both full-width, so this is shared.)
-#[cfg(feature = "yuv-planar")]
-#[cfg_attr(not(tarpaulin), inline(always))]
-pub(super) fn deinterleave_y_high_bit<const BE: bool>(
-  y: &[u16],
-  scratch: &mut [u16],
-  width: usize,
-) {
-  for (dst, &s) in scratch[..width].iter_mut().zip(y.iter()) {
-    *dst = if BE { u16::from_be(s) } else { u16::from_le(s) };
-  }
-}
-
 /// Endian-normalizes one high-bit planar Y row into `scratch`, masking each
 /// sample to the source's native depth `(1 << BITS) - 1` (a no-op at
-/// `BITS = 16`).
+/// `BITS = 16`, and a no-op for every in-range sample).
 ///
-/// The masking twin of [`deinterleave_y_high_bit`] for the **native-Y luma**
-/// resample streams. `Yuva*pN*Frame::try_new` is geometry-only, so a
-/// malformed-but-accepted frame can carry out-of-range Y (e.g. `0x1000` at
-/// 12-bit); binning it unmasked would publish a `luma` / `luma_u16` above the
-/// native range, inconsistent with the `(1 << BITS) - 1`-masked Y the colour
-/// RGB/RGBA kernels decode from the same row. Unlike the plain variant — which
-/// also feeds the **colour** U/V native decode in the planar native-codes
-/// tier — this is luma-only, so the mask matches the per-pixel kernels without
-/// changing any colour binning.
-#[cfg(feature = "yuva")]
+/// The depth-masking de-interleave for the high-bit planar **native-Y luma**
+/// resample streams — the row-stage / filter `luma` + `luma_u16` feeds and the
+/// native fast tier's binned-Y luma — shared across the plain high-bit planar
+/// `Yuv4xxpN` arms and the `Yuva*pN*` arms. `Yuv*pN*Frame::try_new` is
+/// geometry-only, so a malformed-but-accepted frame can carry out-of-range Y
+/// (e.g. `0x1000` at 12-bit); binning it unmasked publishes a `luma` /
+/// `luma_u16` *clamped* to the native max instead of *masked*, inconsistent
+/// with the `(1 << BITS) - 1`-masked Y the colour RGB/RGBA kernels decode from
+/// the same row (#334). Masking at de-interleave restores that consistency; on
+/// the native tier the Y is shared with the colour decode, which re-masks via
+/// `extract_hb`, so the pre-mask never changes an in-range colour binning.
+/// (The native fast tiers also mask U / V through this: they area-bin chroma in
+/// the YUV domain BEFORE the kernel re-masks, where `avg(dirty) & mask` can
+/// differ from `avg(dirty & mask)`; the row-stage path converts each sample
+/// before its RGB bin, so its chroma needs no pre-mask.)
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn deinterleave_y_high_bit_masked<const BITS: u32, const BE: bool>(
   y: &[u16],

@@ -1,7 +1,7 @@
 use super::super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, NativeRouteChanged,
   RowIndexOutOfRange, RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match,
-  chroma_422_center_sited_h, deinterleave_y_high_bit, packed_yuv422_triple_filter_resample,
+  chroma_422_center_sited_h, deinterleave_y_high_bit_masked, packed_yuv422_triple_filter_resample,
   packed_yuv422_triple_resample, reset_high_bit_yuv_streams, rgb_row_buf_or_scratch,
   rgba_plane_row_slice, rgba_u16_plane_row_slice,
   subsampled_4_2_0_high_bit::{reserve_420_chroma_full_u16, upsample_420_chroma_center_h_u16},
@@ -219,7 +219,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p9<BE>, R> {
           use_simd,
           matrix,
           full_range,
-          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          |scratch| deinterleave_y_high_bit_masked::<BITS, BE>(y, scratch, w),
           |scratch| {
             yuv420p9_to_rgb_row_endian(
               y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
@@ -319,7 +319,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p9<BE>, R> {
             use_simd,
             matrix,
             full_range,
-            |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+            |scratch| deinterleave_y_high_bit_masked::<BITS, BE>(y, scratch, w),
             |scratch| {
               yuv420p9_to_rgb_row_endian(
                 y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
@@ -845,7 +845,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p10<BE>, R> {
           use_simd,
           matrix,
           full_range,
-          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          |scratch| deinterleave_y_high_bit_masked::<BITS, BE>(y, scratch, w),
           |scratch| {
             yuv420p10_to_rgb_row_endian(
               y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
@@ -945,7 +945,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p10<BE>, R> {
             use_simd,
             matrix,
             full_range,
-            |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+            |scratch| deinterleave_y_high_bit_masked::<BITS, BE>(y, scratch, w),
             |scratch| {
               yuv420p10_to_rgb_row_endian(
                 y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
@@ -1456,7 +1456,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p12<BE>, R> {
           use_simd,
           matrix,
           full_range,
-          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          |scratch| deinterleave_y_high_bit_masked::<BITS, BE>(y, scratch, w),
           |scratch| {
             yuv420p12_to_rgb_row_endian(
               y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
@@ -1556,7 +1556,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p12<BE>, R> {
             use_simd,
             matrix,
             full_range,
-            |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+            |scratch| deinterleave_y_high_bit_masked::<BITS, BE>(y, scratch, w),
             |scratch| {
               yuv420p12_to_rgb_row_endian(
                 y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
@@ -2067,7 +2067,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p14<BE>, R> {
           use_simd,
           matrix,
           full_range,
-          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          |scratch| deinterleave_y_high_bit_masked::<BITS, BE>(y, scratch, w),
           |scratch| {
             yuv420p14_to_rgb_row_endian(
               y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
@@ -2167,7 +2167,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p14<BE>, R> {
             use_simd,
             matrix,
             full_range,
-            |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+            |scratch| deinterleave_y_high_bit_masked::<BITS, BE>(y, scratch, w),
             |scratch| {
               yuv420p14_to_rgb_row_endian(
                 y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
@@ -2685,7 +2685,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p16<BE>, R> {
           use_simd,
           matrix,
           full_range,
-          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          |scratch| deinterleave_y_high_bit_masked::<BITS, BE>(y, scratch, w),
           |scratch| {
             yuv420p16_to_rgb_row_endian(
               y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
@@ -2785,7 +2785,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p16<BE>, R> {
             use_simd,
             matrix,
             full_range,
-            |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+            |scratch| deinterleave_y_high_bit_masked::<BITS, BE>(y, scratch, w),
             |scratch| {
               yuv420p16_to_rgb_row_endian(
                 y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,

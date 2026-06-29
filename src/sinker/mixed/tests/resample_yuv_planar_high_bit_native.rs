@@ -152,14 +152,15 @@ macro_rules! yuv_planar_hb_native_suite {
         (y, u, v)
       }
 
-      /// Overrange-Y fixture: every Y one step above the native max (illegal
-      /// for the declared depth, so the binned Y also exceeds `native_max`).
-      /// For 16-bit this is the legal full-scale max. Exercises the
-      /// native-depth luma clamp — without it the `>> (BITS - 8)` narrow of an
-      /// overrange value wraps modulo 256. Chroma stays legal.
+      /// Overrange-Y fixture: a legal payload OR-ed with the first bit ABOVE
+      /// the native depth (`MASK + 1`; a no-op at 16-bit, where no such bit
+      /// exists, leaving the legal full-scale payload). #334: the native-Y luma
+      /// feed must DEPTH-MASK each sample (`& MASK`) like the colour kernels, so
+      /// the dirty bit is dropped to the legal payload BEFORE binning — not
+      /// binned dirty then clamped to `native_max`. Chroma stays legal.
       fn overrange_luma() -> (Vec<u16>, Vec<u16>, Vec<u16>) {
         let (_, u, v) = ramp();
-        let ovr = ((1u32 << $bits).min(0xFFFF)) as u16;
+        let ovr = ((MASK / 3) & MASK) | MASK.wrapping_add(1);
         (vec![ovr; SRC * SRC], u, v)
       }
 
@@ -389,27 +390,26 @@ macro_rules! yuv_planar_hb_native_suite {
         miri,
         ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
       )]
-      fn native_luma_clamps_overrange_y() {
-        // A binned Y above the native max must SATURATE through the
-        // `>> (BITS - 8)` narrowing, never wrap modulo 256 (the historical
-        // sub-16-bit luma bug). The oracle clamps independently of the sink.
+      fn native_luma_masks_overrange_y() {
+        // #334: an out-of-range Y must be DEPTH-MASKED (`& MASK`) like the
+        // colour kernels — never binned dirty then CLAMPED to native-max (the
+        // pre-fix path, which saturated every overrange luma to 255). The oracle
+        // masks each source sample, then bins, then narrows.
         let (y, u, v) = overrange_luma();
         let (_, _, n_luma) = run(&y, &u, &v, true);
-        let yb = bin_to_out(&y, SRC, SRC);
-        let expect: Vec<u8> = yb
-          .iter()
-          .map(|&by| (by.min(MASK) >> ($bits - 8)) as u8)
-          .collect();
+        let masked: Vec<u16> = y.iter().map(|&c| c & MASK).collect();
+        let yb = bin_to_out(&masked, SRC, SRC);
+        let expect: Vec<u8> = yb.iter().map(|&by| (by >> ($bits - 8)) as u8).collect();
         assert_eq!(
           n_luma, expect,
-          "overrange binned Y must clamp to native-max before narrowing, not wrap"
+          "overrange binned Y must be depth-masked before narrowing, not clamped"
         );
-        // Every bin is fully overrange, so all luma saturates to the native-max
-        // narrowing (255 for sub-16-bit). Without the clamp these would wrap.
-        let sat = (MASK >> ($bits - 8)) as u8;
+        // The masked payload sits well below native-max, so luma is NOT the
+        // saturated `MASK >> (BITS - 8)` the pre-fix clamp produced (at <16-bit).
+        let masked_narrow = (((MASK / 3) & MASK) >> ($bits - 8)) as u8;
         assert!(
-          n_luma.iter().all(|&l| l == sat),
-          "all overrange luma must saturate to {sat}"
+          n_luma.iter().all(|&l| l == masked_narrow),
+          "all overrange luma must narrow the masked payload to {masked_narrow}"
         );
       }
 
@@ -418,26 +418,146 @@ macro_rules! yuv_planar_hb_native_suite {
         miri,
         ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
       )]
-      fn rowstage_luma_clamps_overrange_y() {
-        // Same clamp on the ROW-STAGE (with_native(false)) path: the shared
-        // triple_resample luma emitter must clamp the binned Y to native-max
-        // before the `>> (BITS - 8)` narrow, never wrap. Same oracle as native.
+      fn rowstage_luma_masks_overrange_y() {
+        // Same depth-mask on the ROW-STAGE (with_native(false)) path: the shared
+        // triple_resample luma emitter masks the de-interleaved Y to `& MASK`
+        // before the `>> (BITS - 8)` narrow (#334), not clamp. Same oracle.
         let (y, u, v) = overrange_luma();
         let (_, _, r_luma) = run(&y, &u, &v, false);
-        let yb = bin_to_out(&y, SRC, SRC);
-        let expect: Vec<u8> = yb
-          .iter()
-          .map(|&by| (by.min(MASK) >> ($bits - 8)) as u8)
-          .collect();
+        let masked: Vec<u16> = y.iter().map(|&c| c & MASK).collect();
+        let yb = bin_to_out(&masked, SRC, SRC);
+        let expect: Vec<u8> = yb.iter().map(|&by| (by >> ($bits - 8)) as u8).collect();
         assert_eq!(
           r_luma, expect,
-          "row-stage overrange luma must clamp to native-max before narrowing, not wrap"
+          "row-stage overrange luma must be depth-masked before narrowing, not clamped"
         );
-        let sat = (MASK >> ($bits - 8)) as u8;
+        let masked_narrow = (((MASK / 3) & MASK) >> ($bits - 8)) as u8;
         assert!(
-          r_luma.iter().all(|&l| l == sat),
-          "all row-stage overrange luma must saturate to {sat}"
+          r_luma.iter().all(|&l| l == masked_narrow),
+          "all row-stage overrange luma must narrow the masked payload to {masked_narrow}"
         );
+      }
+
+      /// A `CW x CH` chroma plane of a `0` / `MASK + 1` checkerboard. Every
+      /// chroma area-bin (1x2 for 4:2:2, 2x1 for 4:4:0, 2x2 for 4:4:4) then
+      /// holds an EQUAL split of `0` and `MASK + 1`, so the bin AVERAGE is
+      /// `(MASK + 1) / 2 == MID` — a LEGAL code that SURVIVES the depth mask —
+      /// whereas masking each source sample FIRST gives all-`0`. The two orders
+      /// disagree, so the binned colour reveals whether the tier masks before or
+      /// after binning (#334). (`MASK + 1` wraps to `0` at 16-bit, where no
+      /// over-range bit exists; the checkerboard collapses to all-`0` and the
+      /// equality below degenerates to a legal-input no-op.)
+      fn dirty_chroma_checkerboard() -> Vec<u16> {
+        let mut c = vec![0u16; CW * CH];
+        for yy in 0..CH {
+          for xx in 0..CW {
+            c[yy * CW + xx] = if (xx + yy) % 2 == 0 {
+              0
+            } else {
+              MASK.wrapping_add(1)
+            };
+          }
+        }
+        c
+      }
+
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn native_chroma_u_masks_overrange_before_bin() {
+        // #334: a dirty (over-range) U sample must be DEPTH-MASKED per SOURCE
+        // sample BEFORE the AreaStream bins it. With a 0 / MASK+1 chroma
+        // checkerboard each chroma bin averages to MID (a legal, neutral code
+        // that survives the mask), while masking each sample FIRST gives 0. The
+        // native tier must reproduce the mask-then-bin-then-convert oracle
+        // (chroma 0) on BOTH the LE and BE wire — never the avg-then-mask (MID)
+        // value the pre-fix unmasked de-interleave produced.
+        let (y, _, _) = ramp();
+        let u = dirty_chroma_checkerboard();
+        let v = vec![MID & MASK; CW * CH]; // legal neutral V (isolate U)
+        let u_masked: Vec<u16> = u.iter().map(|&c| c & MASK).collect();
+
+        // mask-then-bin-then-convert ground truth — the SAME-clamp oracle the
+        // native tier reproduces exactly for legal input
+        // (`native_equals_bin_then_convert_oracle`).
+        let (o_rgb, o_rgb16, _) = oracle(&y, &u_masked, &v);
+
+        let (n_rgb, n_rgb16, _) = run(&y, &u, &v, true);
+        assert_eq!(
+          n_rgb, o_rgb,
+          "LE U: native colour must equal the per-sample-masked oracle"
+        );
+        assert_eq!(
+          n_rgb16, o_rgb16,
+          "LE U: native u16 colour must equal the per-sample-masked oracle"
+        );
+
+        let (be_rgb, be_rgb16, _) = native_be_run(&y, &u, &v);
+        assert_eq!(
+          be_rgb, o_rgb,
+          "BE U: native colour must equal the per-sample-masked oracle"
+        );
+        assert_eq!(
+          be_rgb16, o_rgb16,
+          "BE U: native u16 colour must equal the per-sample-masked oracle"
+        );
+
+        // Non-vacuous below 16-bit: the avg-then-mask (pre-fix) oracle bins the
+        // DIRTY U first (-> MID) then converts; it must DIFFER from the masked-0
+        // result, proving the dirty bits move the binned code.
+        if MASK != u16::MAX {
+          let (bug_rgb, _, _) = oracle(&y, &u, &v);
+          assert_ne!(
+            n_rgb, bug_rgb,
+            "LE U: fixed colour must NOT equal the avg-then-mask oracle"
+          );
+        }
+      }
+
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn native_chroma_v_masks_overrange_before_bin() {
+        // The V twin of `native_chroma_u_masks_overrange_before_bin` — the fix
+        // masks the V de-interleave feed independently of U.
+        let (y, _, _) = ramp();
+        let u = vec![MID & MASK; CW * CH]; // legal neutral U (isolate V)
+        let v = dirty_chroma_checkerboard();
+        let v_masked: Vec<u16> = v.iter().map(|&c| c & MASK).collect();
+
+        let (o_rgb, o_rgb16, _) = oracle(&y, &u, &v_masked);
+
+        let (n_rgb, n_rgb16, _) = run(&y, &u, &v, true);
+        assert_eq!(
+          n_rgb, o_rgb,
+          "LE V: native colour must equal the per-sample-masked oracle"
+        );
+        assert_eq!(
+          n_rgb16, o_rgb16,
+          "LE V: native u16 colour must equal the per-sample-masked oracle"
+        );
+
+        let (be_rgb, be_rgb16, _) = native_be_run(&y, &u, &v);
+        assert_eq!(
+          be_rgb, o_rgb,
+          "BE V: native colour must equal the per-sample-masked oracle"
+        );
+        assert_eq!(
+          be_rgb16, o_rgb16,
+          "BE V: native u16 colour must equal the per-sample-masked oracle"
+        );
+
+        if MASK != u16::MAX {
+          let (bug_rgb, _, _) = oracle(&y, &u, &v);
+          assert_ne!(
+            n_rgb, bug_rgb,
+            "LE V: fixed colour must NOT equal the avg-then-mask oracle"
+          );
+        }
       }
 
       #[test]

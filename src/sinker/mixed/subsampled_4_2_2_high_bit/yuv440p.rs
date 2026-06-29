@@ -1,9 +1,9 @@
 use super::super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, NativeRouteChanged,
-  RowIndexOutOfRange, RowShapeMismatch, RowSlice, check_dimensions_match, deinterleave_y_high_bit,
-  packed_yuv444_triple_filter_resample, packed_yuv444_triple_resample, reset_high_bit_yuv_streams,
-  rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
-  yuv_planar16_process_native,
+  RowIndexOutOfRange, RowShapeMismatch, RowSlice, check_dimensions_match,
+  deinterleave_y_high_bit_masked, packed_yuv444_triple_filter_resample,
+  packed_yuv444_triple_resample, reset_high_bit_yuv_streams, rgb_row_buf_or_scratch,
+  rgba_plane_row_slice, rgba_u16_plane_row_slice, yuv_planar16_process_native,
 };
 use crate::{
   PixelSink,
@@ -205,7 +205,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv440p10<BE>, R> {
           |scratch| {
             yuv444p10_to_rgb_u16_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
           },
-          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          |scratch| deinterleave_y_high_bit_masked::<BITS, BE>(y, scratch, w),
         );
       }
       // Native / row-stage route split — see the high-bit 4:2:0 Yuv420p impl
@@ -302,7 +302,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv440p10<BE>, R> {
             |scratch| {
               yuv444p10_to_rgb_u16_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
             },
-            |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+            |scratch| deinterleave_y_high_bit_masked::<BITS, BE>(y, scratch, w),
           )?;
           if frozen_native_route.is_none() && need_output {
             *frozen_native_route = Some(false);
@@ -681,7 +681,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv440p12<BE>, R> {
           |scratch| {
             yuv444p12_to_rgb_u16_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
           },
-          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          |scratch| deinterleave_y_high_bit_masked::<BITS, BE>(y, scratch, w),
         );
       }
       // Native / row-stage route split — see the high-bit 4:2:0 Yuv420p impl
@@ -778,7 +778,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv440p12<BE>, R> {
             |scratch| {
               yuv444p12_to_rgb_u16_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
             },
-            |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+            |scratch| deinterleave_y_high_bit_masked::<BITS, BE>(y, scratch, w),
           )?;
           if frozen_native_route.is_none() && need_output {
             *frozen_native_route = Some(false);
