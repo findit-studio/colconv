@@ -647,8 +647,8 @@ fn gaussian_softens_a_scale_one_axis() {
   // behaviour — a Gaussian resize of one axis also filters the other — and
   // proves it is accepted, not a bug.
   let n = 8;
-  let g = FilterAxis::build(n, n, &Gaussian).expect("1:1 Gaussian axis");
-  let c = FilterAxis::build(n, n, &CatmullRom).expect("1:1 CatmullRom axis");
+  let g = FilterAxis::build(n, n, &Gaussian, 0.0).expect("1:1 Gaussian axis");
+  let c = FilterAxis::build(n, n, &CatmullRom, 0.0).expect("1:1 CatmullRom axis");
   // Interior output (away from the clamped edges) for each.
   let j = 4;
   let (g_start, g_win) = g.span(j);
@@ -710,7 +710,7 @@ fn axis_windows_normalize_to_one() {
     &CubicBSpline as &dyn FilterKernel,
   ] {
     for &(in_size, out_size) in &[(8usize, 3usize), (64, 17), (1920, 640), (1000, 333)] {
-      let axis = FilterAxis::build(in_size, out_size, k).expect("valid downscale");
+      let axis = FilterAxis::build(in_size, out_size, k, 0.0).expect("valid downscale");
       assert_eq!(axis.out_len(), out_size);
       for j in 0..out_size {
         let (start, win) = axis.span(j);
@@ -731,7 +731,7 @@ fn axis_center_convention_matches_pil_first_output() {
   // center = 0.5*scale, xmin = max(0, floor(center - support*filterscale)).
   // For 8 -> 4 (scale 2) with Triangle (support 1, filterscale 2):
   // center = 1.0, support = 2.0, xmin = floor(1 - 2) clamped to 0.
-  let axis = FilterAxis::build(8, 4, &Triangle).unwrap();
+  let axis = FilterAxis::build(8, 4, &Triangle, 0.0).unwrap();
   assert_eq!(axis.span(0).0, 0);
   // The last output center is (3.5)*2 = 7.0; xmax = min(8, ceil(7+2)) = 8,
   // xmin = floor(7-2) = 5 — the window hugs the right edge.
@@ -754,14 +754,14 @@ fn invalid_support_rejected() {
     }
   }
   for bad in [f64::NAN, f64::INFINITY, 0.0, -1.0] {
-    let err = FilterAxis::build(16, 4, &Bad(bad)).unwrap_err();
+    let err = FilterAxis::build(16, 4, &Bad(bad), 0.0).unwrap_err();
     assert!(
       matches!(err, ResampleError::InvalidFilterSupport(_)),
       "support {bad} should reject, got {err:?}"
     );
   }
   // A finite positive support builds fine.
-  assert!(FilterAxis::build(16, 4, &Bad(2.0)).is_ok());
+  assert!(FilterAxis::build(16, 4, &Bad(2.0), 0.0).is_ok());
 }
 
 #[test]
@@ -770,9 +770,9 @@ fn support_wider_than_source_builds() {
   // CatmullRom's 2 over a 2-wide axis) is the ordinary narrow-source enlarge
   // case: the window clamps to `[0, in_size)` and normalizes over the
   // available samples, exactly as PIL does. It must build, not reject.
-  assert!(FilterAxis::build(1, 7, &Lanczos3).is_ok());
-  assert!(FilterAxis::build(2, 5, &Lanczos3).is_ok());
-  assert!(FilterAxis::build(2, 9, &CatmullRom).is_ok());
+  assert!(FilterAxis::build(1, 7, &Lanczos3, 0.0).is_ok());
+  assert!(FilterAxis::build(2, 5, &Lanczos3, 0.0).is_ok());
+  assert!(FilterAxis::build(2, 9, &CatmullRom, 0.0).is_ok());
   // A huge finite support clamps to the source the same way (at most
   // `in_size` taps), rather than overrunning.
   struct Wide;
@@ -784,7 +784,7 @@ fn support_wider_than_source_builds() {
       1.0
     }
   }
-  assert!(FilterAxis::build(8, 32, &Wide).is_ok());
+  assert!(FilterAxis::build(8, 32, &Wide, 0.0).is_ok());
 }
 
 #[test]
@@ -810,7 +810,7 @@ fn tiny_positive_support_rejected_not_panic() {
   }
   // scale == 2 makes every projected center `(xx + 0.5) * 2` an odd
   // integer, so the very first window already degenerates to zero taps.
-  let err = FilterAxis::build(202, 101, &TinySupport).unwrap_err();
+  let err = FilterAxis::build(202, 101, &TinySupport, 0.0).unwrap_err();
   assert!(
     matches!(err, ResampleError::InvalidFilterSupport(_)),
     "tiny support must reject, got {err:?}"
@@ -835,7 +835,7 @@ fn zero_tap_support_rejected_before_allocation() {
     }
   }
   arm_filter_axis_alloc_failure();
-  let err = FilterAxis::build(202, 101, &TinySupport).unwrap_err();
+  let err = FilterAxis::build(202, 101, &TinySupport, 0.0).unwrap_err();
   assert!(
     matches!(err, ResampleError::InvalidFilterSupport(_)),
     "zero-tap support must be rejected before allocation, got {err:?}"
@@ -845,7 +845,7 @@ fn zero_tap_support_rejected_before_allocation() {
   // armed `AllocationFailed`) so it cannot leak into a later test on this
   // thread — and incidentally re-confirming the failpoint was never reached
   // on the rejected build above.
-  let drained = FilterAxis::build(16, 4, &Triangle).unwrap_err();
+  let drained = FilterAxis::build(16, 4, &Triangle, 0.0).unwrap_err();
   assert!(
     matches!(drained, ResampleError::AllocationFailed(_)),
     "the still-armed failpoint must trip on the next valid build, got {drained:?}"
@@ -858,7 +858,7 @@ fn valid_support_hits_armed_alloc_failpoint() {
   // Triangle 2:1 downscale passes the dry pass, so it reaches the armed
   // first-table reservation and surfaces the recoverable `AllocationFailed`.
   arm_filter_axis_alloc_failure();
-  let err = FilterAxis::build(16, 8, &Triangle).unwrap_err();
+  let err = FilterAxis::build(16, 8, &Triangle, 0.0).unwrap_err();
   assert!(
     matches!(err, ResampleError::AllocationFailed(_)),
     "a valid kernel must reach the armed table reservation, got {err:?}"
@@ -878,7 +878,7 @@ fn huge_out_size_fails_fast_without_scan() {
   // (a) Identity axis at `usize::MAX`: the overflow preflight rejects it
   // (`out_size + 1` overflows `usize`) before any allocation.
   assert!(matches!(
-    FilterAxis::build(usize::MAX, usize::MAX, &Triangle).unwrap_err(),
+    FilterAxis::build(usize::MAX, usize::MAX, &Triangle, 0.0).unwrap_err(),
     ResampleError::Overflow(_) | ResampleError::AllocationFailed(_)
   ));
 
@@ -888,7 +888,7 @@ fn huge_out_size_fails_fast_without_scan() {
   // rejected as `InvalidFilterSupport` in O(1) — a per-output scan would have
   // ground through ~1.8e16 iterations here.
   assert!(matches!(
-    FilterAxis::build(1usize << 54, 1usize << 54, &Triangle).unwrap_err(),
+    FilterAxis::build(1usize << 54, 1usize << 54, &Triangle, 0.0).unwrap_err(),
     ResampleError::InvalidFilterSupport(_)
   ));
 
@@ -898,7 +898,7 @@ fn huge_out_size_fails_fast_without_scan() {
   // it in O(1) before any reservation; an unchecked `xmax - xmin` would
   // underflow (panic in debug, wrap in release) at the last window instead.
   assert!(matches!(
-    FilterAxis::build(36028797018962971, 18014398509481485, &CatmullRom).unwrap_err(),
+    FilterAxis::build(36028797018962971, 18014398509481485, &CatmullRom, 0.0).unwrap_err(),
     ResampleError::InvalidFilterSupport(_)
   ));
 }
@@ -932,7 +932,7 @@ fn max_overlap_bounds_the_ring() {
     &CubicBSpline as &dyn FilterKernel,
   ] {
     for &(in_size, out_size) in &[(64usize, 17usize), (200, 41), (1920, 360)] {
-      let axis = FilterAxis::build(in_size, out_size, k).unwrap();
+      let axis = FilterAxis::build(in_size, out_size, k, 0.0).unwrap();
       let mut brute = 0usize;
       for y in 0..in_size {
         let mut c = 0usize;

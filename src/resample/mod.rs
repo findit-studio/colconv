@@ -326,6 +326,8 @@ impl Resampler for Bicublin {
       self.out_h,
       &SwscaleBicubic,
       &Triangle,
+      0.0,
+      0.0,
     )
     .map(Some)
   }
@@ -647,6 +649,20 @@ pub struct ResamplePlan {
   /// Vertical **chroma**-plane filter windows — the `chroma_h -> out_h`
   /// twin of [`Self::filter_h_chroma`]. `Some` only for a BICUBLIN plan.
   filter_v_chroma: Option<FilterAxis>,
+  /// Horizontal chroma **sampling phase** (RFC #238 chroma siting), in
+  /// chroma-sample units: a sub-sample additive shift of the chroma
+  /// resample's window centers (`center = (xx + 0.5) * scale + h_phase`).
+  /// `0.0` is co-sited — today's reconstruction — so every plan built in this
+  /// foundation carries `0.0` and is byte-identical to before the field
+  /// existed. A [`Self::bicublin`] plan bakes it into the chroma
+  /// [`FilterAxis`] centers at build time; an area chroma plan
+  /// ([`Self::area_chroma_420`] and siblings) carries it for the phase-aware
+  /// folded-weight series, leaving the integer cell-overlap weights unchanged
+  /// while it is `0.0`.
+  h_phase: f64,
+  /// Vertical chroma sampling phase — the `h_phase` twin on the V axis
+  /// (e.g. 4:2:0 Bottom siting). `0.0` = co-sited.
+  v_phase: f64,
 }
 
 impl ResamplePlan {
@@ -683,6 +699,8 @@ impl ResamplePlan {
       filter_v: None,
       filter_h_chroma: None,
       filter_v_chroma: None,
+      h_phase: 0.0,
+      v_phase: 0.0,
     })
   }
 
@@ -700,8 +718,8 @@ impl ResamplePlan {
   ) -> Result<Self, ResampleError> {
     // Sequential on purpose: the second axis is not built when the first
     // has already failed (and a hostile-support rejection short-circuits).
-    let filter_h = FilterAxis::build(src_w, out_w, kernel)?;
-    let filter_v = FilterAxis::build(src_h, out_h, kernel)?;
+    let filter_h = FilterAxis::build(src_w, out_w, kernel, 0.0)?;
+    let filter_v = FilterAxis::build(src_h, out_h, kernel, 0.0)?;
     Ok(Self {
       src_w,
       src_h,
@@ -714,6 +732,8 @@ impl ResamplePlan {
       filter_v: Some(filter_v),
       filter_h_chroma: None,
       filter_v_chroma: None,
+      h_phase: 0.0,
+      v_phase: 0.0,
     })
   }
 
@@ -752,14 +772,16 @@ impl ResamplePlan {
     out_h: usize,
     luma_kernel: &dyn FilterKernel,
     chroma_kernel: &dyn FilterKernel,
+    h_phase: f64,
+    v_phase: f64,
   ) -> Result<Self, ResampleError> {
     // Sequential on purpose (matching [`Self::filter`]): a failing axis
     // short-circuits before the next is built, so a hostile support never
     // sizes a later axis's table.
-    let filter_h = FilterAxis::build(src_w, out_w, luma_kernel)?;
-    let filter_v = FilterAxis::build(src_h, out_h, luma_kernel)?;
-    let filter_h_chroma = FilterAxis::build(chroma_w, out_w, chroma_kernel)?;
-    let filter_v_chroma = FilterAxis::build(chroma_h, out_h, chroma_kernel)?;
+    let filter_h = FilterAxis::build(src_w, out_w, luma_kernel, 0.0)?;
+    let filter_v = FilterAxis::build(src_h, out_h, luma_kernel, 0.0)?;
+    let filter_h_chroma = FilterAxis::build(chroma_w, out_w, chroma_kernel, h_phase)?;
+    let filter_v_chroma = FilterAxis::build(chroma_h, out_h, chroma_kernel, v_phase)?;
     Ok(Self {
       src_w,
       src_h,
@@ -772,6 +794,8 @@ impl ResamplePlan {
       filter_v: Some(filter_v),
       filter_h_chroma: Some(filter_h_chroma),
       filter_v_chroma: Some(filter_v_chroma),
+      h_phase,
+      v_phase,
     })
   }
 
@@ -787,6 +811,8 @@ impl ResamplePlan {
     luma_h: usize,
     out_w: usize,
     out_h: usize,
+    h_phase: f64,
+    v_phase: f64,
   ) -> Result<Self, ResampleError> {
     let fail_overflow =
       || ResampleError::Overflow(PlanGeometry::new(chroma_w, luma_h, out_w, out_h));
@@ -810,6 +836,8 @@ impl ResamplePlan {
       filter_v: None,
       filter_h_chroma: None,
       filter_v_chroma: None,
+      h_phase,
+      v_phase,
     })
   }
 
@@ -825,6 +853,8 @@ impl ResamplePlan {
     luma_h: usize,
     out_w: usize,
     out_h: usize,
+    h_phase: f64,
+    v_phase: f64,
   ) -> Result<Self, ResampleError> {
     let fail = |e: AxisError| match e {
       AxisError::Overflow => {
@@ -848,6 +878,8 @@ impl ResamplePlan {
       filter_v: None,
       filter_h_chroma: None,
       filter_v_chroma: None,
+      h_phase,
+      v_phase,
     })
   }
 
@@ -865,6 +897,8 @@ impl ResamplePlan {
     luma_h: usize,
     out_w: usize,
     out_h: usize,
+    h_phase: f64,
+    v_phase: f64,
   ) -> Result<Self, ResampleError> {
     let fail = |e: AxisError| match e {
       AxisError::Overflow => {
@@ -888,6 +922,8 @@ impl ResamplePlan {
       filter_v: None,
       filter_h_chroma: None,
       filter_v_chroma: None,
+      h_phase,
+      v_phase,
     })
   }
 
@@ -905,6 +941,8 @@ impl ResamplePlan {
     frame_h: usize,
     out_w: usize,
     out_h: usize,
+    h_phase: f64,
+    v_phase: f64,
   ) -> Result<Self, ResampleError> {
     let fail = |e: AxisError| match e {
       AxisError::Overflow => {
@@ -928,6 +966,8 @@ impl ResamplePlan {
       filter_v: None,
       filter_h_chroma: None,
       filter_v_chroma: None,
+      h_phase,
+      v_phase,
     })
   }
 

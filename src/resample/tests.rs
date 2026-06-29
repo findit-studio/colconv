@@ -530,7 +530,7 @@ fn area_chroma_420_reports_allocation_failure_as_such() {
   // a real multi-exabyte allocation that hosts refuse but miri aborts
   // on. usize::MAX/8 starts entries overflow capacity while every
   // arithmetic check still passes.
-  let err = ResamplePlan::area_chroma_420(4, 8, 2, usize::MAX / 8).unwrap_err();
+  let err = ResamplePlan::area_chroma_420(4, 8, 2, usize::MAX / 8, 0.0, 0.0).unwrap_err();
   assert!(err.is_allocation_failed(), "got {err:?}");
 }
 

@@ -804,7 +804,7 @@ impl FilterAxis {
   /// filterscale = max(scale, 1)                       (==1 only at unit scale)
   /// support     = kernel.support() * filterscale
   /// for each output xx:
-  ///   center = (xx + 0.5) * scale
+  ///   center = (xx + 0.5) * scale + phase
   ///   xmin   = max(0,       floor(center - support))
   ///   xmax   = min(in_size, ceil (center + support))  // exclusive
   ///   w[k]   = kernel.weight((xmin + k + 0.5 - center) / filterscale)
@@ -816,6 +816,13 @@ impl FilterAxis {
   /// the kernel's unit profile. Every window is renormalized after
   /// clamping to `[0, in_size)`, so edge windows (clipped on one side)
   /// still sum to one — preserving average brightness.
+  ///
+  /// `phase` is an additive sub-sample shift of every window center (in
+  /// source-sample units): `center = (xx + 0.5) * scale + phase`. It carries a
+  /// chroma axis's sampling position (siting); at `phase == 0.0` (co-sited, the
+  /// only value this foundation passes) it is a literal no-op — adding `0.0` to
+  /// the strictly-positive `center` leaves every window byte-identical, so the
+  /// `u8` (`coeffs_q8`) and `u16` (`coeffs`) streams emit the same bytes.
   ///
   /// Alongside the full-precision `f32` set, each window is also snapped to
   /// PIL's 8bpc fixed-point grid into `coeffs_q8`: the un-normalized `f64`
@@ -840,6 +847,7 @@ impl FilterAxis {
     in_size: usize,
     out_size: usize,
     kernel: &dyn FilterKernel,
+    phase: f64,
   ) -> Result<Self, ResampleError> {
     debug_assert!(in_size > 0 && out_size > 0);
     let support_unit = kernel.support();
@@ -955,7 +963,7 @@ impl FilterAxis {
     let q8_scale_f32 = (1u32 << PRECISION_BITS) as f32;
 
     for xx in 0..out_size {
-      let center = (xx as f64 + 0.5) * scale;
+      let center = (xx as f64 + 0.5) * scale + phase;
       // `floor(center - support)` is >= some value >= -1 for the first
       // output, so the `max(0, .)` clamp is the only lower guard needed;
       // the cast is taken after the clamp so it never sees a negative.

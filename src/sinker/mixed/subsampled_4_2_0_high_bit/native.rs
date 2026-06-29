@@ -143,7 +143,7 @@ impl NativeYuv420U16 {
       // Vertical chroma weighting runs in the LUMA domain so an odd
       // trailing luma row weights its chroma row by half; the plan's
       // stored dims (cw, h) are the per-plane denominators.
-      let cplan = ResamplePlan::area_chroma_420(cw, h, plan.out_w(), plan.out_h())?;
+      let cplan = ResamplePlan::area_chroma_420(cw, h, plan.out_w(), plan.out_h(), 0.0, 0.0)?;
       Some(NativeChromaU16 {
         u: AreaStream::new(cplan.h(), cplan.v(), cplan.src_w(), cplan.src_h(), 1)?,
         v: AreaStream::new(cplan.h(), cplan.v(), cplan.src_w(), cplan.src_h(), 1)?,

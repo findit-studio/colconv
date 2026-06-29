@@ -1210,7 +1210,7 @@ impl NativeYuv420 {
       // Vertical chroma weighting runs in the LUMA domain so an odd
       // trailing luma row weights its chroma row by half; the plan's
       // stored dims (cw, h) are the per-plane denominators.
-      let cplan = ResamplePlan::area_chroma_420(cw, h, plan.out_w(), plan.out_h())?;
+      let cplan = ResamplePlan::area_chroma_420(cw, h, plan.out_w(), plan.out_h(), 0.0, 0.0)?;
       Some(NativeChroma {
         u: AreaStream::new(cplan.h(), cplan.v(), cplan.src_w(), cplan.src_h(), 1)?,
         v: AreaStream::new(cplan.h(), cplan.v(), cplan.src_w(), cplan.src_h(), 1)?,
@@ -2111,7 +2111,7 @@ pub(super) fn yuv420p_process_resampled(
       matrix,
       full_range,
       2,
-      || ResamplePlan::area_chroma_420(w / 2, h, plan.out_w(), plan.out_h()),
+      || ResamplePlan::area_chroma_420(w / 2, h, plan.out_w(), plan.out_h(), 0.0, 0.0),
       w,
       plan,
       idx,
@@ -3310,7 +3310,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuv410p, R> {
           matrix,
           full_range,
           4,
-          || ResamplePlan::area_chroma_410(w / 4, h, plan.out_w(), plan.out_h()),
+          || ResamplePlan::area_chroma_410(w / 4, h, plan.out_w(), plan.out_h(), 0.0, 0.0),
           w,
           plan,
           idx,
@@ -5023,7 +5023,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuv440p, R> {
             w,
             h,
             2,
-            || ResamplePlan::area_chroma_440(w, h, plan.out_w(), plan.out_h()),
+            || ResamplePlan::area_chroma_440(w, h, plan.out_w(), plan.out_h(), 0.0, 0.0),
             use_simd,
           )?;
           if frozen_native_route.is_none() && need_output {
@@ -5055,7 +5055,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuv440p, R> {
               matrix,
               full_range,
               2,
-              || ResamplePlan::area_chroma_440(w, h, plan.out_w(), plan.out_h()),
+              || ResamplePlan::area_chroma_440(w, h, plan.out_w(), plan.out_h(), 0.0, 0.0),
               w,
               plan,
               idx,
@@ -5402,7 +5402,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuv411p, R> {
           matrix,
           full_range,
           1,
-          || ResamplePlan::area_chroma_411(w, h, plan.out_w(), plan.out_h()),
+          || ResamplePlan::area_chroma_411(w, h, plan.out_w(), plan.out_h(), 0.0, 0.0),
           w,
           plan,
           idx,
