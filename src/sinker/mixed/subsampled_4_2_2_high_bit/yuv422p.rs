@@ -1,10 +1,10 @@
 use super::super::{
-  GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, NativeRouteChanged,
-  RowIndexOutOfRange, RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match,
-  chroma_422_center_sited_h, deinterleave_y_high_bit_masked, packed_yuv422_triple_filter_resample,
-  packed_yuv422_triple_resample, reset_high_bit_yuv_streams, rgb_row_buf_or_scratch,
-  rgba_plane_row_slice, rgba_u16_plane_row_slice,
-  subsampled_4_2_0_high_bit::{reserve_420_chroma_full_u16, upsample_420_chroma_center_h_u16},
+  ChromaU16, GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError,
+  NativeRouteChanged, RowIndexOutOfRange, RowShapeMismatch, RowSlice, WidthAlignment,
+  check_dimensions_match, chroma_422_center_sited_h, deinterleave_y_high_bit_masked,
+  packed_yuv422_triple_filter_resample, packed_yuv422_triple_resample, reconstruct_chroma,
+  reset_high_bit_yuv_streams, rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  rgba_u16_plane_row_slice, subsampled_4_2_0_high_bit::reserve_420_chroma_full_u16,
   yuv_planar16_process_native,
 };
 use crate::{
@@ -391,7 +391,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p9<BE>, R> {
     //     RGBA outputs write straight into their caller buffers (the rgb_u16 plane
     //     itself stages the rgba_u16 expand) and never grow a scratch; this format
     //     exposes no luma_u16 output.
-    // The later `upsample_420_chroma_center_h_u16` / `rgb_row_buf_or_scratch` calls
+    // The later `reconstruct_chroma` / `rgb_row_buf_or_scratch` calls
     // reuse the already-sized buffers, so the default path is byte-identical; only
     // the failure-path ordering changes.
     let need_centered_chroma =
@@ -416,12 +416,12 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p9<BE>, R> {
     // leaves it `None`, so the fused 4:2:2 kernels upsample chroma in-register and
     // the output stays byte-identical.
     let centered = if need_centered_chroma {
-      Some(upsample_420_chroma_center_h_u16::<BITS>(
+      Some(reconstruct_chroma(
+        ChromaU16::<BITS> { big_endian: BE },
         chroma_full_u16,
         row.u_half(),
         row.v_half(),
         w,
-        BE,
       ))
     } else {
       None
@@ -1017,7 +1017,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p10<BE>, R> {
     //     RGBA outputs write straight into their caller buffers (the rgb_u16 plane
     //     itself stages the rgba_u16 expand) and never grow a scratch; this format
     //     exposes no luma_u16 output.
-    // The later `upsample_420_chroma_center_h_u16` / `rgb_row_buf_or_scratch` calls
+    // The later `reconstruct_chroma` / `rgb_row_buf_or_scratch` calls
     // reuse the already-sized buffers, so the default path is byte-identical; only
     // the failure-path ordering changes.
     let need_centered_chroma =
@@ -1042,12 +1042,12 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p10<BE>, R> {
     // leaves it `None`, so the fused 4:2:2 kernels upsample chroma in-register and
     // the output stays byte-identical.
     let centered = if need_centered_chroma {
-      Some(upsample_420_chroma_center_h_u16::<BITS>(
+      Some(reconstruct_chroma(
+        ChromaU16::<BITS> { big_endian: BE },
         chroma_full_u16,
         row.u_half(),
         row.v_half(),
         w,
-        BE,
       ))
     } else {
       None
@@ -1628,7 +1628,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p12<BE>, R> {
     //     RGBA outputs write straight into their caller buffers (the rgb_u16 plane
     //     itself stages the rgba_u16 expand) and never grow a scratch; this format
     //     exposes no luma_u16 output.
-    // The later `upsample_420_chroma_center_h_u16` / `rgb_row_buf_or_scratch` calls
+    // The later `reconstruct_chroma` / `rgb_row_buf_or_scratch` calls
     // reuse the already-sized buffers, so the default path is byte-identical; only
     // the failure-path ordering changes.
     let need_centered_chroma =
@@ -1653,12 +1653,12 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p12<BE>, R> {
     // leaves it `None`, so the fused 4:2:2 kernels upsample chroma in-register and
     // the output stays byte-identical.
     let centered = if need_centered_chroma {
-      Some(upsample_420_chroma_center_h_u16::<BITS>(
+      Some(reconstruct_chroma(
+        ChromaU16::<BITS> { big_endian: BE },
         chroma_full_u16,
         row.u_half(),
         row.v_half(),
         w,
-        BE,
       ))
     } else {
       None
@@ -2239,7 +2239,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p14<BE>, R> {
     //     RGBA outputs write straight into their caller buffers (the rgb_u16 plane
     //     itself stages the rgba_u16 expand) and never grow a scratch; this format
     //     exposes no luma_u16 output.
-    // The later `upsample_420_chroma_center_h_u16` / `rgb_row_buf_or_scratch` calls
+    // The later `reconstruct_chroma` / `rgb_row_buf_or_scratch` calls
     // reuse the already-sized buffers, so the default path is byte-identical; only
     // the failure-path ordering changes.
     let need_centered_chroma =
@@ -2264,12 +2264,12 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p14<BE>, R> {
     // leaves it `None`, so the fused 4:2:2 kernels upsample chroma in-register and
     // the output stays byte-identical.
     let centered = if need_centered_chroma {
-      Some(upsample_420_chroma_center_h_u16::<BITS>(
+      Some(reconstruct_chroma(
+        ChromaU16::<BITS> { big_endian: BE },
         chroma_full_u16,
         row.u_half(),
         row.v_half(),
         w,
-        BE,
       ))
     } else {
       None
@@ -2857,7 +2857,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p16<BE>, R> {
     //     RGBA outputs write straight into their caller buffers (the rgb_u16 plane
     //     itself stages the rgba_u16 expand) and never grow a scratch; this format
     //     exposes no luma_u16 output.
-    // The later `upsample_420_chroma_center_h_u16` / `rgb_row_buf_or_scratch` calls
+    // The later `reconstruct_chroma` / `rgb_row_buf_or_scratch` calls
     // reuse the already-sized buffers, so the default path is byte-identical; only
     // the failure-path ordering changes.
     let need_centered_chroma =
@@ -2882,12 +2882,12 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p16<BE>, R> {
     // leaves it `None`, so the fused 4:2:2 kernels upsample chroma in-register and
     // the output stays byte-identical.
     let centered = if need_centered_chroma {
-      Some(upsample_420_chroma_center_h_u16::<BITS>(
+      Some(reconstruct_chroma(
+        ChromaU16::<BITS> { big_endian: BE },
         chroma_full_u16,
         row.u_half(),
         row.v_half(),
         w,
-        BE,
       ))
     } else {
       None
