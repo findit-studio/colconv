@@ -45,6 +45,8 @@
 //!   `yuv-planar`-gated 4:2:0 / 4:4:0 chroma-plan builders under
 //!   `yuv-semi-planar`.
 
+use core::ops::ControlFlow;
+
 use super::{HsvFrameMut, MixedSinkerError, frozen_outputs_check};
 // `ColorMatrix`, `PlanGeometry`, and `try_zeroed` back the `yuv-planar`-only
 // RGB-free HSV-only area join below; the rest serve the always-present
@@ -58,6 +60,95 @@ use crate::{
   resample::{AreaStream, OutOfSequenceRow, ResampleError, ResamplePlan, RowResampler},
   row::*,
 };
+
+/// Shared L1 resample preflight (RFC #238): the element-agnostic
+/// freeze-and-sequence contract every routed row-stage resample arm runs
+/// before it allocates a stream or feeds a row. It wraps
+/// [`frozen_outputs_check`] with the surrounding discipline so no individual
+/// arm can get the ordering wrong:
+///
+/// 1. **No-output short-circuit.** `expected` is `None` exactly when no
+///    output is attached (the caller maps "no stream is fed this row" to
+///    `None`). The helper then returns `ControlFlow::Break` BEFORE the freeze,
+///    so a no-output call stays a no-op and stores no snapshot that a later
+///    attach-then-retry would trip on. The caller turns `Break` into `Ok(())`.
+/// 2. **Pre-freeze sequence check.** On the first row (nothing frozen yet) an
+///    out-of-sequence row is rejected before the freeze, so a rejected first
+///    row stores no snapshot to poison a retry.
+/// 3. **Freeze.** [`frozen_outputs_check`] freezes / verifies the full output
+///    set; on a later row it runs first, so a mid-frame output-set change
+///    surfaces as `ResampleOutputsChanged` rather than being masked by a
+///    freshly-attached stream's row-0 sequence mismatch.
+/// 4. **Post-freeze sequence check.** Re-checks sequencing (covering the
+///    failure-retry case where the stream was never built, so `expected == 0`)
+///    before the caller's fallible stream / scratch allocation.
+///
+/// `ControlFlow::Continue` means: outputs frozen, row in sequence — the caller
+/// may now allocate its streams + scratch (all before the first feed, the
+/// reserve-before-feed atomicity ordering this preflight precedes) and
+/// feed/emit. `expected` is supplied by the caller because the per-row
+/// sequence counter lives on whichever concrete stream (`AreaStream` /
+/// `FilterStream` / the HSV join's Y stream) is fed every row, keeping this
+/// helper free of any stream-element type.
+#[cfg_attr(
+  not(any(feature = "yuv-planar", feature = "yuv-semi-planar")),
+  allow(dead_code)
+)]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn resample_preflight(
+  resample_outputs: &mut Option<super::FrozenOutputs>,
+  luma: &Option<&mut [u8]>,
+  luma_u16: &Option<&mut [u16]>,
+  rgb: &Option<&mut [u8]>,
+  rgba: &Option<&mut [u8]>,
+  rgb_u16: &Option<&mut [u16]>,
+  rgba_u16: &Option<&mut [u16]>,
+  rgb_f32: &Option<&mut [f32]>,
+  rgba_f32: &Option<&mut [f32]>,
+  xyz_f32: &Option<&mut [f32]>,
+  rgb_f16: &Option<&mut [half::f16]>,
+  rgba_f16: &Option<&mut [half::f16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  luma_f32: &Option<&mut [f32]>,
+  expected: Option<usize>,
+  idx: usize,
+) -> Result<ControlFlow<()>, MixedSinkerError> {
+  // No output attached: short-circuit before the freeze (stores no snapshot a
+  // later attach-then-retry would trip on).
+  let Some(expected) = expected else {
+    return Ok(ControlFlow::Break(()));
+  };
+  // First row: reject an out-of-sequence row before the freeze.
+  if resample_outputs.is_none() && expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    rgb_u16,
+    rgba_u16,
+    rgb_f32,
+    rgba_f32,
+    xyz_f32,
+    rgb_f16,
+    rgba_f16,
+    hsv,
+    luma_f32,
+    idx,
+  )?;
+  // Post-freeze: reject an out-of-sequence later row before any allocation.
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  Ok(ControlFlow::Continue(()))
+}
 
 /// RGB-free YUV-domain HSV-only **area** join for the shared planar /
 /// semi-planar row-stage resample — the colour twin of the native fast
@@ -423,30 +514,17 @@ pub(super) fn planar_dual_resample(
   let need_luma = luma.is_some() || luma_u16.is_some();
   let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
 
-  // Single sequence check, on whichever stream is fed every row (all
-  // attached streams advance in lockstep). A no-output call has no stream
-  // to sequence and stays a no-op regardless of the row index — returned
-  // before the freeze so it stores no snapshot a later attach-then-retry
-  // would trip on.
+  // Sequence-counter row for the shared L1 preflight: whichever stream is fed
+  // every row (all attached streams advance in lockstep), or `None` when no
+  // output is attached so the preflight short-circuits to a no-op.
   let expected = if need_luma {
-    luma_stream.as_ref().map_or(0, |stream| stream.next_y())
+    Some(luma_stream.as_ref().map_or(0, |stream| stream.next_y()))
   } else if need_color {
-    rgb_stream.as_ref().map_or(0, |stream| stream.next_y())
+    Some(rgb_stream.as_ref().map_or(0, |stream| stream.next_y()))
   } else {
-    return Ok(());
+    None
   };
-  // First row: reject an out-of-sequence row BEFORE the freeze, so a
-  // rejected first row stores no snapshot that would poison a retry. On a
-  // later row the freeze runs first (below), so a mid-frame output-set
-  // change is reported as ResampleOutputsChanged rather than masked by a
-  // freshly-attached stream's row-0 sequence mismatch (attaching a luma or
-  // colour output mid-frame spins that stream fresh at row 0).
-  if resample_outputs.is_none() && expected != idx {
-    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
-      OutOfSequenceRow::new(expected, idx),
-    )));
-  }
-  frozen_outputs_check(
+  if let ControlFlow::Break(()) = resample_preflight(
     resample_outputs,
     luma,
     luma_u16,
@@ -461,12 +539,10 @@ pub(super) fn planar_dual_resample(
     &None,
     hsv,
     &None,
+    expected,
     idx,
-  )?;
-  if expected != idx {
-    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
-      OutOfSequenceRow::new(expected, idx),
-    )));
+  )? {
+    return Ok(());
   }
   if need_luma && luma_stream.is_none() {
     *luma_stream = Some({
@@ -683,33 +759,25 @@ pub(super) fn planar_dual_filter_resample(
       .expect("filter plan carries vertical windows"),
   );
 
-  // Single sequence check, on whichever stream is fed every row (all
-  // attached streams advance in lockstep). A no-output call has no stream
-  // to sequence and stays a no-op regardless of the row index — returned
-  // before the freeze so it stores no snapshot a later attach-then-retry
-  // would trip on.
+  // Sequence-counter row for the shared L1 preflight: whichever stream is fed
+  // every row (all attached streams advance in lockstep), or `None` when no
+  // output is attached so the preflight short-circuits to a no-op.
   let expected = if need_luma {
-    luma_filter_stream
-      .as_ref()
-      .map_or(0, |stream| stream.next_y())
+    Some(
+      luma_filter_stream
+        .as_ref()
+        .map_or(0, |stream| stream.next_y()),
+    )
   } else if need_color {
-    rgb_filter_stream
-      .as_ref()
-      .map_or(0, |stream| stream.next_y())
+    Some(
+      rgb_filter_stream
+        .as_ref()
+        .map_or(0, |stream| stream.next_y()),
+    )
   } else {
-    return Ok(());
+    None
   };
-  // First row: reject an out-of-sequence row BEFORE the freeze, so a
-  // rejected first row stores no snapshot that would poison a retry. On a
-  // later row the freeze runs first (below), so a mid-frame output-set
-  // change is reported as ResampleOutputsChanged rather than masked by a
-  // freshly-attached stream's row-0 sequence mismatch.
-  if resample_outputs.is_none() && expected != idx {
-    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
-      OutOfSequenceRow::new(expected, idx),
-    )));
-  }
-  frozen_outputs_check(
+  if let ControlFlow::Break(()) = resample_preflight(
     resample_outputs,
     luma,
     luma_u16,
@@ -724,12 +792,10 @@ pub(super) fn planar_dual_filter_resample(
     &None,
     hsv,
     &None,
+    expected,
     idx,
-  )?;
-  if expected != idx {
-    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
-      OutOfSequenceRow::new(expected, idx),
-    )));
+  )? {
+    return Ok(());
   }
   if need_luma && luma_filter_stream.is_none() {
     *luma_filter_stream = Some({
