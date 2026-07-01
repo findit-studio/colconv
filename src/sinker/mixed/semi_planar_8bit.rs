@@ -34,7 +34,7 @@ use crate::{PixelSink, row::*, source::*};
 use super::{
   HsvFrameMut, NativeRouteChanged, chroma_420_center_sited_h, chroma_422_center_sited_h,
   planar_8bit::{
-    NativePlanarYuv, native_planar_preflight, reserve_420_chroma_full,
+    NativePlanarYuv, native_planar_preflight_check_only, reserve_420_chroma_full,
     upsample_420_chroma_center_h, yuv_planar_process_native, yuv420p_process_native,
   },
 };
@@ -260,12 +260,14 @@ fn semi_planar_process_native(
 /// the SAME swapped-order split the NV21 4:2:0 path uses.
 ///
 /// Atomicity mirrors [`semi_planar_process_native`]: the join's COMPLETE
-/// pre-feed rejection preflight runs FIRST (via [`native_planar_preflight`]),
-/// before the fallible U / V scratch grow, so a rejected row returns its
-/// deterministic typed error (`OutOfSequenceRow` / `ResampleOutputsChanged`),
-/// never `AllocationFailed`, and grows no sink state; the de-interleave
-/// writes only the private scratch, so no caller output is touched until the
-/// join's own preflight (re-run inside the delegate) clears.
+/// pre-feed rejection preflight runs FIRST (via
+/// [`native_planar_preflight_check_only`]), before the fallible U / V scratch
+/// grow, so a rejected row returns its deterministic typed error
+/// (`OutOfSequenceRow` / `ResampleOutputsChanged`), never `AllocationFailed`,
+/// and grows no sink state. It is compare-only (no output-set freeze), so the
+/// scratch grow stays a pre-feed step: the delegate commits the freeze only
+/// after its own build + scratch succeed. The de-interleave writes only the
+/// private scratch, so no caller output is touched until the delegate clears.
 #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
 #[allow(clippy::too_many_arguments)]
 fn semi_planar_process_native_non420(
@@ -299,10 +301,12 @@ fn semi_planar_process_native_non420(
   // sequence first colour row OR mid-frame output change) returns its
   // deterministic typed error, never AllocationFailed under allocation
   // pressure, and leaves the scratch untouched (the crate's
-  // preflight-atomicity contract). `Ok(false)` is the no-output no-op:
-  // return without reserving. `yuv_planar_process_native` re-runs this
-  // identical preflight harmlessly, keeping a single source of truth.
-  if !native_planar_preflight(
+  // preflight-atomicity contract). Compare-only (no output-set freeze), so the
+  // scratch grow below stays a pre-feed step ahead of the delegate's commit.
+  // `Ok(false)` is the no-output no-op: return without reserving.
+  // `yuv_planar_process_native` re-runs this identical compare harmlessly and
+  // owns the commit, keeping a single source of truth.
+  if !native_planar_preflight_check_only(
     native_planar,
     resample_outputs,
     rgb,

@@ -243,6 +243,83 @@ impl LinearLightFrame {
   }
 }
 
+/// Check-only Linear preflight: the exact rejects [`linear_light_resample`]
+/// runs (unsupported filter plan, mid-frame output-set / transfer / mode
+/// change, out-of-sequence row) with **no** state mutation and **no** commit.
+///
+/// RFC #238's centered-Linear path must reserve and reconstruct full-width
+/// chroma before it can decode, so it runs this check FIRST and only reserves
+/// once every rejection has passed — a rejected row therefore allocates
+/// nothing (#180). [`linear_light_resample`] re-runs the full preflight and
+/// owns the transactional output/transfer/mode commit, so calling this ahead
+/// of it is a pure, idempotent gate.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn linear_light_preflight(
+  frame: &Option<LinearLightFrame>,
+  resample_outputs: &Option<FrozenOutputs>,
+  luma: &Option<&mut [u8]>,
+  luma_u16: &Option<&mut [u16]>,
+  rgb: &Option<&mut [u8]>,
+  rgba: &Option<&mut [u8]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  tf: TransferFunction,
+  mode: LinearMode,
+  plan: &ResamplePlan,
+  idx: usize,
+) -> Result<(), MixedSinkerError> {
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
+  let snapshot = FrozenOutputs::snapshot(
+    luma.as_deref(),
+    luma_u16.as_deref(),
+    rgb.as_deref(),
+    rgba.as_deref(),
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    hsv.as_mut().map(|f| {
+      let (h, s, v) = f.hsv();
+      (&h[..], &s[..], &v[..])
+    }),
+    None,
+  );
+  if let Some(frozen) = resample_outputs
+    && *frozen != snapshot
+  {
+    return Err(MixedSinkerError::ResampleOutputsChanged(
+      ResampleOutputsChanged::new(idx),
+    ));
+  }
+  let expected = frame.as_ref().map_or(0, |b| b.next_y);
+  if idx != expected {
+    return Err(MixedSinkerError::Resample(
+      crate::resample::ResampleError::OutOfSequenceRow(crate::resample::OutOfSequenceRow::new(
+        expected, idx,
+      )),
+    ));
+  }
+  if let Some(b) = frame.as_ref()
+    && b.frozen_transfer != tf
+  {
+    return Err(MixedSinkerError::TransferFunctionChanged(
+      TransferFunctionChanged::new(idx),
+    ));
+  }
+  if let Some(b) = frame.as_ref()
+    && b.frozen_linear_mode != mode
+  {
+    return Err(MixedSinkerError::LinearModeChanged(LinearModeChanged::new(
+      idx,
+    )));
+  }
+  Ok(())
+}
+
 /// Runs the [`AveragingDomain::Linear`](crate::resample::AveragingDomain::Linear)
 /// linear-light resample for one source row of a planar 8-bit YUV frame.
 ///

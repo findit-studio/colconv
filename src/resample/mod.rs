@@ -545,6 +545,125 @@ impl AxisSpans {
     Self::area_subsampled(src_full, out, 2)
   }
 
+  /// Horizontal chroma spans for the RFC #238 **centered** 4:2:x siting — the
+  /// folded triangle⊗box weights (design §3). A centered chroma sample sits at
+  /// `+0.5` luma between the two columns it covers, so reconstructing full
+  /// width is the #302 `1/4`–`3/4` MPEG-1 / JPEG triangle
+  /// ([`chroma_upsample_2to1_center_h`](crate::row::scalar::chroma_upsample_2to1_center_h)):
+  /// even full column `2j → (c[j-1] + 3·c[j]) / 4`, odd `2j+1 → (3·c[j] +
+  /// c[j+1]) / 4`, with boundary replication (`c[-1] → c[0]`,
+  /// `c[chroma_w] → c[chroma_w-1]`). This folds that reconstruction INTO the
+  /// box bin so ONE phased weighted area pass on the SUBSAMPLED chroma grid
+  /// reproduces "reconstruct to full width, then box-average" with a SINGLE
+  /// rounding: `W[o,j] = Σ_X w_bin[o,X]·r[X,j]`, where `w_bin` are the
+  /// full-grid box overlaps ([`Self::area`] over `2·chroma_w → out`) and `r`
+  /// is the triangle. The triangle is scaled ×4 to stay integral (`r ∈ {1, 3,
+  /// 4}`), so each output span sums to `4·(2·chroma_w)` — the H half of the
+  /// caller's `src_w·src_h` normalization denominator.
+  ///
+  /// At phase 0 the triangle degenerates to nearest-replicate and this equals
+  /// [`Self::area`] over `chroma_w → out` (scaled by the same factor); the
+  /// caller keeps the unscaled [`Self::area`] for the co-sited path, so this
+  /// builder is invoked only for the centered group. `chroma_w ≥ 1` (a real
+  /// 4:2:x frame), so `chroma_w - 1` below never underflows.
+  #[cfg(feature = "yuv-planar")]
+  fn area_chroma_phased_h_centered(chroma_w: usize, out: usize) -> Result<Self, AxisError> {
+    let full_w = chroma_w.checked_mul(2).ok_or(AxisError::Overflow)?;
+    // Each folded span sums to `4·full_w`; bound it so the `u64`-accumulated
+    // weights cast back to `usize` losslessly below.
+    full_w.checked_mul(4).ok_or(AxisError::Overflow)?;
+    let box_spans = Self::area(full_w, out)?;
+    // First / last chroma cell the centered triangle scatters full cell `x` to.
+    // An even `x = 2j` spreads to `{j-1, j}` (`{0}` clamped at the left edge);
+    // an odd `x = 2j+1` spreads to `{j, j+1}` (`{chroma_w-1}` clamped at the
+    // right edge). Consecutive full cells share a chroma cell, so a box span's
+    // chroma reach is contiguous.
+    let first_chroma = |x: usize| -> usize {
+      if x.is_multiple_of(2) {
+        (x / 2).saturating_sub(1)
+      } else {
+        (x - 1) / 2
+      }
+    };
+    let last_chroma = |x: usize| -> usize {
+      if x.is_multiple_of(2) {
+        x / 2
+      } else {
+        ((x - 1) / 2 + 1).min(chroma_w - 1)
+      }
+    };
+    let offsets_len = out.checked_add(1).ok_or(AxisError::Overflow)?;
+    let mut starts = Vec::new();
+    starts
+      .try_reserve_exact(out)
+      .map_err(|_| AxisError::Alloc)?;
+    let mut offsets = Vec::new();
+    offsets
+      .try_reserve_exact(offsets_len)
+      .map_err(|_| AxisError::Alloc)?;
+    // Pass 1: each output's chroma span `[j_first, j_last]`, the total tap
+    // count, and the widest span (the reused scatter accumulator's size).
+    let mut total = 0usize;
+    let mut max_span = 0usize;
+    for o in 0..out {
+      let (xstart, wbins) = box_spans.span(o);
+      let jf = first_chroma(xstart);
+      let jl = last_chroma(xstart + wbins.len() - 1);
+      starts.push(jf);
+      let span = jl - jf + 1;
+      max_span = max_span.max(span);
+      total = total.checked_add(span).ok_or(AxisError::Overflow)?;
+    }
+    let mut weights = Vec::new();
+    weights
+      .try_reserve_exact(total)
+      .map_err(|_| AxisError::Alloc)?;
+    let mut local: Vec<u64> = Vec::new();
+    local
+      .try_reserve_exact(max_span)
+      .map_err(|_| AxisError::Alloc)?;
+    offsets.push(0);
+    // Pass 2: scatter each box overlap through the ×4 triangle into the local
+    // chroma-cell accumulator, then flush the contiguous run.
+    for (o, &jf) in starts.iter().enumerate() {
+      let (xstart, wbins) = box_spans.span(o);
+      let jl = last_chroma(xstart + wbins.len() - 1);
+      local.clear();
+      local.resize(jl - jf + 1, 0);
+      for (k, &wb) in wbins.iter().enumerate() {
+        let x = xstart + k;
+        let wb = wb as u64;
+        if x.is_multiple_of(2) {
+          let j = x / 2;
+          if j == 0 {
+            local[0] += 4 * wb; // left neighbor clamps to c[0]
+          } else {
+            local[j - 1 - jf] += wb; // 1/4 → c[j-1]
+            local[j - jf] += 3 * wb; // 3/4 → c[j]
+          }
+        } else {
+          let j = (x - 1) / 2;
+          if j == chroma_w - 1 {
+            local[j - jf] += 4 * wb; // right neighbor clamps to c[chroma_w-1]
+          } else {
+            local[j - jf] += 3 * wb; // 3/4 → c[j]
+            local[j + 1 - jf] += wb; // 1/4 → c[j+1]
+          }
+        }
+      }
+      for &wv in &local {
+        weights.push(wv as usize);
+      }
+      offsets.push(weights.len());
+    }
+    debug_assert_eq!(weights.len(), total);
+    Ok(Self {
+      starts,
+      offsets,
+      weights,
+    })
+  }
+
   /// Number of output samples on this axis.
   // Consumed by the area streaming engine, which is gated to the
   // families that route through it.
@@ -971,6 +1090,67 @@ impl ResamplePlan {
     })
   }
 
+  /// Builds the 4:2:2 chroma plan for the native tier: half-width chroma
+  /// (`chroma_w = frame_w / 2`), full height (`chroma_vsub = 1`), against the
+  /// shared output geometry. Vertical spans bin the full-height chroma to
+  /// `out_h` ([`AxisSpans::area`] — 4:2:2 has no vertical chroma subsampling),
+  /// so `v_phase` must be `0`.
+  ///
+  /// `h_phase` carries the RFC #238 horizontal chroma siting. At phase 0
+  /// (co-sited / unspecified) this is **byte-identical** to [`Self::area`] over
+  /// `(chroma_w, luma_h)` — the plan the native 4:2:2 chroma resample built
+  /// before siting existed. For the centered group (`h_phase ≠ 0`) the
+  /// horizontal spans are the folded triangle⊗box weights
+  /// ([`AxisSpans::area_chroma_phased_h_centered`]): one phased area pass on
+  /// the subsampled grid reproducing "reconstruct full width with the #302
+  /// `1/4`–`3/4` triangle, then box-average" with a SINGLE rounding. The stored
+  /// `src_w` is then the scaled H denominator `4·(2·chroma_w) = 8·chroma_w`, so
+  /// the existing [`AreaStream`] normalization (`src_w·src_h`) and exactness
+  /// guards ([`AreaSample::h_sum_fits`] / [`AreaSample::denom_fits`], evaluated
+  /// against the stored `src_w`) bound the scaled weights with no change — the
+  /// `4·` only tightens the maximum representable width, which stays absurd.
+  #[cfg(feature = "yuv-planar")]
+  pub(crate) fn area_chroma_422(
+    chroma_w: usize,
+    luma_h: usize,
+    out_w: usize,
+    out_h: usize,
+    h_phase: f64,
+    v_phase: f64,
+  ) -> Result<Self, ResampleError> {
+    debug_assert_eq!(v_phase, 0.0, "4:2:2 carries no vertical chroma phase");
+    if h_phase == 0.0 {
+      // Co-sited / unspecified — byte-identical to the pre-siting area plan.
+      return Self::area(chroma_w, luma_h, out_w, out_h);
+    }
+    let geometry = || PlanGeometry::new(chroma_w, luma_h, out_w, out_h);
+    let fail = |e: AxisError| match e {
+      AxisError::Overflow => ResampleError::Overflow(geometry()),
+      AxisError::Alloc => ResampleError::AllocationFailed(geometry()),
+    };
+    // Scaled H denominator: each folded output span sums to `4·(2·chroma_w)`.
+    let denom_w = chroma_w
+      .checked_mul(8)
+      .ok_or_else(|| ResampleError::Overflow(geometry()))?;
+    let h = AxisSpans::area_chroma_phased_h_centered(chroma_w, out_w).map_err(fail)?;
+    let v = AxisSpans::area(luma_h, out_h).map_err(fail)?;
+    Ok(Self {
+      src_w: denom_w,
+      src_h: luma_h,
+      out_w,
+      out_h,
+      kind: SpanKind::Area,
+      h,
+      v,
+      filter_h: None,
+      filter_v: None,
+      filter_h_chroma: None,
+      filter_v_chroma: None,
+      h_phase,
+      v_phase,
+    })
+  }
+
   /// Source width in pixels — the horizontal spans' normalization
   /// denominator.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -989,6 +1169,18 @@ impl ResamplePlan {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn kind(&self) -> SpanKind {
     self.kind
+  }
+
+  /// Whether this plan carries a non-zero chroma sampling phase (RFC #238) —
+  /// `true` for a centered / phased chroma resample, `false` for co-sited.
+  /// The native and HSV-only joins cache a chroma plan built for one frame's
+  /// siting; a reused sink whose `chroma_location` moved to a different phase
+  /// compares this flag to REBUILD the join rather than reuse a stale plan.
+  /// (Comparison against `0.0` is exact and exempt from `clippy::float_cmp`.)
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(crate) const fn has_chroma_phase(&self) -> bool {
+    self.h_phase != 0.0 || self.v_phase != 0.0
   }
 
   /// [`ResampleError::UnsupportedFilter`] carrying this plan's geometry —

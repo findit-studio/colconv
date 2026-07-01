@@ -61,42 +61,31 @@ use crate::{
   row::*,
 };
 
-/// Shared L1 resample preflight (RFC #238): the element-agnostic
-/// freeze-and-sequence contract every routed row-stage resample arm runs
-/// before it allocates a stream or feeds a row. It wraps
-/// [`frozen_outputs_check`] with the surrounding discipline so no individual
-/// arm can get the ordering wrong:
+/// Compare-only resample preflight (RFC #238 L1): the no-output short-circuit,
+/// out-of-sequence rejection, and mid-frame output-set-change rejection every
+/// routed row-stage / filter resample arm runs before it allocates a stream —
+/// but with **NO commit** (the output freeze is NOT stored). Each arm builds its
+/// streams (and any centered-chroma scratch) into locals, then commits the
+/// output-set freeze via [`frozen_outputs_check`] and inserts the streams only
+/// AFTER every pre-feed allocation has succeeded — so a first-row allocation
+/// failure leaves `resample_outputs` and the streams untouched, state-atomic and
+/// retryable even with a changed output attachment (the same compare-before /
+/// commit-after discipline the linear-light tail uses). It also gates the RFC
+/// #238 centered filter / row-stage chroma reserve, so a recoverable reserve
+/// failure likewise leaves `resample_outputs` `None`.
 ///
-/// 1. **No-output short-circuit.** `expected` is `None` exactly when no
-///    output is attached (the caller maps "no stream is fed this row" to
-///    `None`). The helper then returns `ControlFlow::Break` BEFORE the freeze,
-///    so a no-output call stays a no-op and stores no snapshot that a later
-///    attach-then-retry would trip on. The caller turns `Break` into `Ok(())`.
-/// 2. **Pre-freeze sequence check.** On the first row (nothing frozen yet) an
-///    out-of-sequence row is rejected before the freeze, so a rejected first
-///    row stores no snapshot to poison a retry.
-/// 3. **Freeze.** [`frozen_outputs_check`] freezes / verifies the full output
-///    set; on a later row it runs first, so a mid-frame output-set change
-///    surfaces as `ResampleOutputsChanged` rather than being masked by a
-///    freshly-attached stream's row-0 sequence mismatch.
-/// 4. **Post-freeze sequence check.** Re-checks sequencing (covering the
-///    failure-retry case where the stream was never built, so `expected == 0`)
-///    before the caller's fallible stream / scratch allocation.
-///
-/// `ControlFlow::Continue` means: outputs frozen, row in sequence — the caller
-/// may now allocate its streams + scratch (all before the first feed, the
-/// reserve-before-feed atomicity ordering this preflight precedes) and
-/// feed/emit. `expected` is supplied by the caller because the per-row
-/// sequence counter lives on whichever concrete stream (`AreaStream` /
-/// `FilterStream` / the HSV join's Y stream) is fed every row, keeping this
-/// helper free of any stream-element type.
-#[cfg_attr(
-  not(any(feature = "yuv-planar", feature = "yuv-semi-planar")),
-  allow(dead_code)
-)]
+/// `expected` is supplied by the caller because the per-row sequence counter
+/// lives on whichever concrete stream (`AreaStream` / `FilterStream` / the HSV
+/// join's Y stream) is fed every row, keeping this helper free of any
+/// stream-element type. `ControlFlow::Break` (no output attached) is turned into
+/// `Ok(())` by the caller. Rejects mirror the committing path exactly, minus the
+/// freeze:
+/// [`ResampleOutputsChanged`](super::MixedSinkerError::ResampleOutputsChanged)
+/// on a mid-frame output-set change,
+/// [`OutOfSequenceRow`] on a row-order violation.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn resample_preflight(
-  resample_outputs: &mut Option<super::FrozenOutputs>,
+pub(super) fn resample_preflight_check_only(
+  resample_outputs: &Option<super::FrozenOutputs>,
   luma: &Option<&mut [u8]>,
   luma_u16: &Option<&mut [u16]>,
   rgb: &Option<&mut [u8]>,
@@ -113,35 +102,47 @@ pub(super) fn resample_preflight(
   expected: Option<usize>,
   idx: usize,
 ) -> Result<ControlFlow<()>, MixedSinkerError> {
-  // No output attached: short-circuit before the freeze (stores no snapshot a
-  // later attach-then-retry would trip on).
   let Some(expected) = expected else {
     return Ok(ControlFlow::Break(()));
   };
-  // First row: reject an out-of-sequence row before the freeze.
+  // First row only: reject an out-of-sequence row BEFORE the output-set compare,
+  // exactly mirroring the committing path's ordering (minus the commit). On a
+  // LATER row the compare runs first, so a genuine mid-frame output attachment
+  // change surfaces as ResampleOutputsChanged, never OutOfSequenceRow.
   if resample_outputs.is_none() && expected != idx {
     return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
       OutOfSequenceRow::new(expected, idx),
     )));
   }
-  frozen_outputs_check(
-    resample_outputs,
-    luma,
-    luma_u16,
-    rgb,
-    rgba,
-    rgb_u16,
-    rgba_u16,
-    rgb_f32,
-    rgba_f32,
-    xyz_f32,
-    rgb_f16,
-    rgba_f16,
-    hsv,
-    luma_f32,
-    idx,
-  )?;
-  // Post-freeze: reject an out-of-sequence later row before any allocation.
+  // Mid-frame output-set change → reject WITHOUT committing (a later row only;
+  // the first row's `None` stores no snapshot).
+  if let Some(frozen) = resample_outputs {
+    let snapshot = super::FrozenOutputs::snapshot(
+      luma.as_deref(),
+      luma_u16.as_deref(),
+      rgb.as_deref(),
+      rgba.as_deref(),
+      rgb_u16.as_deref(),
+      rgba_u16.as_deref(),
+      rgb_f32.as_deref(),
+      rgba_f32.as_deref(),
+      xyz_f32.as_deref(),
+      rgb_f16.as_deref(),
+      rgba_f16.as_deref(),
+      hsv.as_mut().map(|f| {
+        let (h, s, v) = f.hsv();
+        (&h[..], &s[..], &v[..])
+      }),
+      luma_f32.as_deref(),
+    );
+    if *frozen != snapshot {
+      return Err(MixedSinkerError::ResampleOutputsChanged(
+        super::ResampleOutputsChanged::new(idx),
+      ));
+    }
+  }
+  // Post-compare: reject an out-of-sequence later row (mirrors
+  // the committing path's post-freeze sequence check).
   if expected != idx {
     return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
       OutOfSequenceRow::new(expected, idx),
@@ -190,6 +191,12 @@ pub(super) struct HsvDirectPlanarYuv {
   staged: [[bool; 4]; 3],
   /// Next output row to finalise.
   next_emit: usize,
+  /// Whether the cached chroma plan was built with a non-zero chroma phase
+  /// (RFC #238 centered siting) — the [`NativePlanarYuv`](super::planar_8bit)
+  /// `chroma_centered` twin. The join is built once and only `reset` between
+  /// frames, so a reused sink whose siting phase changed must REBUILD it;
+  /// `begin_frame` reads [`Self::chroma_centered`] to drop a stale join.
+  chroma_centered: bool,
 }
 
 #[cfg(feature = "yuv-planar")]
@@ -218,6 +225,7 @@ impl HsvDirectPlanarYuv {
       ResampleError::Overflow(PlanGeometry::new(w, h, plan.out_w(), plan.out_h()))
     })?;
     let chroma_plan = build_chroma_plan()?;
+    let chroma_centered = chroma_plan.has_chroma_phase();
     Ok(Self {
       y: AreaStream::new(plan.h(), plan.v(), w, h, 1)?,
       y_stage: try_zeroed(stage_len).map_err(alloc)?,
@@ -240,6 +248,7 @@ impl HsvDirectPlanarYuv {
       chroma_vsub,
       staged: [[false; 4]; 3],
       next_emit: 0,
+      chroma_centered,
     })
   }
 
@@ -249,6 +258,22 @@ impl HsvDirectPlanarYuv {
     self.v.reset();
     self.staged = [[false; 4]; 3];
     self.next_emit = 0;
+  }
+
+  /// Whether the cached chroma plan carries a non-zero chroma phase — see
+  /// [`Self::chroma_centered`](Self#structfield.chroma_centered). Read by the
+  /// sink's `begin_frame` to rebuild the join on a siting-phase change.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(super) const fn chroma_centered(&self) -> bool {
+    self.chroma_centered
+  }
+
+  /// Next source row this join expects (0 at a fresh frame). Read by the sink's
+  /// point-of-use siting invalidation to fire the phase-rebuild drop ONLY at a
+  /// fresh-frame boundary (`next_y() == 0`), never mid-frame.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(super) const fn next_y(&self) -> usize {
+    self.y.next_y()
   }
 
   /// Sequencing preflight across all three plane streams — checked before
@@ -313,6 +338,8 @@ fn hsv_direct_feed_emit(
     chroma_vsub,
     staged,
     next_emit,
+    // Cache key read only at build / begin_frame; the feed loop ignores it.
+    chroma_centered: _,
   } = join;
   let cv = *chroma_vsub;
   y.feed_row(idx, y_row, use_simd, |oy, out_row| {
@@ -372,23 +399,28 @@ fn hsv_direct_feed_emit(
 
 /// The RGB-free YUV-domain HSV-only area path: the complete atomic
 /// preflight + the 3-stream feed/drain. Phasing mirrors
-/// [`planar_dual_resample`]'s RGB-staged preflight (and the native tier's
+/// [`planar_dual_resample`]'s compare-before / commit-after discipline (and
+/// the native tier's
 /// [`yuv_planar_process_native`](super::planar_8bit::yuv_planar_process_native)):
 ///
 /// 1. The HSV join's Y stream is the canonical per-row sequence counter
 ///    (Y is binned on every output-bearing row). On the FIRST row nothing
 ///    is frozen yet, so an out-of-sequence row is rejected BEFORE the
-///    freeze — a rejected first row stores no snapshot to poison a retry.
-/// 2. [`frozen_outputs_check`] freezes / verifies the output set (HSV +
-///    optional luma); on a later row this runs first so a mid-frame output
-///    change surfaces as `ResampleOutputsChanged` rather than being masked
-///    by a freshly-built join's row-0 sequence mismatch.
-/// 3. A post-freeze sequence check rejects an out-of-sequence later row
-///    (including the failure-retry case where the join was never built, so
-///    `expected == 0`) BEFORE the fallible join allocation.
-/// 4. The join is built (its three area streams + ring scratch allocate
-///    recoverably) and boxed recoverably, BOTH before any feed — so a
-///    refusal leaves the field `None` and no caller output is touched.
+///    output-set compare — a rejected first row stores no snapshot to poison
+///    a retry.
+/// 2. The compare-only preflight ([`resample_preflight_check_only`]) verifies
+///    the output set (HSV + optional luma) WITHOUT committing; on a later row
+///    it runs first, so a mid-frame output change surfaces as
+///    `ResampleOutputsChanged` rather than being masked by a freshly-built
+///    join's row-0 sequence mismatch, and a post-compare sequence check
+///    rejects an out-of-sequence later row (including the failure-retry case
+///    where the join was never built, so `expected == 0`).
+/// 3. The join is built (its three area streams + ring scratch allocate
+///    recoverably) and boxed recoverably — the sole pre-feed allocation — and
+///    only THEN is the output-set freeze committed ([`frozen_outputs_check`]).
+///    So a first-row build refusal leaves the field `None` AND
+///    `resample_outputs` uncommitted (retryable with a changed output
+///    attachment), and no caller output is touched.
 ///
 /// A no-output call cannot reach here (`want_hsv_direct` implies HSV is
 /// attached). The result is byte-identical to the native tier's HSV-only
@@ -414,11 +446,52 @@ pub(super) fn hsv_direct_resample(
   use_simd: bool,
 ) -> Result<(), MixedSinkerError> {
   let expected = hsv_planar.as_ref().map_or(0, |join| join.y.next_y());
-  if resample_outputs.is_none() && expected != idx {
-    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
-      OutOfSequenceRow::new(expected, idx),
-    )));
+  // Compare-only preflight (NO commit): validate the output set + row sequence
+  // WITHOUT freezing, so the join build below (the sole pre-feed allocation) runs
+  // BEFORE the output-set freeze. A first-row build failure therefore leaves
+  // `resample_outputs` uncommitted — state-atomic, retryable even with a changed
+  // output attachment (mirrors `planar_dual_resample`). `want_hsv_direct` implies
+  // HSV is attached, so `expected` is always `Some` and the no-output Break never
+  // fires.
+  if let ControlFlow::Break(()) = resample_preflight_check_only(
+    resample_outputs,
+    luma,
+    luma_u16,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    hsv,
+    &None,
+    Some(expected),
+    idx,
+  )? {
+    return Ok(());
   }
+  // Build the join (its three area streams + ring scratch allocate recoverably)
+  // and box it recoverably BEFORE the freeze commit; both fallible steps run
+  // ahead of any field mutation, so a refusal leaves `hsv_planar` and
+  // `resample_outputs` untouched.
+  if hsv_planar.is_none() {
+    let join = HsvDirectPlanarYuv::new(plan, build_chroma_plan, chroma_vsub, w, plan.src_h())?;
+    let boxed = crate::resample::try_box(join).map_err(|_| {
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
+        plan.src_w(),
+        plan.src_h(),
+        plan.out_w(),
+        plan.out_h(),
+      )))
+    })?;
+    *hsv_planar = Some(boxed);
+  }
+  // Every pre-feed allocation succeeded — COMMIT the output-set freeze. On the
+  // building (first) row this only stores the snapshot; the compare above already
+  // rejected any mid-frame output change on a later row.
   frozen_outputs_check(
     resample_outputs,
     luma,
@@ -436,23 +509,6 @@ pub(super) fn hsv_direct_resample(
     &None,
     idx,
   )?;
-  if expected != idx {
-    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
-      OutOfSequenceRow::new(expected, idx),
-    )));
-  }
-  if hsv_planar.is_none() {
-    let join = HsvDirectPlanarYuv::new(plan, build_chroma_plan, chroma_vsub, w, plan.src_h())?;
-    let boxed = crate::resample::try_box(join).map_err(|_| {
-      MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
-        plan.src_w(),
-        plan.src_h(),
-        plan.out_w(),
-        plan.out_h(),
-      )))
-    })?;
-    *hsv_planar = Some(boxed);
-  }
   let join = hsv_planar.as_mut().expect("created in the preflight");
   let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
   hsv_direct_feed_emit(
@@ -524,7 +580,13 @@ pub(super) fn planar_dual_resample(
   } else {
     None
   };
-  if let ControlFlow::Break(()) = resample_preflight(
+  // Compare-only preflight (NO commit): validate the output set + row sequence
+  // WITHOUT freezing, so the output-set freeze and the stream inserts commit
+  // TOGETHER only after every pre-feed allocation below has succeeded (mirrors
+  // `linear_light_resample`'s compare-before / commit-after). A first-row
+  // allocation failure therefore leaves `resample_outputs` and both streams
+  // untouched — state-atomic, retryable even with a changed output attachment.
+  if let ControlFlow::Break(()) = resample_preflight_check_only(
     resample_outputs,
     luma,
     luma_u16,
@@ -544,36 +606,61 @@ pub(super) fn planar_dual_resample(
   )? {
     return Ok(());
   }
-  if need_luma && luma_stream.is_none() {
-    *luma_stream = Some({
-      let stream = AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 1)?;
-      crate::resample::try_box(stream).map_err(|_| {
-        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
-          crate::resample::PlanGeometry::new(
-            plan.src_w(),
-            plan.src_h(),
-            plan.out_w(),
-            plan.out_h(),
-          ),
-        ))
-      })?
-    });
+  // Build any missing streams into LOCALS first (fallible; NO field mutation and
+  // NO output-set commit yet).
+  let new_luma = if need_luma && luma_stream.is_none() {
+    let stream = AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 1)?;
+    Some(crate::resample::try_box(stream).map_err(|_| {
+      MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+        crate::resample::PlanGeometry::new(plan.src_w(), plan.src_h(), plan.out_w(), plan.out_h()),
+      ))
+    })?)
+  } else {
+    None
+  };
+  let new_rgb = if need_color && rgb_stream.is_none() {
+    let stream = AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 3)?;
+    Some(crate::resample::try_box(stream).map_err(|_| {
+      MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+        crate::resample::PlanGeometry::new(plan.src_w(), plan.src_h(), plan.out_w(), plan.out_h()),
+      ))
+    })?)
+  } else {
+    None
+  };
+  // Also grow the source-width colour scratch (fallible) BEFORE the commit: the
+  // shared feed tail grows it on the first coloured row, so hoisting it here
+  // keeps EVERY pre-feed allocation (streams + scratch) ahead of the freeze and
+  // stream inserts; `planar_dual_feed_emit`'s own grow is then a no-op.
+  if need_color {
+    super::source_rgb_scratch(rgb_scratch, w, plan)?;
   }
-  if need_color && rgb_stream.is_none() {
-    *rgb_stream = Some({
-      let stream = AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 3)?;
-      crate::resample::try_box(stream).map_err(|_| {
-        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
-          crate::resample::PlanGeometry::new(
-            plan.src_w(),
-            plan.src_h(),
-            plan.out_w(),
-            plan.out_h(),
-          ),
-        ))
-      })?
-    });
+  // Every pre-feed allocation succeeded — COMMIT atomically: insert the streams
+  // and freeze the output set (the compare above already passed, so this only
+  // stores the snapshot on the first row).
+  if let Some(l) = new_luma {
+    *luma_stream = Some(l);
   }
+  if let Some(r) = new_rgb {
+    *rgb_stream = Some(r);
+  }
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    hsv,
+    &None,
+    idx,
+  )?;
 
   // Stage + feed + emit. Shared with the filter path
   // ([`planar_dual_filter_resample`]) so the area and filter arms run the
@@ -777,7 +864,11 @@ pub(super) fn planar_dual_filter_resample(
   } else {
     None
   };
-  if let ControlFlow::Break(()) = resample_preflight(
+  // Compare-only preflight (NO commit) — see `planar_dual_resample`: the
+  // output-set freeze and the stream inserts commit TOGETHER only after every
+  // pre-feed allocation below has succeeded, so a first-row allocation failure
+  // is state-atomic (retryable with a changed output attachment).
+  if let ControlFlow::Break(()) = resample_preflight_check_only(
     resample_outputs,
     luma,
     luma_u16,
@@ -797,36 +888,54 @@ pub(super) fn planar_dual_filter_resample(
   )? {
     return Ok(());
   }
-  if need_luma && luma_filter_stream.is_none() {
-    *luma_filter_stream = Some({
-      let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 1)?;
-      crate::resample::try_box(stream).map_err(|_| {
-        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
-          crate::resample::PlanGeometry::new(
-            plan.src_w(),
-            plan.src_h(),
-            plan.out_w(),
-            plan.out_h(),
-          ),
-        ))
-      })?
-    });
+  let new_luma = if need_luma && luma_filter_stream.is_none() {
+    let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 1)?;
+    Some(crate::resample::try_box(stream).map_err(|_| {
+      MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+        crate::resample::PlanGeometry::new(plan.src_w(), plan.src_h(), plan.out_w(), plan.out_h()),
+      ))
+    })?)
+  } else {
+    None
+  };
+  let new_rgb = if need_color && rgb_filter_stream.is_none() {
+    let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 3)?;
+    Some(crate::resample::try_box(stream).map_err(|_| {
+      MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+        crate::resample::PlanGeometry::new(plan.src_w(), plan.src_h(), plan.out_w(), plan.out_h()),
+      ))
+    })?)
+  } else {
+    None
+  };
+  // Grow the source-width colour scratch (fallible) BEFORE the commit too (see
+  // `planar_dual_resample`): every pre-feed allocation ahead of the freeze/insert.
+  if need_color {
+    super::source_rgb_scratch(rgb_scratch, w, plan)?;
   }
-  if need_color && rgb_filter_stream.is_none() {
-    *rgb_filter_stream = Some({
-      let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 3)?;
-      crate::resample::try_box(stream).map_err(|_| {
-        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
-          crate::resample::PlanGeometry::new(
-            plan.src_w(),
-            plan.src_h(),
-            plan.out_w(),
-            plan.out_h(),
-          ),
-        ))
-      })?
-    });
+  if let Some(l) = new_luma {
+    *luma_filter_stream = Some(l);
   }
+  if let Some(r) = new_rgb {
+    *rgb_filter_stream = Some(r);
+  }
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    hsv,
+    &None,
+    idx,
+  )?;
 
   // Stage + feed + emit. Shared with the area path
   // ([`planar_dual_resample`]) so the area and filter arms run the
