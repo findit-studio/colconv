@@ -805,6 +805,34 @@ impl AveragingDomainChanged {
   }
 }
 
+/// Mid-frame 4:2:2 chroma-siting (sampling-phase) change payload for
+/// [`MixedSinkerError::ChromaSitingChanged`].
+///
+/// RFC #238 routes chroma siting through the resample as a sampling
+/// phase frozen on the first output-bearing row; a later row that
+/// observes a different siting would bin a mixture of phases, so it is
+/// rejected with this recoverable error (the caller restarts the frame
+/// via `begin_frame` to change siting).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChromaSitingChanged {
+  /// Source row whose `process` call observed the changed chroma siting.
+  row: usize,
+}
+
+impl ChromaSitingChanged {
+  /// Constructs a new `ChromaSitingChanged` payload.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn new(row: usize) -> Self {
+    Self { row }
+  }
+
+  /// Source row whose `process` call observed the changed chroma siting.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn row(&self) -> usize {
+    self.row
+  }
+}
+
 /// Errors returned by [`MixedSinker`] configuration and per-frame
 /// preflight.
 ///
@@ -1069,6 +1097,17 @@ pub enum MixedSinkerError {
     .0.row()
   )]
   AveragingDomainChanged(AveragingDomainChanged),
+
+  /// The 4:2:2 chroma siting (sampling phase) changed mid-frame. RFC #238
+  /// freezes the effective siting on the first output-bearing row of a
+  /// frame so every row bins the same phase; restart the frame via
+  /// begin_frame to change siting.
+  #[error(
+    "MixedSinker chroma siting changed mid-frame at source row \
+     {}; restart the frame via begin_frame",
+    .0.row()
+  )]
+  ChromaSitingChanged(ChromaSitingChanged),
 
   /// A non-affine colour matrix was paired with a resampling (non-identity)
   /// plan, which the resample tier cannot decode.
@@ -2642,6 +2681,13 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// [`AveragingDomain`]: crate::resample::AveragingDomain
   #[cfg(feature = "yuv-planar")]
   frozen_domain: Option<crate::resample::AveragingDomain>,
+  /// RFC #238: the effective 4:2:2 chroma sampling phase (`true` =
+  /// centered, `false` = co-sited) frozen on the first output-bearing
+  /// row of the current frame. A later row observing a different siting
+  /// is rejected with [`MixedSinkerError::ChromaSitingChanged`] so the
+  /// frame never bins a mixture of phases; cleared each `begin_frame`.
+  #[cfg(feature = "yuv-planar")]
+  frozen_chroma_centered: Option<bool>,
   /// Lazily grown to `3 * width` bytes when HSV is requested without a
   /// user RGB buffer. Empty otherwise.
   ///
@@ -3775,6 +3821,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       frozen_native_route: None,
       #[cfg(feature = "yuv-planar")]
       frozen_domain: None,
+      #[cfg(feature = "yuv-planar")]
+      frozen_chroma_centered: None,
       #[cfg(any(
         feature = "bayer",
         feature = "gbr",
@@ -11100,12 +11148,14 @@ fn grow_packed_444_u16_scratch(
 /// is the full `u8` range and the join's averaging keeps every sample in range).
 ///
 /// Atomicity mirrors the packed 4:2:2 wrapper: the join's COMPLETE pre-feed
-/// rejection preflight runs FIRST (via [`planar_8bit::native_planar_preflight`]),
-/// before the fallible Y / U / V scratch grow, so a rejected row returns its
-/// deterministic typed error (`OutOfSequenceRow` / `ResampleOutputsChanged`),
-/// never `AllocationFailed`, and grows no sink state; the de-pack writes only the
-/// private scratch, so no caller output is touched until the join's own preflight
-/// (re-run inside the delegate) clears.
+/// rejection preflight runs FIRST (via
+/// [`planar_8bit::native_planar_preflight_check_only`]), before the fallible
+/// Y / U / V scratch grow, so a rejected row returns its deterministic typed
+/// error (`OutOfSequenceRow` / `ResampleOutputsChanged`), never
+/// `AllocationFailed`, and grows no sink state. It is compare-only (no output-set
+/// freeze), so the scratch grow stays a pre-feed step ahead of the delegate's
+/// commit; the de-pack writes only the private scratch, so no caller output is
+/// touched until the delegate clears.
 #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
 #[allow(clippy::too_many_arguments)]
 fn packed_vuyx_process_native(
@@ -11135,9 +11185,11 @@ fn packed_vuyx_process_native(
   // Run the join's COMPLETE pre-feed rejection preflight FIRST — before the
   // fallible Y / U / V de-pack scratch grow — so EVERY rejection case returns
   // its deterministic typed error, never AllocationFailed under allocation
-  // pressure, and leaves the scratch untouched. `Ok(false)` is the no-output
-  // no-op. The delegate re-runs this identical preflight harmlessly.
-  if !planar_8bit::native_planar_preflight(
+  // pressure, and leaves the scratch untouched. Compare-only (no output-set
+  // freeze), so the scratch grow stays a pre-feed step ahead of the delegate's
+  // commit. `Ok(false)` is the no-output no-op. The delegate re-runs this
+  // identical compare harmlessly and owns the commit.
+  if !planar_8bit::native_planar_preflight_check_only(
     native_planar,
     resample_outputs,
     rgb,
@@ -11238,8 +11290,10 @@ fn packed_vyu444_process_native(
   // Run the join's COMPLETE pre-feed rejection preflight FIRST — before the
   // fallible Y / U / V de-pack scratch grow — so EVERY rejection case returns
   // its deterministic typed error, never AllocationFailed, and leaves the
-  // scratch untouched. The delegate re-runs this identical preflight harmlessly.
-  if !planar_8bit::native_planar_preflight(
+  // scratch untouched. Compare-only (no output-set freeze), so the scratch grow
+  // stays a pre-feed step ahead of the delegate's commit. The delegate re-runs
+  // this identical compare harmlessly and owns the commit.
+  if !planar_8bit::native_planar_preflight_check_only(
     native_planar,
     resample_outputs,
     rgb,
@@ -15467,6 +15521,8 @@ mod planar_8bit;
 // semi-planar 8-bit suite's `yuv-planar`-gated `native_tier` (its colour oracle
 // adds `rgb`). So its re-export is dead in a `yuv-planar`-without-any-consumer
 // build (and a `yuv-planar`-less build has no `planar_8bit` module to import).
+#[cfg(all(test, feature = "std", feature = "yuv-planar", feature = "rgb"))]
+pub(crate) use planar_8bit::arm_native_rgb_scratch_failure;
 #[cfg(all(
   test,
   feature = "std",

@@ -332,8 +332,8 @@ impl NativePlanarYuvU16 {
 /// (`subsampled_4_2_2_high_bit::p2xx` / `subsampled_4_4_4_high_bit::p4xx`),
 /// which reuses [`yuv_planar16_process_native`] after de-interleaving + de-packing
 /// the packed UV plane, can run this COMPLETE pre-feed preflight ahead of its own
-/// fallible de-pack scratch grow — exactly as the 8-bit semi-planar non-4:2:0
-/// wrapper runs `native_planar_preflight`.
+/// fallible de-pack scratch grow — the same ordering the 8-bit semi-planar
+/// non-4:2:0 wrapper uses with `native_planar_preflight_check_only`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn native_planar_hb_preflight(
   join: &Option<std::boxed::Box<NativePlanarYuvU16>>,
