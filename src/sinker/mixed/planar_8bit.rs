@@ -2922,13 +2922,18 @@ impl NativeYuva420 {
     h: usize,
     need_color: bool,
     need_alpha: bool,
+    chroma_h_phase: f64,
   ) -> Result<Self, ResampleError> {
-    // Yuva420p keeps the co-sited (phase 0) chroma grid — RFC #238 centered
-    // siting for the alpha-bearing 4:2:0 source is a later PR; passing phase 0
-    // here is byte-identical to the pre-closure `NativeYuv420::new` internal plan.
+    // The embedded no-alpha 4:2:0 join folds the RFC #238 horizontal chroma
+    // sampling phase (`chroma_h_phase`: `0.25` centered, `0.0` co-sited) into the
+    // chroma area weights, exactly as the no-alpha `Yuv420p` / semi-planar `Nv12`
+    // native arms do. The full-resolution α plane is siting-independent (never
+    // subsampled), so it is untouched. At phase 0 the folded plan is
+    // byte-identical to the plain co-sited grid, so co-sited output is unchanged.
+    // The vertical pairing stays co-sited (`v_phase = 0`).
     let inner = NativeYuv420::new(
       plan,
-      || ResamplePlan::area_chroma_420(w / 2, h, plan.out_w(), plan.out_h(), 0.0, 0.0),
+      || ResamplePlan::area_chroma_420(w / 2, h, plan.out_w(), plan.out_h(), chroma_h_phase, 0.0),
       w,
       h,
       need_color,
@@ -2961,6 +2966,31 @@ impl NativeYuva420 {
       alpha.staged = [false; 2];
     }
   }
+
+  /// Whether the embedded 4:2:0 join carries a chroma half — a luma-only join has
+  /// none, so its cached plan is siting-agnostic. Read by the `Yuva420p` native
+  /// arm's point-of-use siting invalidation, whose sink lives in a sibling module
+  /// and so cannot reach the embedded join's private fields directly.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(super) const fn has_chroma(&self) -> bool {
+    self.inner.chroma.is_some()
+  }
+
+  /// Whether the embedded join's cached chroma plan was built with a non-zero
+  /// chroma phase (RFC #238 centered siting). Read by the `Yuva420p` native arm to
+  /// rebuild the join on a phase change.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(super) const fn chroma_centered(&self) -> bool {
+    self.inner.chroma_centered
+  }
+
+  /// Next source row the embedded join expects (0 at a fresh frame). Read by the
+  /// `Yuva420p` native arm to fire the phase-rebuild drop ONLY at a fresh-frame
+  /// boundary (`next_y() == 0`), never mid-frame.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(super) const fn next_y(&self) -> usize {
+    self.inner.y.next_y()
+  }
 }
 
 /// Native-tier path for the **straight-alpha** [`MixedSinker<Yuva420p, R>`]:
@@ -2981,6 +3011,12 @@ impl NativeYuva420 {
 /// [`check_frozen_alpha_mode`](super::check_frozen_alpha_mode)) BEFORE this
 /// runs, and the sink only routes here under `AlphaMode::Straight`, so a
 /// mid-frame flip to Premultiplied is rejected before any native feed.
+///
+/// `chroma_h_phase` is the RFC #238 horizontal chroma sampling phase folded into
+/// the embedded Y / U / V join's chroma area weights (`0.25` centered, `0.0`
+/// co-sited); the full-resolution α plane is siting-independent, so the phase
+/// never touches it. At phase 0 the folded plan is byte-identical to the plain
+/// co-sited grid.
 #[cfg(feature = "yuva")]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn yuva420p_process_native(
@@ -3002,6 +3038,7 @@ pub(super) fn yuva420p_process_native(
   idx: usize,
   w: usize,
   h: usize,
+  chroma_h_phase: f64,
   use_simd: bool,
 ) -> Result<(), MixedSinkerError> {
   let ow = plan.out_w();
@@ -3048,7 +3085,7 @@ pub(super) fn yuva420p_process_native(
   let new_join = if rebuild {
     // Build the join (its inner Y / U / V / α streams allocate recoverably) and
     // box it recoverably (`try_box`, not `Box::new` — the latter aborts on OOM).
-    let join = NativeYuva420::new(plan, w, h, need_color, need_alpha)?;
+    let join = NativeYuva420::new(plan, w, h, need_color, need_alpha, chroma_h_phase)?;
     Some(crate::resample::try_box(join).map_err(|_| {
       MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
         w,
