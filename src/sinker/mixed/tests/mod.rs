@@ -98,6 +98,8 @@ mod chroma_siting_hibit_422;
 mod chroma_siting_nv;
 #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
 mod chroma_siting_nv16;
+#[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar", feature = "rgb"))]
+mod chroma_siting_nv16_resample;
 #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
 mod chroma_siting_p0xx;
 #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
