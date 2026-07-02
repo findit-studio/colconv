@@ -239,6 +239,10 @@ fn semi_planar_process_native(
     idx,
     w,
     h,
+    // 4:2:0 semi-planar chroma keeps the co-sited (phase 0) grid — RFC #238
+    // centered siting for Nv12 / Nv21 is a later PR; passing phase 0 here is
+    // byte-identical to the pre-closure `NativeYuv420::new` internal plan.
+    || ResamplePlan::area_chroma_420(w / 2, h, plan.out_w(), plan.out_h(), 0.0, 0.0),
     use_simd,
   )
 }
