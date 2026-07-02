@@ -2957,9 +2957,10 @@ impl NativePlanarYuv {
 
   /// Whether this join carries a chroma half — a luma-only join has none, so
   /// its cached plan is siting-agnostic. Read by the semi-planar 4:2:2
-  /// (`Nv16`) point-of-use siting invalidation, whose join lives in a sibling
-  /// module and so cannot touch the private `chroma` field directly.
-  #[cfg(feature = "yuv-semi-planar")]
+  /// (`Nv16`) and packed 4:2:2 (`Yuyv422` / `Uyvy422`) point-of-use siting
+  /// invalidation, whose joins live in sibling modules and so cannot touch the
+  /// private `chroma` field directly.
+  #[cfg(any(feature = "yuv-semi-planar", feature = "yuv-packed"))]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub(super) const fn has_chroma(&self) -> bool {
     self.chroma.is_some()
@@ -2968,19 +2969,19 @@ impl NativePlanarYuv {
   /// Whether the cached chroma plan was built with a non-zero chroma phase
   /// (RFC #238 centered siting) — see
   /// [`chroma_centered`](Self#structfield.chroma_centered). Read by the
-  /// semi-planar 4:2:2 point-of-use siting invalidation to rebuild the join on
-  /// a phase change.
-  #[cfg(feature = "yuv-semi-planar")]
+  /// semi-planar 4:2:2 and packed 4:2:2 point-of-use siting invalidation to
+  /// rebuild the join on a phase change.
+  #[cfg(any(feature = "yuv-semi-planar", feature = "yuv-packed"))]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub(super) const fn chroma_centered(&self) -> bool {
     self.chroma_centered
   }
 
   /// Next source row this join expects (0 at a fresh frame). Read by the
-  /// semi-planar 4:2:2 point-of-use siting invalidation to fire the
-  /// phase-rebuild drop ONLY at a fresh-frame boundary (`next_y() == 0`),
-  /// never mid-frame.
-  #[cfg(feature = "yuv-semi-planar")]
+  /// semi-planar 4:2:2 and packed 4:2:2 point-of-use siting invalidation to
+  /// fire the phase-rebuild drop ONLY at a fresh-frame boundary
+  /// (`next_y() == 0`), never mid-frame.
+  #[cfg(any(feature = "yuv-semi-planar", feature = "yuv-packed"))]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub(super) const fn next_y(&self) -> usize {
     self.y.next_y()
