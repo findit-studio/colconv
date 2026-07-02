@@ -112,6 +112,8 @@ mod chroma_siting_p0xx;
 mod chroma_siting_p2xx;
 #[cfg(feature = "yuva")]
 mod chroma_siting_yuva;
+#[cfg(all(feature = "yuva", feature = "rgb"))]
+mod chroma_siting_yuva420p_resample;
 #[cfg(feature = "gray")]
 mod gray;
 #[cfg(feature = "rgb-legacy")]
