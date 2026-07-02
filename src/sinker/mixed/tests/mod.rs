@@ -82,6 +82,8 @@ mod bayer;
 mod chroma_derived_cl;
 #[cfg(feature = "yuv-planar")]
 mod chroma_siting_420;
+#[cfg(all(feature = "yuv-planar", feature = "rgb"))]
+mod chroma_siting_420_resample;
 #[cfg(feature = "yuv-planar")]
 mod chroma_siting_422;
 #[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
