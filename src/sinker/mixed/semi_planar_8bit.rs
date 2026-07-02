@@ -139,18 +139,18 @@ fn semi_planar_process_native(
   // Run the join's COMPLETE pre-feed rejection preflight FIRST — no-output
   // short-circuit, first-row out-of-sequence check, AND the frozen-output
   // (mid-frame output-set change) check — before touching the U / V
-  // de-interleave scratch. The de-interleave reserve below is fallible and
-  // grows sink state; deferring it until the full preflight clears keeps
-  // EVERY rejection case (out-of-sequence first colour row OR mid-frame
-  // output change) returning its deterministic typed error
-  // (OutOfSequenceRow / ResampleOutputsChanged), never AllocationFailed
-  // under allocation pressure, and leaves the scratch untouched — the
-  // crate's preflight-atomicity contract. `Ok(false)` is the no-output
-  // no-op: return without reserving. `yuv420p_process_native` re-runs this
-  // identical preflight harmlessly (the freeze stores on the first
-  // output-bearing row, the second run is a matching check), keeping a
-  // single source of truth.
-  if !super::planar_8bit::yuv420p_native_preflight(
+  // de-interleave scratch. Compare-only (no output-set freeze), so the
+  // de-interleave reserve below stays a genuine pre-commit step ahead of the
+  // delegate's own commit. The reserve is fallible and grows sink state;
+  // deferring it until the full compare clears keeps EVERY rejection case
+  // (out-of-sequence first colour row OR mid-frame output change) returning its
+  // deterministic typed error (OutOfSequenceRow / ResampleOutputsChanged),
+  // never AllocationFailed under allocation pressure, and leaves the scratch
+  // untouched — the crate's preflight-atomicity contract. `Ok(false)` is the
+  // no-output no-op: return without reserving. `yuv420p_process_native` re-runs
+  // this identical compare and owns the commit, keeping a single source of
+  // truth.
+  if !super::planar_8bit::yuv420p_native_preflight_check_only(
     native_420,
     resample_outputs,
     rgb,

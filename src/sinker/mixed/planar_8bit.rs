@@ -1277,52 +1277,51 @@ impl NativeYuv420 {
   }
 }
 
-/// The COMPLETE pre-feed rejection preflight shared by the native 4:2:0
-/// path and its semi-planar reuse: the no-output short-circuit, the
-/// first-row out-of-sequence check, the frozen-output check, AND the
-/// post-freeze sequence check — every rejection [`yuv420p_process_native`]
-/// performs before its first fallible allocation (the join build / chroma
-/// reserve / feed). All four run BEFORE any fallible allocation so a
-/// rejected row leaves no state change (the crate's preflight-atomicity /
-/// recoverable-allocation contract).
+/// The COMPLETE compare-only pre-feed rejection preflight shared by the native
+/// 4:2:0 path ([`yuv420p_process_native`]) and its semi-planar reuse: the
+/// no-output short-circuit, the first-row out-of-sequence check, the output-set
+/// compare, AND the post-compare sequence check — every rejection point ahead of
+/// the delegate's first fallible allocation (the join build / colour scratch /
+/// feed). It wraps [`native_preflight_core_check_only`], keyed on the join's Y
+/// stream `next_y`, and does **NO commit**: it COMPARES the frozen output set
+/// against a fresh snapshot instead of storing it. The delegate builds its join
+/// and grows its colour scratch into locals AFTER this passes, then commits the
+/// output-set freeze only once every pre-feed allocation has succeeded — so a
+/// first-row allocation failure leaves `resample_outputs` (and the cached join)
+/// untouched, state-atomic and retryable even with a changed output attachment.
+///
 /// Returns `Ok(false)` for a no-output call (the caller should no-op),
-/// `Ok(true)` to proceed into the join, `Err(OutOfSequenceRow)` for a
-/// rejected out-of-sequence first row, or `Err(ResampleOutputsChanged)`
-/// for a mid-frame output-set change.
+/// `Ok(true)` to proceed into the join, `Err(OutOfSequenceRow)` for a rejected
+/// out-of-sequence first OR post-compare row, or `Err(ResampleOutputsChanged)`
+/// for a mid-frame output-set change. The conditional ordering is load-bearing —
+/// see [`native_preflight_core_check_only`]: on the first row nothing is frozen
+/// yet, so an out-of-sequence row is rejected before the output-set compare
+/// (storing no snapshot that would poison a retry); a later row runs the compare
+/// first, so a mid-frame output-set change is reported as ResampleOutputsChanged
+/// rather than masked, and the post-compare sequence check then rejects an
+/// out-of-sequence later row (including the failure-retry case where the join
+/// was never built, so `expected == 0`).
 ///
 /// The semi-planar wrapper runs this FIRST, before reserving / filling its
-/// U / V de-interleave scratch, so NO rejection case — no-output, OOS
-/// first row, OR mid-frame output change — can reach a wrapper allocation
-/// (which under allocation pressure would surface AllocationFailed instead
-/// of the deterministic typed error). `yuv420p_process_native` re-runs it
-/// in place of its inline block; the double-run is idempotent (the freeze
-/// stores on the first output-bearing row, the second run is a matching
-/// check, and the OOS-first-row branch is `is_none()`-guarded so it is
-/// skipped once frozen).
+/// U / V de-interleave scratch, so NO rejection case — no-output, OOS first row,
+/// OR mid-frame output change — can reach a wrapper allocation (which under
+/// allocation pressure would surface AllocationFailed instead of the
+/// deterministic typed error). `yuv420p_process_native` re-runs this identical
+/// compare and owns the single commit.
 ///
-/// A no-output call has nothing to sequence and stays a no-op regardless
-/// of the row index — returned before the freeze, the Y-stream sequence
-/// check, and the join allocation so it stores no frozen-output snapshot
-/// that a later attach-then-retry would trip on. The Y stream is bound to
-/// has-output here, not always fed: a no-output row must not advance it
-/// (otherwise the snapshot taken on the first output-bearing row of a
-/// retry mismatches the rejected no-output row's frozen-as-absent set).
-///
-/// The native 4:2:0 path bins the Y plane on every output-bearing row
-/// (luma is implicit), so the Y stream is the canonical per-row sequence
-/// counter. The conditional ordering is load-bearing: on the first row of
-/// a frame nothing is frozen yet, so the out-of-sequence row is rejected
-/// here — BEFORE the freeze — so a rejected first row stores no snapshot
-/// that would poison a retry. A later row runs the freeze (the frozen
-/// check below) first, so a mid-frame output-set change is reported as
-/// ResampleOutputsChanged rather than masked by the join being rebuilt at
-/// row 0; the post-freeze sequence check then rejects an out-of-sequence
-/// later row (including the failure-retry case where the join was never
-/// built, so `expected == 0`) before the caller's fallible allocation.
+/// A no-output call has nothing to sequence and stays a no-op regardless of the
+/// row index — returned before the compare, the Y-stream sequence check, and the
+/// join allocation so it stores no frozen-output snapshot that a later
+/// attach-then-retry would trip on. The Y stream is bound to has-output here, not
+/// always fed: a no-output row must not advance it (otherwise the snapshot taken
+/// on the first output-bearing row of a retry mismatches the rejected no-output
+/// row's frozen-as-absent set). The native 4:2:0 path bins the Y plane on every
+/// output-bearing row (luma is implicit), so the Y stream is the canonical
+/// per-row sequence counter.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn yuv420p_native_preflight(
+pub(super) fn yuv420p_native_preflight_check_only(
   native_420: &Option<std::boxed::Box<NativeYuv420>>,
-  resample_outputs: &mut Option<super::FrozenOutputs>,
+  resample_outputs: &Option<super::FrozenOutputs>,
   rgb: &Option<&mut [u8]>,
   rgba: &Option<&mut [u8]>,
   luma: &Option<&mut [u8]>,
@@ -1332,9 +1331,7 @@ pub(super) fn yuv420p_native_preflight(
   need_luma: bool,
   need_color: bool,
 ) -> Result<bool, MixedSinkerError> {
-  // The 8-bit planar / semi-planar join has no native-depth u16 colour
-  // outputs, so `rgb_u16` / `rgba_u16` are frozen as absent.
-  native_preflight_core(
+  native_preflight_core_check_only(
     native_420.as_ref().map_or(0, |join| join.y.next_y()),
     resample_outputs,
     rgb,
@@ -1350,24 +1347,28 @@ pub(super) fn yuv420p_native_preflight(
   )
 }
 
-/// The COMPLETE 4-point pre-feed rejection logic shared by the 8-bit
-/// ([`yuv420p_native_preflight`]) and the high-bit
+/// The COMPLETE **committing** 4-point pre-feed rejection logic used by the
+/// high-bit
 /// ([`crate::sinker::mixed::subsampled_4_2_0_high_bit::yuv420p16_native_preflight`])
-/// native 4:2:0 fast tiers: the no-output short-circuit, the first-row
+/// native 4:2:0 fast tier: the no-output short-circuit, the first-row
 /// pre-freeze out-of-sequence check, [`frozen_outputs_check`], AND the
 /// post-freeze sequence check — every rejection point a native path must
 /// run before its first fallible allocation. The join-typed expected-row
 /// computation (`join.y.next_y()`) lives in the thin per-element wrappers;
 /// each passes its already-computed `expected` here so this body stays
 /// element-agnostic (the u8 join carries [`NativeYuv420`], the u16 join
-/// `NativeYuv420U16`).
+/// `NativeYuv420U16`). The 8-bit native / semi-planar delegates route through
+/// the compare-only twin [`native_preflight_core_check_only`] instead, deferring
+/// the freeze until every pre-feed allocation succeeds; this committing core
+/// remains for the high-bit tier, which has not yet been folded.
 ///
 /// Returns `Ok(false)` for a no-output call (caller no-ops), `Ok(true)`
 /// to proceed into the join, `Err(OutOfSequenceRow)` for a rejected
 /// out-of-sequence first OR post-freeze row, or
 /// `Err(ResampleOutputsChanged)` for a mid-frame output-set change. The
-/// conditional ordering is load-bearing — see [`yuv420p_native_preflight`]
-/// and the crate's preflight-atomicity contract.
+/// conditional ordering is load-bearing — see
+/// [`native_preflight_core_check_only`] and the crate's preflight-atomicity
+/// contract.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn native_preflight_core(
   expected: usize,
@@ -1547,18 +1548,17 @@ pub(super) fn yuv420p_process_native(
   // RGBA attached keeps the convert-once-then-derive path.
   let want_hsv_direct = hsv.is_some() && rgb.is_none() && rgba.is_none();
 
-  // Complete pre-feed rejection preflight — no-output short-circuit,
-  // first-row out-of-sequence rejection, the frozen-output check, AND the
-  // post-freeze sequence check, all ahead of any fallible allocation (see
-  // [`yuv420p_native_preflight`]). Extracted in full so the semi-planar
-  // caller can run this identical gate BEFORE it reserves and fills its
-  // U / V de-interleave scratch — otherwise a rejected row (out-of-sequence
-  // first OR later row, or a mid-frame output change) would grow sink state
-  // under allocation pressure and surface AllocationFailed instead of the
-  // deterministic typed error. `Ok(false)` is the no-output no-op; the
-  // `check_sequence` below is now redundant but kept (it stays
-  // behavior-identical for in-sequence rows).
-  if !yuv420p_native_preflight(
+  // Compare-only pre-feed rejection preflight ahead of any fallible allocation
+  // (no-output short-circuit, first-row out-of-sequence, output-set compare,
+  // post-compare sequence) — see [`yuv420p_native_preflight_check_only`]. It
+  // does NOT commit the output-set freeze; that commit is deferred below until
+  // every pre-feed allocation has succeeded, so a first-row failure leaves the
+  // cached join and `resample_outputs` untouched. Extracted in full so the
+  // semi-planar caller can run this identical compare BEFORE it reserves and
+  // fills its U / V de-interleave scratch — otherwise a rejected row would grow
+  // sink state under allocation pressure and surface AllocationFailed instead of
+  // the deterministic typed error. `Ok(false)` is the no-output no-op.
+  if !yuv420p_native_preflight_check_only(
     native_420,
     resample_outputs,
     rgb,
@@ -1572,40 +1572,37 @@ pub(super) fn yuv420p_process_native(
   )? {
     return Ok(());
   }
-  // The join's chroma half is fixed at creation; if the frame's color
-  // capability differs (outputs attached since the previous frame —
-  // the frozen check pins them WITHIN a frame, not across frames),
-  // rebuild it rather than silently skip or needlessly read chroma.
-  if native_420
-    .as_ref()
-    .is_some_and(|join| join.chroma.is_some() != need_color)
-  {
-    *native_420 = None;
-  }
-  let join = match native_420 {
-    Some(join) => join,
-    None => {
-      // Build the join (its U / V de-interleave scratch allocates recoverably)
-      // and box it recoverably (`try_box`, not `Box::new` — the latter aborts
-      // on OOM). Both fallible steps run BEFORE `native_420.insert`, so a
-      // refusal at either returns `Err` with the field still `None` — no caller
-      // output is touched and the next row retries (the first-row-transactional
-      // contract).
-      let join = NativeYuv420::new(plan, w, h, need_color)?;
-      let boxed = crate::resample::try_box(join).map_err(|_| {
-        MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
-          w,
-          h,
-          plan.out_w(),
-          plan.out_h(),
-        )))
-      })?;
-      native_420.insert(boxed)
-    }
+  // A fresh join is needed on a first-ever build (`None`) or a colour-capability
+  // change (the cached join's chroma half no longer matches `need_color` — the
+  // frozen check pins the set WITHIN a frame, not across frames). Build the
+  // replacement into a LOCAL and do NOT clear the field yet: the cached join
+  // stays intact until every pre-feed allocation has succeeded, so a build / box
+  // refusal leaves it (and `resample_outputs`) untouched — state-atomic and
+  // retryable.
+  let rebuild = native_420.is_none()
+    || native_420
+      .as_ref()
+      .is_some_and(|join| join.chroma.is_some() != need_color);
+  let new_join = if rebuild {
+    // Build the join (its U / V de-interleave scratch allocates recoverably) and
+    // box it recoverably (`try_box`, not `Box::new` — the latter aborts on OOM).
+    let join = NativeYuv420::new(plan, w, h, need_color)?;
+    Some(crate::resample::try_box(join).map_err(|_| {
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
+        w,
+        h,
+        plan.out_w(),
+        plan.out_h(),
+      )))
+    })?)
+  } else {
+    None
   };
-  join.check_sequence(idx)?;
-  // No output-width RGB scratch for the HSV-direct case — the emit loop
-  // converts the binned Y/U/V straight to HSV.
+  // Grow the output-width RGB scratch (fallible) BEFORE the commit — no scratch
+  // for the HSV-direct case (the emit loop converts the binned Y/U/V straight to
+  // HSV). Hoisting it ahead of the freeze keeps EVERY pre-feed allocation (the
+  // join above + this scratch) ahead of the output-set commit, so any refusal is
+  // state-atomic.
   if need_color && !want_hsv_direct {
     let row_bytes =
       ow.checked_mul(3)
@@ -1634,6 +1631,35 @@ pub(super) fn yuv420p_process_native(
       rgb_scratch.resize(row_bytes, 0);
     }
   }
+  // Every pre-feed allocation succeeded — COMMIT: install the rebuilt join
+  // (dropping the old) then freeze the output set. A build only reaches here on
+  // the first output-bearing row (its `resample_outputs` is still `None`), so the
+  // freeze just stores the snapshot; a reuse row builds nothing and re-freezes
+  // nothing new.
+  if let Some(boxed) = new_join {
+    *native_420 = Some(boxed);
+  }
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    hsv,
+    &None,
+    idx,
+  )?;
+  let join = native_420
+    .as_mut()
+    .expect("built or reused in the preflight");
+  join.check_sequence(idx)?;
 
   // Feed the planes; everything past this point is infallible.
   let NativeYuv420 {
@@ -1895,14 +1921,17 @@ impl BicublinYuv420 {
 /// wide, so a plane can lead by more than one output row).
 ///
 /// Atomic preflight, mirroring [`yuv420p_process_native`] /
-/// [`planar_dual_filter_resample`]: the complete pre-feed rejection
-/// ([`yuv420p_native_preflight`] — no-output short-circuit, first-row
-/// out-of-sequence, frozen-output, post-freeze sequence) runs before any
-/// fallible allocation, then the join build, the [`Self::check_sequence`]
-/// across all three streams, and the colour scratch growth all precede the
-/// first `feed_row`. So a rejected or failed row mutates no caller output and
-/// returns the deterministic typed error (never `AllocationFailed`-on-abort),
-/// and a corrected retry of the SAME row is accepted. Luma is the native Y
+/// [`planar_dual_filter_resample`]: the complete compare-only pre-feed rejection
+/// ([`yuv420p_native_preflight_check_only`] — no-output short-circuit, first-row
+/// out-of-sequence, output-set compare, post-compare sequence) runs before any
+/// fallible allocation; the join is then built into a LOCAL and the colour
+/// scratch grown, and only once both succeed does the delegate COMMIT — install
+/// the join, freeze the output set via [`frozen_outputs_check`], then run
+/// [`Self::check_sequence`] across all three streams — before the first
+/// `feed_row`. So a rejected or failed pre-feed row mutates no caller output and
+/// leaves the cached join + `resample_outputs` untouched (the deterministic
+/// typed error, never `AllocationFailed`-on-abort), and a corrected retry of the
+/// SAME row is accepted. Luma is the native Y
 /// filter-resampled (the YUV luma contract — never colour-derived); these are
 /// 8-bit sources, so the `u8` stream finalises to the full `u8` range, which
 /// IS the native range (no sub-16-bit clamp).
@@ -1935,13 +1964,14 @@ pub(super) fn bicublin_yuv420p_resample(
   // filtered (`need_color`). See [`yuv420p_process_native`].
   let want_hsv_direct = hsv.is_some() && rgb.is_none() && rgba.is_none();
 
-  // Complete pre-feed rejection preflight ahead of any fallible allocation
-  // (no-output short-circuit, first-row out-of-sequence, frozen-output, AND
-  // post-freeze sequence) — the SAME gate the native tier runs, keyed on the
-  // Y stream's `next_y` (luma is implicit on every output-bearing row). A
-  // rejected row therefore allocates nothing and a no-output call is a true
-  // route-invisible no-op.
-  if !yuv420p_native_preflight_bicublin(
+  // Compare-only pre-feed rejection preflight ahead of any fallible allocation
+  // (no-output short-circuit, first-row out-of-sequence, output-set compare, AND
+  // post-compare sequence) — the SAME gate the native tier runs, keyed on the
+  // Y stream's `next_y` (luma is implicit on every output-bearing row). It does
+  // NOT commit the output-set freeze; that commit is deferred below until every
+  // pre-feed allocation has succeeded. A rejected row therefore allocates
+  // nothing and a no-output call is a true route-invisible no-op.
+  if !yuv420p_native_preflight_bicublin_check_only(
     bicublin_420,
     resample_outputs,
     rgb,
@@ -1955,39 +1985,37 @@ pub(super) fn bicublin_yuv420p_resample(
   )? {
     return Ok(());
   }
-  // The join's chroma half is fixed at creation; if the frame's colour
-  // capability differs (outputs attached since the previous frame — the frozen
-  // check pins them WITHIN a frame, not across frames), rebuild it.
-  if bicublin_420
-    .as_ref()
-    .is_some_and(|join| join.chroma.is_some() != need_color)
-  {
-    *bicublin_420 = None;
-  }
-  let join = match bicublin_420 {
-    Some(join) => join.as_mut(),
-    None => {
-      // Build the join (its Y / U / V filter streams allocate recoverably) and
-      // box it recoverably (`try_box`, not `Box::new` — the latter aborts on
-      // OOM). Both fallible steps run BEFORE `bicublin_420.insert`, so a refusal
-      // at either returns `Err` with the field still `None` — no caller output
-      // is touched and the next row retries from scratch (the
-      // first-row-transactional contract).
-      let join = BicublinYuv420::new(plan, w, h, need_color)?;
-      let boxed = crate::resample::try_box(join).map_err(|_| {
-        MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
-          w,
-          h,
-          plan.out_w(),
-          plan.out_h(),
-        )))
-      })?;
-      bicublin_420.insert(boxed).as_mut()
-    }
+  // A fresh join is needed on a first-ever build (`None`) or a colour-capability
+  // change (the cached join's chroma half no longer matches `need_color` — the
+  // frozen check pins the set WITHIN a frame, not across frames). Build the
+  // replacement into a LOCAL and do NOT clear the field yet: the cached join
+  // stays intact until every pre-feed allocation has succeeded, so a build / box
+  // refusal leaves it (and `resample_outputs`) untouched — state-atomic and
+  // retryable.
+  let rebuild = bicublin_420.is_none()
+    || bicublin_420
+      .as_ref()
+      .is_some_and(|join| join.chroma.is_some() != need_color);
+  let new_join = if rebuild {
+    // Build the join (its Y / U / V filter streams allocate recoverably) and box
+    // it recoverably (`try_box`, not `Box::new` — the latter aborts on OOM).
+    let join = BicublinYuv420::new(plan, w, h, need_color)?;
+    Some(crate::resample::try_box(join).map_err(|_| {
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
+        w,
+        h,
+        plan.out_w(),
+        plan.out_h(),
+      )))
+    })?)
+  } else {
+    None
   };
-  join.check_sequence(idx)?;
-  // No output-width RGB scratch for the HSV-direct case — the emit loop
-  // converts the binned Y/U/V straight to HSV.
+  // Grow the output-width RGB scratch (fallible) BEFORE the commit — no scratch
+  // for the HSV-direct case (the emit loop converts the filtered Y/U/V straight
+  // to HSV). Hoisting it ahead of the freeze keeps EVERY pre-feed allocation
+  // (the join above + this scratch) ahead of the output-set commit, so any
+  // refusal is state-atomic.
   if need_color && !want_hsv_direct {
     let row_bytes =
       ow.checked_mul(3)
@@ -2016,6 +2044,35 @@ pub(super) fn bicublin_yuv420p_resample(
       rgb_scratch.resize(row_bytes, 0);
     }
   }
+  // Every pre-feed allocation succeeded — COMMIT: install the rebuilt join
+  // (dropping the old) then freeze the output set. A build only reaches here on
+  // the first output-bearing row (its `resample_outputs` is still `None`), so the
+  // freeze just stores the snapshot; a reuse row builds nothing and re-freezes
+  // nothing new.
+  if let Some(boxed) = new_join {
+    *bicublin_420 = Some(boxed);
+  }
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    hsv,
+    &None,
+    idx,
+  )?;
+  let join = bicublin_420
+    .as_mut()
+    .expect("built or reused in the preflight");
+  join.check_sequence(idx)?;
 
   // Feed the planes; everything past this point is infallible. Each stream
   // lands every emitted output row in its full-output-resolution plane buffer
@@ -2026,7 +2083,7 @@ pub(super) fn bicublin_yuv420p_resample(
     y_emitted,
     chroma,
     next_emit,
-  } = join;
+  } = &mut **join;
   y.feed_row(idx, y_row, use_simd, |oy, out_row| {
     y_plane[oy * ow..oy * ow + ow].copy_from_slice(out_row);
     *y_emitted = oy + 1;
@@ -2119,17 +2176,20 @@ pub(super) fn bicublin_yuv420p_resample(
   Ok(())
 }
 
-/// BICUBLIN preflight — the per-plane filter twin of
-/// [`yuv420p_native_preflight`], keyed on the BICUBLIN join's Y stream
-/// `next_y` (the canonical per-row counter; luma is implicit on every
-/// output-bearing row). Runs [`native_preflight_core`] so the no-output
-/// short-circuit, first-row out-of-sequence, frozen-output, and post-freeze
-/// sequence checks all precede any fallible allocation, exactly as the native
-/// tier does.
+/// Compare-only BICUBLIN preflight — the per-plane filter twin of
+/// [`yuv420p_native_preflight_check_only`], keyed on the BICUBLIN join's Y
+/// stream `next_y` (the canonical per-row counter; luma is implicit on every
+/// output-bearing row). Runs [`native_preflight_core_check_only`] so the
+/// no-output short-circuit, first-row out-of-sequence, output-set compare, and
+/// post-compare sequence checks all precede any fallible allocation, exactly as
+/// the native tier does — WITHOUT committing the output-set freeze, which
+/// [`bicublin_yuv420p_resample`] defers until every pre-feed allocation
+/// (join + colour scratch) has succeeded, so a first-row failure is
+/// state-atomic and retryable.
 #[allow(clippy::too_many_arguments)]
-fn yuv420p_native_preflight_bicublin(
+fn yuv420p_native_preflight_bicublin_check_only(
   bicublin_420: &Option<std::boxed::Box<BicublinYuv420>>,
-  resample_outputs: &mut Option<super::FrozenOutputs>,
+  resample_outputs: &Option<super::FrozenOutputs>,
   rgb: &Option<&mut [u8]>,
   rgba: &Option<&mut [u8]>,
   luma: &Option<&mut [u8]>,
@@ -2139,7 +2199,7 @@ fn yuv420p_native_preflight_bicublin(
   need_luma: bool,
   need_color: bool,
 ) -> Result<bool, MixedSinkerError> {
-  native_preflight_core(
+  native_preflight_core_check_only(
     bicublin_420.as_ref().map_or(0, |join| join.y.next_y()),
     resample_outputs,
     rgb,
@@ -2542,14 +2602,15 @@ pub(super) fn yuva420p_process_native(
   // α is materialised only into the RGBA output (rgb / luma / hsv drop it).
   let need_alpha = rgba.is_some();
 
-  // Complete pre-feed rejection preflight — no-output short-circuit,
-  // first-row out-of-sequence rejection, the frozen-output check, AND the
-  // post-freeze sequence check, all ahead of any fallible allocation (the
-  // same gate the no-alpha 4:2:0 native tier runs). `Ok(false)` is the
-  // no-output no-op. The Y-stream expected row is read from the embedded
-  // join; the α stream advances in lockstep with Y (same grid), so the Y
-  // sequence governs both.
-  if !native_preflight_core(
+  // Compare-only pre-feed rejection preflight — no-output short-circuit,
+  // first-row out-of-sequence rejection, the output-set compare, AND the
+  // post-compare sequence check, all ahead of any fallible allocation (the
+  // compare-only twin of the gate the no-alpha 4:2:0 native tier runs). It does
+  // NOT commit the output-set freeze; that commit is deferred below until every
+  // pre-feed allocation has succeeded. `Ok(false)` is the no-output no-op. The
+  // Y-stream expected row is read from the embedded join; the α stream advances
+  // in lockstep with Y (same grid), so the Y sequence governs both.
+  if !native_preflight_core_check_only(
     native.as_ref().map_or(0, |n| n.inner.y.next_y()),
     resample_outputs,
     rgb,
@@ -2565,45 +2626,35 @@ pub(super) fn yuva420p_process_native(
   )? {
     return Ok(());
   }
-  // The join's chroma / α halves are fixed at creation; if the frame's
-  // colour-or-alpha capability differs (outputs attached since the previous
-  // frame — the frozen check pins them WITHIN a frame, not across frames),
-  // rebuild it rather than silently skip or needlessly read α / chroma.
-  if native
-    .as_ref()
-    .is_some_and(|n| n.inner.chroma.is_some() != need_color || n.alpha.is_some() != need_alpha)
-  {
-    *native = None;
-  }
-  let join = match native {
-    Some(join) => join.as_mut(),
-    None => {
-      // Build the join (its inner Y / U / V / α streams allocate recoverably)
-      // and box it recoverably (`try_box`, not `Box::new` — the latter aborts
-      // on OOM). Both fallible steps run BEFORE `native.insert`, so a refusal
-      // at either returns `Err` with `native` still `None` — the field is left
-      // empty, no caller output is touched, and the next row retries the
-      // allocation from scratch (the first-row-transactional contract).
-      let join = NativeYuva420::new(plan, w, h, need_color, need_alpha)?;
-      let boxed = crate::resample::try_box(join).map_err(|_| {
-        MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
-          w,
-          h,
-          plan.out_w(),
-          plan.out_h(),
-        )))
-      })?;
-      native.insert(boxed).as_mut()
-    }
+  // A fresh join is needed on a first-ever build (`None`) or a
+  // colour-or-alpha-capability change (the cached join's chroma / α half no
+  // longer matches — the frozen check pins the set WITHIN a frame, not across
+  // frames). Build the replacement into a LOCAL and do NOT clear the field yet:
+  // the cached join stays intact until every pre-feed allocation has succeeded,
+  // so a build / box refusal leaves it (and `resample_outputs`) untouched —
+  // state-atomic and retryable.
+  let rebuild = native.is_none()
+    || native
+      .as_ref()
+      .is_some_and(|n| n.inner.chroma.is_some() != need_color || n.alpha.is_some() != need_alpha);
+  let new_join = if rebuild {
+    // Build the join (its inner Y / U / V / α streams allocate recoverably) and
+    // box it recoverably (`try_box`, not `Box::new` — the latter aborts on OOM).
+    let join = NativeYuva420::new(plan, w, h, need_color, need_alpha)?;
+    Some(crate::resample::try_box(join).map_err(|_| {
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
+        w,
+        h,
+        plan.out_w(),
+        plan.out_h(),
+      )))
+    })?)
+  } else {
+    None
   };
-  join.inner.check_sequence(idx)?;
-  if let Some(alpha) = join.alpha.as_ref()
-    && alpha.a.next_y() != idx
-  {
-    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
-      OutOfSequenceRow::new(alpha.a.next_y(), idx),
-    )));
-  }
+  // Grow the output-width RGB scratch (fallible) BEFORE the commit. Hoisting it
+  // ahead of the freeze keeps EVERY pre-feed allocation (the join above + this
+  // scratch) ahead of the output-set commit, so any refusal is state-atomic.
   if need_color {
     let row_bytes =
       ow.checked_mul(3)
@@ -2632,6 +2683,44 @@ pub(super) fn yuva420p_process_native(
       rgb_scratch.resize(row_bytes, 0);
     }
   }
+  // Every pre-feed allocation succeeded — COMMIT: install the rebuilt join
+  // (dropping the old) then freeze the output set. A build only reaches here on
+  // the first output-bearing row (its `resample_outputs` is still `None`), so the
+  // freeze just stores the snapshot; a reuse row builds nothing and re-freezes
+  // nothing new.
+  if let Some(boxed) = new_join {
+    *native = Some(boxed);
+  }
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    hsv,
+    &None,
+    idx,
+  )?;
+  let join = native.as_mut().expect("built or reused in the preflight");
+  // Post-commit sequence checks (pure reads — no state mutation on rejection).
+  // The Y-keyed preflight above already rejected an out-of-sequence row before
+  // any allocation; these re-check the embedded Y stream and, defensively, the
+  // lockstep α stream (which shares Y's grid, so `α.next_y == inner.y.next_y`).
+  join.inner.check_sequence(idx)?;
+  if let Some(alpha) = join.alpha.as_ref()
+    && alpha.a.next_y() != idx
+  {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(alpha.a.next_y(), idx),
+    )));
+  }
 
   // Feed the planes; everything past this point is infallible. Feed α FIRST
   // (into its staging ring) so its finalized rows are present when the
@@ -2653,7 +2742,7 @@ pub(super) fn yuva420p_process_native(
   // finalized together, byte-identical to the no-alpha native tier except
   // for the α channel. `alpha` is destructured alongside `inner` (disjoint
   // fields) so the drain can read the staged α without re-borrowing `join`.
-  let NativeYuva420 { inner, alpha } = join;
+  let NativeYuva420 { inner, alpha } = &mut **join;
   let NativeYuv420 {
     y,
     y_stage,
@@ -2831,9 +2920,11 @@ struct NativePlanarChroma {
 std::thread_local! {
   static FORCE_PLANAR_NATIVE_CHROMA_FAILURE: core::cell::Cell<bool> =
     const { core::cell::Cell::new(false) };
-  /// Fires at the native tier's output-width RGB-scratch grow, which runs
-  /// AFTER the rebuilt join is inserted — the post-insert failure path the
-  /// RFC #238 phase-rebuild rollback must still be atomic under.
+  /// Fires at the native tier's output-width RGB-scratch grow, which runs as a
+  /// pre-feed step BEFORE the delegate commits (installs the rebuilt join +
+  /// freezes the output set) — the pre-commit failure path the transactional
+  /// delegates must leave state-atomic (cached join + `resample_outputs`
+  /// untouched, retryable).
   static FORCE_NATIVE_RGB_SCRATCH_FAILURE: core::cell::Cell<bool> =
     const { core::cell::Cell::new(false) };
 }
@@ -2866,8 +2957,9 @@ pub(crate) fn arm_planar_native_chroma_failure() {
 }
 
 /// Arms [`FORCE_NATIVE_RGB_SCRATCH_FAILURE`] for the NEXT native output-width
-/// RGB-scratch grow on this thread (which runs AFTER the rebuilt join is
-/// inserted), consumed on read so it fires exactly once. Test-only.
+/// RGB-scratch grow on this thread (a pre-feed step that runs BEFORE the
+/// delegate commits the rebuilt join + output-set freeze), consumed on read so
+/// it fires exactly once. Test-only.
 #[cfg(all(test, feature = "std", feature = "yuv-planar", feature = "rgb"))]
 pub(crate) fn arm_native_rgb_scratch_failure() {
   FORCE_NATIVE_RGB_SCRATCH_FAILURE.with(|f| f.set(true));
@@ -3013,12 +3105,12 @@ impl NativePlanarYuv {
 
 /// Compare-only preflight wrapper over [`native_preflight_core_check_only`] for
 /// the [`NativePlanarYuv`] join — supplies the join-typed expected row and
-/// freezes the 8-bit-absent native-depth u16 colour outputs. Mirrors
-/// [`yuv420p_native_preflight`] but does **not** commit the output-set freeze;
-/// the delegate that calls it commits only after its pre-feed allocations
-/// (the join build, the boxing, the output RGB scratch grow) have all succeeded.
-/// See `native_preflight_core_check_only` for the 4-point rejection logic and
-/// its ordering contract.
+/// freezes the 8-bit-absent native-depth u16 colour outputs. The 4:2:0 sibling
+/// of [`yuv420p_native_preflight_check_only`]: like it, this does **not** commit
+/// the output-set freeze; the delegate that calls it commits only after its
+/// pre-feed allocations (the join build, the boxing, the output RGB scratch
+/// grow) have all succeeded. See `native_preflight_core_check_only` for the
+/// 4-point rejection logic and its ordering contract.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn native_planar_preflight_check_only(
   join: &Option<std::boxed::Box<NativePlanarYuv>>,

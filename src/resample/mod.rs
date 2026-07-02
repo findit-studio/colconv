@@ -924,6 +924,27 @@ impl ResamplePlan {
   /// ([`AxisSpans::area_halved`]) so an odd trailing luma row weights
   /// its chroma row by half. The stored source dims are
   /// `(chroma_w, luma_h)` — the per-plane normalization denominators.
+  ///
+  /// `h_phase` carries the RFC #238 horizontal chroma siting. At phase 0
+  /// (co-sited / unspecified) this is **byte-identical** to the plain
+  /// [`AxisSpans::area`]-over-`chroma_w` H axis the native 4:2:0 chroma
+  /// resample built before siting existed. For the centered group
+  /// (`h_phase ≠ 0`) the horizontal spans are the folded triangle⊗box weights
+  /// ([`AxisSpans::area_chroma_phased_h_centered`], shared with
+  /// [`Self::area_chroma_422`]): one phased area pass on the subsampled grid
+  /// reproducing "reconstruct full width with the #302 `1/4`–`3/4` triangle,
+  /// then box-average" with a SINGLE rounding. Its output spans sum to
+  /// `4·(2·chroma_w) = 8·chroma_w`, so the stored `src_w` becomes that scaled
+  /// H denominator and the existing [`AreaStream`] normalization
+  /// (`src_w·src_h`) and exactness guards bound the scaled weights with no
+  /// change (the `4·` only tightens the maximum representable width, which
+  /// stays absurd).
+  ///
+  /// The vertical axis is unchanged — [`AxisSpans::area_halved`] over the LUMA
+  /// height in BOTH branches (the 4:2:0 vertical chroma pairing carries no
+  /// horizontal scaling), so `src_h` stays `luma_h`. `v_phase` is stored but
+  /// not folded here (4:2:0 vertical siting is a later stage); a caller must
+  /// pass `0.0` today for the vertical axis to stay co-sited.
   #[cfg(feature = "yuv-planar")]
   pub(crate) fn area_chroma_420(
     chroma_w: usize,
@@ -941,10 +962,34 @@ impl ResamplePlan {
       AxisError::Overflow => fail_overflow(),
       AxisError::Alloc => fail_alloc(),
     };
-    let h = AxisSpans::area(chroma_w, out_w).map_err(fail)?;
+    // The vertical axis pairs luma rows to chroma rows the same way regardless
+    // of horizontal siting (the H fold rescales only the H weights), so it is
+    // shared across both branches.
     let v = AxisSpans::area_halved(luma_h, out_h).map_err(fail)?;
+    if h_phase == 0.0 {
+      // Co-sited / unspecified — byte-identical to the pre-siting area plan.
+      let h = AxisSpans::area(chroma_w, out_w).map_err(fail)?;
+      return Ok(Self {
+        src_w: chroma_w,
+        src_h: luma_h,
+        out_w,
+        out_h,
+        kind: SpanKind::Area,
+        h,
+        v,
+        filter_h: None,
+        filter_v: None,
+        filter_h_chroma: None,
+        filter_v_chroma: None,
+        h_phase,
+        v_phase,
+      });
+    }
+    // Scaled H denominator: each folded output span sums to `4·(2·chroma_w)`.
+    let denom_w = chroma_w.checked_mul(8).ok_or_else(fail_overflow)?;
+    let h = AxisSpans::area_chroma_phased_h_centered(chroma_w, out_w).map_err(fail)?;
     Ok(Self {
-      src_w: chroma_w,
+      src_w: denom_w,
       src_h: luma_h,
       out_w,
       out_h,

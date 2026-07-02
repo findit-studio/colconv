@@ -591,6 +591,149 @@ fn bicublin_box_alloc_failure_is_recoverable() {
   );
 }
 
+/// The BICUBLIN delegate grows the output RGB scratch as a PRE-FEED step,
+/// BEFORE it commits the output-set freeze. A scratch OOM on an ordinary
+/// first-ever row-0 build therefore leaves `resample_outputs` uncommitted (the
+/// delegate never freezes on a pre-feed failure), so a retry of row 0 with a
+/// CHANGED output attachment is accepted, not mis-rejected as
+/// ResampleOutputsChanged. Mirrors the native area tier's fold.
+#[test]
+#[cfg(all(feature = "std", feature = "rgb"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn bicublin_first_build_scratch_oom_leaves_freeze_unfrozen_for_retry() {
+  const SW: usize = 8;
+  const SH: usize = 8;
+  const OW: usize = 4;
+  const OH: usize = 4;
+  let (y, u, v) = ramp_420(SW, SH);
+  let cw = SW / 2;
+  let yr = |i: usize| &y[i * SW..(i + 1) * SW];
+
+  let mut rgb = vec![0u8; OW * OH * 3];
+  let mut luma = vec![0u8; OW * OH];
+  let mut sink = MixedSinker::<Yuv420p, Bicublin>::with_resampler(SW, SH, Bicublin::to(OW, OH))
+    .unwrap()
+    .with_rgb(&mut rgb)
+    .unwrap();
+  sink.begin_frame(SW as u32, SH as u32).unwrap();
+  crate::sinker::mixed::arm_native_rgb_scratch_failure();
+  let err = sink
+    .process(Yuv420pRow::new(
+      yr(0),
+      chroma_row(&u, cw, 0),
+      chroma_row(&v, cw, 0),
+      0,
+      M,
+      FR,
+    ))
+    .unwrap_err();
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "first-build RGB-scratch OOM must surface AllocationFailed, got {err:?}"
+  );
+  // The freeze was never committed on the failed build — a retry of row 0 with
+  // luma added (changed output set) is ACCEPTED, not ResampleOutputsChanged.
+  sink.set_luma(&mut luma).unwrap();
+  sink
+    .process(Yuv420pRow::new(
+      yr(0),
+      chroma_row(&u, cw, 0),
+      chroma_row(&v, cw, 0),
+      0,
+      M,
+      FR,
+    ))
+    .expect("row 0 must succeed after a first-build scratch OOM (freeze uncommitted)");
+}
+
+/// A cross-frame COLOUR-CAPABILITY rebuild for the BICUBLIN delegate: frame 1
+/// builds a luma-only join (chroma absent, no output RGB scratch); frame 2
+/// attaches RGB, so the delegate rebuilds the join WITH chroma into a local and
+/// grows the (empty) output RGB scratch before committing. A scratch OOM on that
+/// rebuild must leave the cached luma-only join intact AND `resample_outputs`
+/// uncommitted, so a row-0 retry is accepted, not mis-rejected as
+/// ResampleOutputsChanged.
+#[test]
+#[cfg(all(feature = "std", feature = "rgb"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn bicublin_colour_capability_rebuild_scratch_oom_leaves_freeze_unfrozen_for_retry() {
+  const SW: usize = 8;
+  const SH: usize = 8;
+  const OW: usize = 4;
+  const OH: usize = 4;
+  let (y, u, v) = ramp_420(SW, SH);
+  let cw = SW / 2;
+  let yr = |i: usize| &y[i * SW..(i + 1) * SW];
+
+  let mut luma = vec![0u8; OW * OH];
+  let mut rgb = vec![0u8; OW * OH * 3];
+  let (mut hh, mut ss, mut vv) = (vec![0u8; OW * OH], vec![0u8; OW * OH], vec![0u8; OW * OH]);
+  let mut sink = MixedSinker::<Yuv420p, Bicublin>::with_resampler(SW, SH, Bicublin::to(OW, OH))
+    .unwrap()
+    .with_luma(&mut luma)
+    .unwrap();
+  // Frame 1: a luma-only join (chroma absent, reserves no RGB scratch).
+  sink.begin_frame(SW as u32, SH as u32).unwrap();
+  for i in 0..SH {
+    sink
+      .process(Yuv420pRow::new(
+        yr(i),
+        chroma_row(&u, cw, i),
+        chroma_row(&v, cw, i),
+        i,
+        M,
+        FR,
+      ))
+      .expect("luma-only frame builds the bicublin join");
+  }
+  // Frame 2: attach RGB → the row-0 rebuild must build the chroma half and grow
+  // the (now-needed, empty) output RGB scratch; refuse that grow.
+  sink.begin_frame(SW as u32, SH as u32).unwrap();
+  sink.set_rgb(&mut rgb).unwrap();
+  crate::sinker::mixed::arm_native_rgb_scratch_failure();
+  let err = sink
+    .process(Yuv420pRow::new(
+      yr(0),
+      chroma_row(&u, cw, 0),
+      chroma_row(&v, cw, 0),
+      0,
+      M,
+      FR,
+    ))
+    .unwrap_err();
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "the colour-capability rebuild scratch OOM must surface AllocationFailed, got {err:?}"
+  );
+  // The freeze was never committed (the delegate commits only after the scratch
+  // grows), so attaching ANOTHER output (hsv) and retrying row 0 is ACCEPTED —
+  // the changed output set proves the freeze was rolled back (the pre-fold shape
+  // would have frozen {luma, rgb} and rejected this as ResampleOutputsChanged).
+  sink.set_hsv(&mut hh, &mut ss, &mut vv).unwrap();
+  sink
+    .process(Yuv420pRow::new(
+      yr(0),
+      chroma_row(&u, cw, 0),
+      chroma_row(&v, cw, 0),
+      0,
+      M,
+      FR,
+    ))
+    .expect("row 0 with a changed output set must succeed after a rebuild scratch OOM");
+}
+
 /// The directly-boxed per-plane `*_stream` fields take the same recoverable
 /// `try_box` path as the native joins: a box-alloc refusal on the first row of
 /// the row-stage area route (`Yuv420p` + `AreaResampler`, native tier off, so
