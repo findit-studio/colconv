@@ -1647,6 +1647,37 @@ impl NativeYuv420 {
     self.next_emit = 0;
   }
 
+  /// Whether this join carries a chroma half — a luma-only join has none, so its
+  /// cached plan is siting-agnostic. Read by the semi-planar 4:2:0 (`Nv12` /
+  /// `Nv21`) point-of-use siting invalidation, whose joins live in a sibling
+  /// module and so cannot touch the private `chroma` field directly.
+  #[cfg(feature = "yuv-semi-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(super) const fn has_chroma(&self) -> bool {
+    self.chroma.is_some()
+  }
+
+  /// Whether the cached chroma plan was built with a non-zero chroma phase
+  /// (RFC #238 centered siting) — see
+  /// [`chroma_centered`](Self#structfield.chroma_centered). Read by the
+  /// semi-planar 4:2:0 point-of-use siting invalidation to rebuild the join on a
+  /// phase change.
+  #[cfg(feature = "yuv-semi-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(super) const fn chroma_centered(&self) -> bool {
+    self.chroma_centered
+  }
+
+  /// Next source row this join expects (0 at a fresh frame). Read by the
+  /// semi-planar 4:2:0 point-of-use siting invalidation to fire the
+  /// phase-rebuild drop ONLY at a fresh-frame boundary (`next_y() == 0`), never
+  /// mid-frame.
+  #[cfg(feature = "yuv-semi-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(super) const fn next_y(&self) -> usize {
+    self.y.next_y()
+  }
+
   /// Sequencing preflight across all three plane streams — checked
   /// before any plane is fed so a violating call mutates nothing.
   /// Chroma rows advance once per source-row pair, so their expected
