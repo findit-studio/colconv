@@ -1416,17 +1416,17 @@ mod native_tier {
     );
   }
 
-  /// The fourth (post-freeze) rejection point: after a RECOVERABLE
-  /// de-interleave allocation failure on a chroma-bearing even row 0
-  /// leaves `resample_outputs` frozen but the planar join unbuilt
-  /// (`native_420 == None`, since the join is created inside
-  /// `yuv420p_process_native` AFTER the de-interleave), a later
-  /// OUT-OF-SEQUENCE even row must still reject as the deterministic
-  /// `OutOfSequenceRow`, never `AllocationFailed`. The pre-freeze first-row
-  /// branch is skipped here (outputs are already frozen), so only the
-  /// preflight's post-freeze sequence check stands between the
-  /// out-of-sequence row and the wrapper's fallible de-interleave reserve;
-  /// without it the re-armed failpoint would fire first and surface
+  /// Sequence-rejection after a RECOVERABLE de-interleave allocation failure:
+  /// because the wrapper now runs the COMPARE-ONLY preflight (the commit is
+  /// owned by the folded `yuv420p_process_native`), a de-interleave OOM on a
+  /// chroma-bearing even row 0 leaves `resample_outputs` UNFROZEN and the join
+  /// unbuilt (`native_420 == None`, since the join is created inside the delegate
+  /// AFTER the de-interleave) — the de-interleave stays a genuine pre-commit
+  /// step. A later OUT-OF-SEQUENCE even row must still reject as the
+  /// deterministic `OutOfSequenceRow`, never `AllocationFailed`: outputs are not
+  /// frozen, so the preflight's pre-compare first-row sequence check stands
+  /// between the out-of-sequence row and the wrapper's fallible de-interleave
+  /// reserve; without it the re-armed failpoint would fire first and surface
   /// `AllocationFailed`. The re-arm is proven unconsumed by a subsequent
   /// in-sequence even colour row that DOES fire it.
   #[test]
@@ -1447,12 +1447,12 @@ mod native_tier {
         .with_rgb(&mut rgb)
         .unwrap();
     // Step 1 — a RECOVERABLE de-interleave failure on the in-sequence even
-    // colour row 0. The full preflight clears (freezing the RGB output set),
-    // then the armed de-interleave reserve refuses: AllocationFailed. This
-    // leaves `resample_outputs = Some` (frozen) but `native_420 = None` (the
-    // join is built inside the delegate, which the de-interleave failure
-    // short-circuits before reaching) — the exact poisoned-but-recoverable
-    // state the post-freeze check must defend.
+    // colour row 0. The compare-only preflight clears WITHOUT freezing, then the
+    // armed de-interleave reserve refuses: AllocationFailed. This leaves
+    // `resample_outputs = None` (unfrozen — the delegate owns the commit, which
+    // the pre-commit de-interleave failure never reaches) AND `native_420 = None`
+    // (the join is built inside the delegate, after the de-interleave) — the
+    // exact recoverable state the sequence check must defend.
     crate::sinker::mixed::semi_planar_8bit::arm_deinterleave_alloc_failure();
     let err0 = sink
       .process(Nv12Row::new(
@@ -1469,18 +1469,17 @@ mod native_tier {
         MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
       ),
       "the recoverable de-interleave failure on even row 0 must surface \
-       AllocationFailed (freezing outputs, leaving the join unbuilt), got {err0:?}"
+       AllocationFailed (leaving outputs unfrozen and the join unbuilt), got {err0:?}"
     );
     // (`rgb` stays borrowed by `sink` across step 2; the no-output contract
     // on a rejected row is already covered by the two tests above — this
     // test isolates the OutOfSequenceRow-vs-AllocationFailed precedence and
     // the failpoint's survival. The final buffer is checked after step 2.)
     // Step 2 — RE-ARM the failpoint, then feed an OUT-OF-SEQUENCE even row
-    // (idx 2; the unbuilt join still expects 0) with colour. The pre-freeze
-    // first-row branch is skipped (outputs frozen in step 1), so the
-    // preflight's POST-FREEZE sequence check is the sole gate; it must
-    // reject as OutOfSequenceRow BEFORE the wrapper reaches the (re-armed)
-    // de-interleave reserve.
+    // (idx 2; the unbuilt join still expects 0) with colour. Outputs are unfrozen
+    // (step 1 never committed), so the preflight's pre-compare first-row sequence
+    // check is the gate; it must reject as OutOfSequenceRow BEFORE the wrapper
+    // reaches the (re-armed) de-interleave reserve.
     crate::sinker::mixed::semi_planar_8bit::arm_deinterleave_alloc_failure();
     let err2 = sink
       .process(Nv12Row::new(
@@ -1497,7 +1496,7 @@ mod native_tier {
         MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(_))
       ),
       "an out-of-sequence even row after a recoverable de-interleave failure \
-       must reject as OutOfSequenceRow (the post-freeze sequence check), never \
+       must reject as OutOfSequenceRow (the pre-compare sequence check), never \
        AllocationFailed, got {err2:?}"
     );
     // Neither the recoverable-failure row 0 nor the rejected out-of-sequence

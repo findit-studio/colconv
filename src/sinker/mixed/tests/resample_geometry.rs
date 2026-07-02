@@ -385,6 +385,108 @@ fn rejected_first_row_does_not_poison_output_retry_native() {
 }
 
 #[test]
+#[cfg(feature = "rgb")]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn native_first_build_scratch_oom_leaves_freeze_unfrozen_for_retry() {
+  use crate::source::Yuv420pRow;
+
+  // The 4:2:0 native delegate grows the output RGB scratch as a PRE-FEED step,
+  // BEFORE it commits the output-set freeze. A scratch OOM on an ordinary
+  // first-ever row-0 build therefore leaves `resample_outputs` uncommitted (the
+  // delegate never freezes on a pre-feed failure), so a retry of row 0 with a
+  // CHANGED output attachment is accepted, not mis-rejected as
+  // ResampleOutputsChanged.
+  let y = [50u8; SRC];
+  let u = [128u8; SRC / 2];
+  let v = [128u8; SRC / 2];
+  let mut rgb = vec![0u8; OUT * OUT * 3];
+  let mut luma = vec![0u8; OUT * OUT];
+  let mut sink = downscaled().with_native(true).with_rgb(&mut rgb).unwrap();
+  sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+  crate::sinker::mixed::arm_native_rgb_scratch_failure();
+  let err = sink
+    .process(Yuv420pRow::new(&y, &u, &v, 0, ColorMatrix::Bt601, true))
+    .unwrap_err();
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "first-build RGB-scratch OOM must surface AllocationFailed, got {err:?}"
+  );
+  // The freeze was never committed on the failed build — a retry of row 0 with
+  // luma added (changed output set) is ACCEPTED, not ResampleOutputsChanged.
+  sink.set_luma(&mut luma).unwrap();
+  sink
+    .process(Yuv420pRow::new(&y, &u, &v, 0, ColorMatrix::Bt601, true))
+    .expect("row 0 must succeed after a first-build scratch OOM (freeze uncommitted)");
+}
+
+#[test]
+#[cfg(feature = "rgb")]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn native_colour_capability_rebuild_scratch_oom_leaves_freeze_unfrozen_for_retry() {
+  use crate::source::Yuv420pRow;
+
+  // A cross-frame COLOUR-CAPABILITY rebuild: frame 1 builds a luma-only native
+  // join (chroma absent, no output RGB scratch). Frame 2 attaches RGB, so the
+  // delegate rebuilds the join WITH chroma and grows the (empty) output RGB
+  // scratch — both before the row is accepted. A scratch OOM on that rebuild
+  // must leave the cached luma-only join intact AND `resample_outputs`
+  // uncommitted (the delegate builds into a local and freezes only after every
+  // pre-feed allocation succeeds), so a row-0 retry with ANOTHER output attached
+  // is accepted, not mis-rejected as ResampleOutputsChanged.
+  let y = [50u8; SRC];
+  let u = [128u8; SRC / 2];
+  let v = [128u8; SRC / 2];
+  let mut luma = vec![0u8; OUT * OUT];
+  let mut rgb = vec![0u8; OUT * OUT * 3];
+  let (mut hh, mut ss, mut vv) = (
+    vec![0u8; OUT * OUT],
+    vec![0u8; OUT * OUT],
+    vec![0u8; OUT * OUT],
+  );
+  let mut sink = downscaled().with_native(true).with_luma(&mut luma).unwrap();
+  // Frame 1: a luma-only native join (chroma absent, reserves no RGB scratch).
+  sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+  for r in 0..SRC {
+    sink
+      .process(Yuv420pRow::new(&y, &u, &v, r, ColorMatrix::Bt601, true))
+      .expect("luma-only frame builds the native join");
+  }
+  // Frame 2: attach RGB → the row-0 rebuild must build the chroma half and grow
+  // the (now-needed, empty) output RGB scratch; refuse that grow.
+  sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+  sink.set_rgb(&mut rgb).unwrap();
+  crate::sinker::mixed::arm_native_rgb_scratch_failure();
+  let err = sink
+    .process(Yuv420pRow::new(&y, &u, &v, 0, ColorMatrix::Bt601, true))
+    .unwrap_err();
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "the colour-capability rebuild scratch OOM must surface AllocationFailed, got {err:?}"
+  );
+  // The output-set freeze was never committed (the delegate commits only after
+  // the scratch grows), so attaching ANOTHER output (hsv) and retrying row 0 is
+  // ACCEPTED — the changed output set proves the freeze was rolled back. The
+  // pre-fold shape would have frozen {luma, rgb} before the scratch failure and
+  // rejected this retry as ResampleOutputsChanged.
+  sink.set_hsv(&mut hh, &mut ss, &mut vv).unwrap();
+  sink
+    .process(Yuv420pRow::new(&y, &u, &v, 0, ColorMatrix::Bt601, true))
+    .expect("row 0 with a changed output set must succeed after a rebuild scratch OOM");
+}
+
+#[test]
 fn no_output_first_row_does_not_poison_output_retry_native() {
   use crate::source::Yuv420pRow;
 
