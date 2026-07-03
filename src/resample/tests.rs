@@ -558,6 +558,211 @@ fn area_halved_weights_the_odd_tail_row_by_its_luma_coverage() {
 
 #[cfg(feature = "yuv-planar")]
 #[test]
+fn area_chroma_phased_v_folds_the_bottom_triangle() {
+  // 4:2:0 Bottom siting on the V axis: box over the FULL luma grid folded
+  // through the x2 `v = 1` triangle — odd luma row 2i+1 sits on c[i]
+  // (weight 2), even 2i averages c[i-1] and c[i] (weights 1, 1), top edge
+  // clamps c[-1] -> c[0]. Every output span sums to 2*luma_h.
+
+  // EVEN luma_h = 8 -> 3 outputs (fractional, spans straddle chroma pairs).
+  // Box area(8,3) = {0:[3,3,2], 2:[1,3,3,1], 5:[2,3,3]} folds to:
+  //   out0 luma{0,1,2}: r0(even i0)+r1(odd i0) -> c0*(6+6), r2(even i1)
+  //        -> c0*2,c1*2                                    => [14, 2] @ c0.
+  //   out1 luma{2,3,4,5}                                   => [1, 10, 5] @ c0.
+  //   out2 luma{5,6,7}                                     => [7, 9] @ c2.
+  let even = AxisSpans::area_chroma_phased_v(8, 3).expect("valid");
+  assert_eq!(even.out_len(), 3);
+  assert_eq!(even.span(0), (0, &[14usize, 2][..]));
+  assert_eq!(even.span(1), (0, &[1usize, 10, 5][..]));
+  assert_eq!(even.span(2), (2, &[7usize, 9][..]));
+  for o in 0..3 {
+    assert_eq!(even.span(o).1.iter().sum::<usize>(), 2 * 8, "span {o} sum");
+  }
+
+  // ODD luma_h = 5 (chroma_h = 3) -> 2 outputs: the trailing luma row is
+  // EVEN (row 4 -> {c1, c2}), exercising AxisSpans::area's odd-height tail
+  // clamp — every span still sums to 2*luma_h with no cell past chroma_h-1.
+  // Box area(5,2) = {0:[2,2,1], 2:[1,2,2]} folds to out0 = [9, 1] @ c0 and
+  // out1 = [1, 7, 2] @ c0.
+  let odd = AxisSpans::area_chroma_phased_v(5, 2).expect("valid");
+  assert_eq!(odd.out_len(), 2);
+  assert_eq!(odd.span(0), (0, &[9usize, 1][..]));
+  assert_eq!(odd.span(1), (0, &[1usize, 7, 2][..]));
+  for o in 0..2 {
+    assert_eq!(odd.span(o).1.iter().sum::<usize>(), 2 * 5, "span {o} sum");
+  }
+}
+
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn stream_two_row_window_matches_blend_then_bin_oracle() {
+  // A FRACTIONAL vertical downscale under Bottom siting makes adjacent output
+  // V-spans overlap by TWO chroma rows: area_chroma_phased_v(8,3) gives
+  // out0 = chroma{0,1} and out1 = chroma{0,1,2}, so chroma rows 0 AND 1 feed
+  // BOTH out0 and out1 while out0 is still open. This drives the AreaStream
+  // 2-row accumulator window; the single-accumulator engine dropped rows 0/1
+  // from out1 and produced the wrong value here.
+  //
+  // Hand oracle: reconstruct luma-resolution chroma from the Bottom triangle
+  // (even 2i = (c[i-1]+c[i]+1)>>1, odd 2i+1 = c[i], c[-1] = c[0]), then
+  // box-average luma_h = 8 -> 3 via area(8,3). The chroma values are chosen
+  // so every blend is EXACT (even sums), collapsing the oracle's two
+  // roundings onto the fold's single rounding.
+  //   chroma = [10, 20, 40, 80]                    (chroma_h = 4, one column)
+  //   recon  = [10, 10, 15, 20, 30, 40, 60, 80]    (blend, all exact)
+  //   out0 = round((3*10 + 3*10 + 2*15) / 8) = round(90/8)  = 11
+  //   out1 = round((15 + 3*20 + 3*30 + 40) / 8) = round(205/8) = 26
+  //   out2 = round((2*40 + 3*60 + 3*80) / 8) = round(500/8) = 63
+  let plan = ResamplePlan::area_chroma_420(1, 8, 1, 3, 0.0, 1.0).expect("valid Bottom plan");
+  assert_eq!(
+    plan.src_h(),
+    16,
+    "Bottom V spans sum to 2*luma_h -> scaled denom"
+  );
+  let chroma = [10u8, 20, 40, 80]; // one chroma column, chroma_h = 4 rows
+  let mut stream =
+    AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 1).expect("realistic geometry");
+  let mut out = [0u8; 3];
+  let mut emitted = std::vec::Vec::new();
+  for (y, &c) in chroma.iter().enumerate() {
+    stream
+      .feed_row(y, &[c], true, |oy, finalized| {
+        emitted.push(oy);
+        out[oy] = finalized[0];
+      })
+      .expect("chroma rows arrive in order");
+  }
+  assert_eq!(
+    emitted,
+    std::vec![0, 1, 2],
+    "each output finalizes once, in order"
+  );
+  assert_eq!(out, [11, 26, 63], "2-row-window blend-then-bin oracle");
+  // The direct span-sum reference reads each output's FULL folded span, so it
+  // is independent of the streaming window — the stream must reproduce it.
+  assert_eq!(out.to_vec(), direct_area_2d(&plan, &chroma, 1));
+
+  // Wider genuinely-2-overlapping Bottom plans (multi-column / multi-channel,
+  // and an H downscale) all reproduce the direct span-sum reference exactly.
+  for &(cw, luma_h, ow, oh, channels) in &[(2usize, 8, 2, 3, 2), (4, 12, 3, 5, 3)] {
+    let plan = ResamplePlan::area_chroma_420(cw, luma_h, ow, oh, 0.0, 1.0).expect("valid");
+    let chroma_h = luma_h.div_ceil(2);
+    let mut src = std::vec![0u8; cw * chroma_h * channels];
+    lcg_fill(&mut src, 0x51 ^ luma_h as u32);
+    let mut streamed = std::vec![0u8; ow * oh * channels];
+    let mut stream =
+      AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), channels).expect("geometry");
+    for y in 0..chroma_h {
+      let row = &src[y * cw * channels..(y + 1) * cw * channels];
+      stream
+        .feed_row(y, row, true, |oy, fin| {
+          streamed[oy * ow * channels..(oy + 1) * ow * channels].copy_from_slice(fin);
+        })
+        .expect("rows in order");
+    }
+    assert_eq!(
+      streamed,
+      direct_area_2d(&plan, &src, channels),
+      "{cw}x{chroma_h}->{ow}x{oh} c{channels} Bottom stream vs direct span-sum"
+    );
+  }
+
+  // Combined centered-H (x4) + Bottom-V (x2): BOTH source denominators scale
+  // (src_w = 8*chroma_w, src_h = 2*luma_h), so the AreaStream exactness guards
+  // (h_sum_fits / denom_fits over src_w*src_h) see the PRODUCT of both scales.
+  // The plan must build (each checked_mul holds) and stream the whole frame —
+  // every output finalizes under the doubly-scaled denominator without
+  // tripping an overflow guard.
+  let (cw, luma_h, ow, oh, channels) = (4usize, 12, 3, 5, 2);
+  let plan = ResamplePlan::area_chroma_420(cw, luma_h, ow, oh, 0.5, 1.0).expect("combined plan");
+  assert_eq!(
+    (plan.src_w(), plan.src_h()),
+    (8 * cw, 2 * luma_h),
+    "both denominators scale"
+  );
+  let chroma_h = luma_h.div_ceil(2);
+  let mut src = std::vec![0u8; cw * chroma_h * channels];
+  lcg_fill(&mut src, 0x9e);
+  let mut stream = AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), channels)
+    .expect("combined guards admit realistic geometry");
+  let mut emitted = std::vec::Vec::new();
+  for y in 0..chroma_h {
+    let row = &src[y * cw * channels..(y + 1) * cw * channels];
+    stream
+      .feed_row(y, row, true, |oy, _| emitted.push(oy))
+      .expect("rows in order");
+  }
+  assert_eq!(
+    emitted,
+    (0..oh).collect::<std::vec::Vec<_>>(),
+    "every output finalizes under both scales"
+  );
+}
+
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn co_sited_area_stream_allocates_no_lookahead() {
+  // A co-sited (v_phase 0) plan's adjacent output V-spans share only their
+  // boundary row, so the stream opens exactly one row at a time and must NOT
+  // allocate the look-ahead accumulator — the pre-Bottom resource envelope is
+  // preserved (a large co-sited resample that fit before must still fit).
+  let cosited = ResamplePlan::area_chroma_420(2, 8, 2, 4, 0.0, 0.0).expect("valid co-sited plan");
+  assert_eq!(
+    cosited.v().window_depth(),
+    1,
+    "co-sited spans never overlap mid-row"
+  );
+  let s = AreaStream::<u8>::new(
+    cosited.h(),
+    cosited.v(),
+    cosited.src_w(),
+    cosited.src_h(),
+    1,
+  )
+  .expect("realistic geometry");
+  assert!(
+    s.acc_next.is_empty(),
+    "a co-sited stream must not allocate the look-ahead accumulator"
+  );
+  // A `v = 1` Bottom downscale opens two rows, so it DOES allocate acc_next.
+  let bottom = ResamplePlan::area_chroma_420(2, 8, 2, 3, 0.0, 1.0).expect("valid Bottom plan");
+  assert_eq!(
+    bottom.v().window_depth(),
+    2,
+    "a Bottom downscale opens two rows"
+  );
+  let b = AreaStream::<u8>::new(bottom.h(), bottom.v(), bottom.src_w(), bottom.src_h(), 1)
+    .expect("realistic geometry");
+  assert!(
+    !b.acc_next.is_empty(),
+    "a Bottom downscale needs the look-ahead accumulator"
+  );
+}
+
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn phased_v_exceeding_two_open_rows_is_rejected() {
+  // An expanding (upscale) phased-V plan can put one source chroma row inside
+  // THREE output spans at once (e.g. luma_h=3 -> out_h=7), which the bounded
+  // 2-row window cannot stream. `AreaStream::new` must reject it as
+  // `UpscaleUnsupported` rather than silently drop the third open row's
+  // contributions (the pre-fix debug_assert accepted `start == y`, and release
+  // builds corrupted).
+  let plan = ResamplePlan::area_chroma_420(2, 3, 2, 7, 0.0, 1.0).expect("plan builds");
+  assert!(
+    plan.v().window_depth() > 2,
+    "the 3->7 Bottom shape opens more than two rows at once"
+  );
+  let err = AreaStream::<u8>::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 1)
+    .expect_err("a >2-open-row plan must be rejected, not streamed");
+  assert!(
+    matches!(err, ResampleError::UpscaleUnsupported(_)),
+    "expected UpscaleUnsupported, got {err:?}"
+  );
+}
+
+#[cfg(feature = "yuv-planar")]
+#[test]
 fn stream_rejects_out_of_order_duplicate_and_skipped_rows() {
   let plan = AreaResampler::to(4, 4)
     .plan(8, 8)

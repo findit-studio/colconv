@@ -664,6 +664,115 @@ impl AxisSpans {
     })
   }
 
+  /// Vertical chroma spans for the RFC #238 **Bottom** 4:2:0 siting — the
+  /// folded triangle⊗box weights on the V axis (design §3), the `v = 1`
+  /// analog of [`Self::area_chroma_phased_h_centered`]. A Bottom chroma
+  /// sample sits on the ODD luma row it covers, so reconstructing full
+  /// height is the co-sited-on-odd triangle: odd luma row `2i + 1 → c[i]`
+  /// (the sample lies exactly on it), even luma row `2i → (c[i-1] + c[i]) /
+  /// 2` (midway between the sample above and the one it sits on), with
+  /// top-edge replication (`c[-1] → c[0]`). Unlike the centered H triangle
+  /// this reaches only BACKWARD — a Bottom sample never spreads to `i + 1` —
+  /// so the sole clamp is the top edge. This folds that reconstruction INTO
+  /// the box bin so ONE phased weighted area pass on the SUBSAMPLED chroma
+  /// grid reproduces "reconstruct to full height, then box-average" with a
+  /// SINGLE rounding: `W[o,i] = Σ_R w_bin[o,R]·t[R,i]`, where `w_bin` are the
+  /// full-grid box overlaps ([`Self::area`] over `luma_h → out`) and `t` is
+  /// the triangle. The triangle is scaled ×2 to stay integral (`t ∈ {1,
+  /// 2}`), so each output span sums to `2·luma_h` — the V half of the
+  /// caller's `src_w·src_h` normalization denominator.
+  ///
+  /// `luma_h` may be ODD (4:2:0 permits an odd frame height, `chroma_h =
+  /// ⌈luma_h/2⌉`): [`Self::area`] already clamps the partial trailing box
+  /// cell, and the last luma row is then even, folding to `{chroma_h - 2,
+  /// chroma_h - 1}` — in range, so no tail special-case is needed beyond the
+  /// top clamp. `chroma_h ≥ 1`, so the `i == 0` branch absorbs the only
+  /// possible top-edge underflow and every other `i - 1` stays a live cell.
+  #[cfg(feature = "yuv-planar")]
+  fn area_chroma_phased_v(luma_h: usize, out: usize) -> Result<Self, AxisError> {
+    // Each folded span sums to `2·luma_h`; bound it so the `u64`-accumulated
+    // weights cast back to `usize` losslessly below.
+    luma_h.checked_mul(2).ok_or(AxisError::Overflow)?;
+    let box_spans = Self::area(luma_h, out)?;
+    // First / last chroma cell a full luma row folds to. Even `r = 2i`
+    // spreads to `{i-1, i}` (`{0}` clamped at the top edge); odd `r = 2i+1`
+    // sits on `{i}`. Both end at `i = r/2`; the first cell steps back one
+    // only for an even row above the top. Consecutive luma rows share a
+    // chroma cell, so a box span's chroma reach is contiguous.
+    let first_chroma = |r: usize| -> usize {
+      if r.is_multiple_of(2) {
+        (r / 2).saturating_sub(1)
+      } else {
+        r / 2
+      }
+    };
+    let last_chroma = |r: usize| -> usize { r / 2 };
+    let offsets_len = out.checked_add(1).ok_or(AxisError::Overflow)?;
+    let mut starts = Vec::new();
+    starts
+      .try_reserve_exact(out)
+      .map_err(|_| AxisError::Alloc)?;
+    let mut offsets = Vec::new();
+    offsets
+      .try_reserve_exact(offsets_len)
+      .map_err(|_| AxisError::Alloc)?;
+    // Pass 1: each output's chroma span `[i_first, i_last]`, the total tap
+    // count, and the widest span (the reused scatter accumulator's size).
+    let mut total = 0usize;
+    let mut max_span = 0usize;
+    for o in 0..out {
+      let (rstart, wbins) = box_spans.span(o);
+      let i_f = first_chroma(rstart);
+      let i_l = last_chroma(rstart + wbins.len() - 1);
+      starts.push(i_f);
+      let span = i_l - i_f + 1;
+      max_span = max_span.max(span);
+      total = total.checked_add(span).ok_or(AxisError::Overflow)?;
+    }
+    let mut weights = Vec::new();
+    weights
+      .try_reserve_exact(total)
+      .map_err(|_| AxisError::Alloc)?;
+    let mut local: Vec<u64> = Vec::new();
+    local
+      .try_reserve_exact(max_span)
+      .map_err(|_| AxisError::Alloc)?;
+    offsets.push(0);
+    // Pass 2: scatter each box overlap through the ×2 triangle into the local
+    // chroma-cell accumulator, then flush the contiguous run.
+    for (o, &i_f) in starts.iter().enumerate() {
+      let (rstart, wbins) = box_spans.span(o);
+      let i_l = last_chroma(rstart + wbins.len() - 1);
+      local.clear();
+      local.resize(i_l - i_f + 1, 0);
+      for (k, &wb) in wbins.iter().enumerate() {
+        let r = rstart + k;
+        let wb = wb as u64;
+        let i = r / 2;
+        if r.is_multiple_of(2) {
+          if i == 0 {
+            local[0] += 2 * wb; // both taps clamp to c[0] at the top edge
+          } else {
+            local[i - 1 - i_f] += wb; // 1/2 → c[i-1]
+            local[i - i_f] += wb; // 1/2 → c[i]
+          }
+        } else {
+          local[i - i_f] += 2 * wb; // co-sited on c[i]
+        }
+      }
+      for &wv in &local {
+        weights.push(wv as usize);
+      }
+      offsets.push(weights.len());
+    }
+    debug_assert_eq!(weights.len(), total);
+    Ok(Self {
+      starts,
+      offsets,
+      weights,
+    })
+  }
+
   /// Number of output samples on this axis.
   // Consumed by the area streaming engine, which is gated to the
   // families that route through it.
@@ -684,6 +793,39 @@ impl AxisSpans {
       self.starts[j],
       &self.weights[self.offsets[j]..self.offsets[j + 1]],
     )
+  }
+
+  /// The maximum number of output rows whose spans are SIMULTANEOUSLY open
+  /// (started, not yet finalized) at any source row — the depth of the
+  /// streaming accumulator window [`AreaStream`] must hold for this axis.
+  ///
+  /// Two adjacent outputs that share ONLY their boundary row (`start(o+1) ==
+  /// last(o)`) do not count as simultaneously open: the boundary row
+  /// finalizes `o` as it opens `o+1`, which the single accumulator already
+  /// handles. Only an output that STARTS STRICTLY BEFORE the current one's
+  /// last row (`start(o2) < last(o)`) needs its own live slot. So a co-sited
+  /// box plan returns 1; a `v = 1` Bottom fold on a downscale returns 2 (one
+  /// backward reach); an EXPANDING (upscale) phased plan can return 3+, which
+  /// the bounded 2-row window cannot stream — the caller rejects it.
+  #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
+  pub(crate) fn window_depth(&self) -> usize {
+    let mut depth = 0;
+    for o in 0..self.out_len() {
+      let (s, w) = self.span(o);
+      let last = s + w.len() - 1;
+      // Starts are non-decreasing, so the outputs that open before `o`
+      // finalizes form a contiguous run right after `o`.
+      let mut open = 1;
+      for o2 in (o + 1)..self.out_len() {
+        if self.span(o2).0 < last {
+          open += 1;
+        } else {
+          break;
+        }
+      }
+      depth = depth.max(open);
+    }
+    depth
   }
 
   /// Fallible deep copy following the planner's recoverable-allocation
@@ -940,11 +1082,15 @@ impl ResamplePlan {
   /// change (the `4·` only tightens the maximum representable width, which
   /// stays absurd).
   ///
-  /// The vertical axis is unchanged — [`AxisSpans::area_halved`] over the LUMA
-  /// height in BOTH branches (the 4:2:0 vertical chroma pairing carries no
-  /// horizontal scaling), so `src_h` stays `luma_h`. `v_phase` is stored but
-  /// not folded here (4:2:0 vertical siting is a later stage); a caller must
-  /// pass `0.0` today for the vertical axis to stay co-sited.
+  /// The vertical axis mirrors the horizontal: at `v_phase == 0` it is the
+  /// co-sited [`AxisSpans::area_halved`] luma→chroma pairing (`src_h` stays
+  /// `luma_h`), byte-identical to before vertical siting existed; for 4:2:0
+  /// **Bottom** siting (`v_phase ≠ 0`) it is the folded `v = 1` triangle
+  /// ([`AxisSpans::area_chroma_phased_v`]), whose spans sum to `2·luma_h`, so
+  /// the stored `src_h` becomes that scaled V denominator. The two folds are
+  /// independent — a centered-H + Bottom-V plan scales both dimensions, and
+  /// the [`AreaStream`] `src_w·src_h` denominator and exactness guards bound
+  /// the combined weights unchanged.
   #[cfg(feature = "yuv-planar")]
   pub(crate) fn area_chroma_420(
     chroma_w: usize,
@@ -962,35 +1108,38 @@ impl ResamplePlan {
       AxisError::Overflow => fail_overflow(),
       AxisError::Alloc => fail_alloc(),
     };
-    // The vertical axis pairs luma rows to chroma rows the same way regardless
-    // of horizontal siting (the H fold rescales only the H weights), so it is
-    // shared across both branches.
-    let v = AxisSpans::area_halved(luma_h, out_h).map_err(fail)?;
-    if h_phase == 0.0 {
-      // Co-sited / unspecified — byte-identical to the pre-siting area plan.
-      let h = AxisSpans::area(chroma_w, out_w).map_err(fail)?;
-      return Ok(Self {
-        src_w: chroma_w,
-        src_h: luma_h,
-        out_w,
-        out_h,
-        kind: SpanKind::Area,
-        h,
-        v,
-        filter_h: None,
-        filter_v: None,
-        filter_h_chroma: None,
-        filter_v_chroma: None,
-        h_phase,
-        v_phase,
-      });
-    }
-    // Scaled H denominator: each folded output span sums to `4·(2·chroma_w)`.
-    let denom_w = chroma_w.checked_mul(8).ok_or_else(fail_overflow)?;
-    let h = AxisSpans::area_chroma_phased_h_centered(chroma_w, out_w).map_err(fail)?;
+    // Vertical axis first (matching the pre-siting build order so an
+    // allocator refusal on the paired axis still surfaces before the
+    // horizontal one): the co-sited luma→chroma pairing, or — for 4:2:0
+    // Bottom siting — the folded `v = 1` triangle whose spans sum to
+    // `2·luma_h`, making that the scaled V denominator. At `v_phase == 0`
+    // the spans and the `luma_h` denominator are byte-identical to the plain
+    // pairing every co-sited caller built before vertical siting existed.
+    let (v, denom_h) = if v_phase == 0.0 {
+      (AxisSpans::area_halved(luma_h, out_h).map_err(fail)?, luma_h)
+    } else {
+      let denom_h = luma_h.checked_mul(2).ok_or_else(fail_overflow)?;
+      (
+        AxisSpans::area_chroma_phased_v(luma_h, out_h).map_err(fail)?,
+        denom_h,
+      )
+    };
+    // Horizontal axis: the co-sited chroma-grid box, or the centered folded
+    // triangle whose output spans sum to `4·(2·chroma_w) = 8·chroma_w`, the
+    // scaled H denominator. At `h_phase == 0` both are byte-identical to the
+    // pre-siting area plan.
+    let (h, denom_w) = if h_phase == 0.0 {
+      (AxisSpans::area(chroma_w, out_w).map_err(fail)?, chroma_w)
+    } else {
+      let denom_w = chroma_w.checked_mul(8).ok_or_else(fail_overflow)?;
+      (
+        AxisSpans::area_chroma_phased_h_centered(chroma_w, out_w).map_err(fail)?,
+        denom_w,
+      )
+    };
     Ok(Self {
       src_w: denom_w,
-      src_h: luma_h,
+      src_h: denom_h,
       out_w,
       out_h,
       kind: SpanKind::Area,
@@ -1847,18 +1996,28 @@ pub(crate) struct AreaStream<S: AreaSample> {
   /// an H-sum reaching `src_w * 255`; `u64` for `u16`), and creation
   /// bounds `src_w` accordingly via [`AreaSample::h_sum_fits`].
   h_tmp: Vec<S::HSum>,
-  /// In-flight output-row accumulators, `out_w * channels`. The element
-  /// is [`AreaSample::VAcc`] — `u64` for the integer streams, `f32` for
-  /// the float stream.
+  /// In-flight accumulator for the primary open output row (`cur_out`),
+  /// `out_w * channels`. The element is [`AreaSample::VAcc`] — `u64` for
+  /// the integer streams, `f32` for the float stream.
   acc: Vec<S::VAcc>,
+  /// Second slot of the bounded 2-row window: the look-ahead accumulator
+  /// for `cur_out + 1`, engaged only when a phased-V ([`v = 1`
+  /// Bottom](AxisSpans::area_chroma_phased_v)) span reaches back into
+  /// `cur_out`'s rows before it finalizes. Dormant (never written) for
+  /// every co-sited plan, whose output spans overlap by at most one source
+  /// row — see [`Self::feed_row`].
+  acc_next: Vec<S::VAcc>,
   /// Finalized staging row handed to `emit`, `out_w * channels`.
   out_tmp: Vec<S>,
   /// Plan-time SIMD staging for the H-pass
   /// ([`crate::row::PaddedSpans`]); `None` routes the dispatcher to
   /// scalar.
   h_padded: Option<crate::row::PaddedSpans>,
-  /// Next output row to finalize.
+  /// Next output row to finalize (the primary accumulator's row).
   cur_out: usize,
+  /// Whether `acc_next` holds `cur_out + 1`'s partial rows — set when the
+  /// look-ahead engages, cleared when it is promoted or the stream resets.
+  next_open: bool,
   /// Next source row the frame expects; rows are strictly sequential.
   next_y: usize,
 }
@@ -1895,6 +2054,23 @@ impl<S: AreaSample> AreaStream<S> {
     channels: usize,
   ) -> Result<Self, ResampleError> {
     let geometry = || PlanGeometry::new(src_w, src_h, h.out_len(), v.out_len());
+    // The bounded 2-row accumulator window streams at most two simultaneously
+    // open output rows. A co-sited plan needs one; a `v = 1` Bottom fold on a
+    // downscale needs two; an expanding (upscale) phased plan can need three or
+    // more — which this engine cannot stream, so reject it up front rather than
+    // silently drop the contributions of the third open row. `window` also
+    // decides whether the look-ahead accumulator is allocated at all: a co-sited
+    // stream (`window == 1`) never opens a second row, so it must NOT pay for
+    // `acc_next` (keeping the pre-Bottom allocation envelope unchanged).
+    let window = v.window_depth();
+    if window > 2 {
+      return Err(ResampleError::UpscaleUnsupported(UpscaleUnsupported::new(
+        src_w,
+        src_h,
+        h.out_len(),
+        v.out_len(),
+      )));
+    }
     // Exactness bounds for the integer streams: an H-sum must fit
     // S::HSum and the V-accumulation must stay exact in u64. Both reject
     // only absurd magnitudes (a >16.8-million-pixel-wide plane for the
@@ -1937,9 +2113,18 @@ impl<S: AreaSample> AreaStream<S> {
       denom,
       h_tmp: try_zeroed(n).map_err(alloc)?,
       acc: try_zeroed(n).map_err(alloc)?,
+      // Allocated ONLY when the plan can open two rows at once (`window == 2`);
+      // a co-sited stream leaves this empty and never touches it (the look-ahead
+      // path is unreachable when spans overlap by at most their boundary row).
+      acc_next: if window >= 2 {
+        try_zeroed(n).map_err(alloc)?
+      } else {
+        Vec::new()
+      },
       out_tmp: try_zeroed(n).map_err(alloc)?,
       h_padded,
       cur_out: 0,
+      next_open: false,
       next_y: 0,
     })
   }
@@ -1956,7 +2141,9 @@ impl<S: AreaSample> AreaStream<S> {
   /// Restarts the stream for a new frame.
   pub(crate) fn reset(&mut self) {
     self.acc.fill(S::VAcc::default());
+    self.acc_next.fill(S::VAcc::default());
     self.cur_out = 0;
+    self.next_open = false;
     self.next_y = 0;
   }
 
@@ -1995,9 +2182,14 @@ impl<S: AreaSample> AreaStream<S> {
       &mut self.h_tmp,
       use_simd,
     );
-    // A source row contributes to at most two output rows (a downscale
-    // span covers a source cell at most twice); the loop runs the
-    // second pass only when the next span starts on this same row.
+    // Fold this source row into the open output rows, finalizing each as
+    // its last contributing row arrives. `cur_out` is the primary in-flight
+    // row (`acc`); a phased-V ([`v = 1`](AxisSpans::area_chroma_phased_v))
+    // fold can additionally open ONE look-ahead row (`cur_out + 1`, in
+    // `acc_next`) whose span reaches back into `cur_out`'s rows before it
+    // finalizes — the bounded 2-row window. A co-sited plan's output spans
+    // overlap by at most one source row, so the look-ahead never engages and
+    // this is exactly the original single-accumulator path.
     loop {
       // With rows strictly sequential, `y` always lies in the current
       // span; the two defensive exits keep the no-panic contract if
@@ -2009,8 +2201,13 @@ impl<S: AreaSample> AreaStream<S> {
       let Some(&w) = weights.get(idx) else {
         return Ok(());
       };
+      let last = idx + 1 == weights.len();
       S::v_accumulate(&mut self.acc, &self.h_tmp, w as u64, use_simd);
-      if idx + 1 != weights.len() {
+      if !last {
+        // `cur_out` stays open. Fold `y` into the look-ahead row too when a
+        // phased-V span has already started under it — a no-op, and thus
+        // byte-identical, for every co-sited plan.
+        self.fold_lookahead(y, use_simd);
         return Ok(());
       }
       for (o, a) in self.out_tmp.iter_mut().zip(self.acc.iter_mut()) {
@@ -2019,10 +2216,55 @@ impl<S: AreaSample> AreaStream<S> {
       }
       emit(self.cur_out, &self.out_tmp);
       self.cur_out += 1;
+      if self.next_open {
+        // The look-ahead row already carries its earlier rows; promote it to
+        // the primary accumulator (the just-finalized `acc` was zeroed, so
+        // the swap leaves `acc_next` clear) and loop to fold `y` into it —
+        // its own span may also end at `y`, cascading the finalize.
+        core::mem::swap(&mut self.acc, &mut self.acc_next);
+        self.next_open = false;
+        if self.cur_out >= self.v.out_len() {
+          return Ok(());
+        }
+        continue;
+      }
       if self.cur_out >= self.v.out_len() || self.v.span(self.cur_out).0 != y {
         return Ok(());
       }
     }
+  }
+
+  /// Folds source row `y` into the look-ahead output row (`cur_out + 1`) —
+  /// the second slot of the bounded 2-row window — when a phased-V span has
+  /// reached back into `cur_out`'s still-open rows. A no-op for every
+  /// co-sited plan (the next output span starts at or after `cur_out`'s last
+  /// row, so `y` never lands in it while `cur_out` is open), which keeps the
+  /// single-row path byte-identical.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn fold_lookahead(&mut self, y: usize, use_simd: bool) {
+    let nxt = self.cur_out + 1;
+    if nxt >= self.v.out_len() {
+      return;
+    }
+    let (start, weights) = self.v.span(nxt);
+    let Some(idx) = y.checked_sub(start) else {
+      return;
+    };
+    let Some(&w) = weights.get(idx) else {
+      return;
+    };
+    // Bounded to two open rows: a `v = 1` fold reaches back by exactly one
+    // output row, so the row AFTER the look-ahead must not have started at or
+    // before `y` (that would put `y` inside three open output spans). The
+    // `window_depth <= 2` check in `new` rejects any plan that could reach
+    // here, so this is a strict backstop — `start(nxt+1) == y` is already an
+    // overflow, not a boundary.
+    debug_assert!(
+      nxt + 1 >= self.v.out_len() || self.v.span(nxt + 1).0 > y,
+      "phased-V window exceeded two open output rows"
+    );
+    S::v_accumulate(&mut self.acc_next, &self.h_tmp, w as u64, use_simd);
+    self.next_open = true;
   }
 }
 
